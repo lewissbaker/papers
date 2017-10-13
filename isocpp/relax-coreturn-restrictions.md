@@ -62,10 +62,6 @@ generator<int> collatz_sequence(int n)
 }
 ```
 
-# Tail-Resursive Tasks
-
-The
-
 # Tail-Recursive Generators
 
 The cppcoro library I have been working on provides a `recursive_generator<T>` type that
@@ -143,12 +139,17 @@ coroutine frame.
 
 However, this means that we are deferring releasing the parent coroutine
 frame until the consumer has finished consuming all of the child generator's
-elements. If the tree was very deep then this could potentially be a large
-number of memory allocations 
+elements even though the parent coroutine will not produce any more values.
 
-Wouldn't it be nice if we could instead make use of tail-recursion in the case
-where a `co_yield childGenerator;` statement occurs in the tail position to
-allow the parent coroutine frame to be freed earlier?
+If we could instead make use of tail-recursion in the case where a 
+`co_yield childGenerator;` statement occurs in the tail position then
+this would allow the parent coroutine frame to be freed earlier, before
+resuming execution of the nested coroutine.
+
+Doing so would allow coroutines to support infinite recursion in the tail
+position with at most two coroutine frames needing to be allocated at any one time.
+
+## Tail call syntax
 
 My preferred syntax for indicating a tail-recursive yield is to allow
 `co_return std::move(childGenerator);` in the place of `co_yield childGenerator;`.
@@ -171,7 +172,7 @@ off the end of the coroutine) and a `return_value(recursive_generator<T>&&)` met
 currently banned by the Coroutines TS wording in N4680.
 
 There are alternative syntaxes we could implement while staying within the current
-wording of the TS.
+wording of the TS. However I believe they are suboptimal solutions.
 
 Alternative Syntax 1: Overload `co_yield` with a `tail_call()` helper function.
 ```c++
@@ -208,6 +209,8 @@ This has the downside of making simple generator coroutines more verbose
 as it forces every `recursive_generator` coroutine to have a `co_return`
 statement, not just the ones that make use of tail-recursion.
 
+
+
 For another motivating example, consider a function that concatenates two sequences.
 ```c++
 template<typename T>
@@ -232,7 +235,7 @@ void usage()
 
 The use of `co_return` as a tail-recursive return causes the current coroutine frame to be
 destroyed, which in turn calls the destructor on the `first` generator, allowing its coroutine
-frame to be freed.
+frame to be freed once all of its elements have been consumed.
 
 # Recursive Task
 
@@ -240,7 +243,7 @@ A similar use-case it to support tail-recursive `co_return` statements for async
 objects.
 
 We can already support both `co_return someValue;` and `co_return someTask;` in a `task<T>`
-if `T` is not void by implementing both `return_value(T result)` and `return_value(task<T> result)`
+if `T` is not `void` by implementing both `return_value(T result)` and `return_value(task<T> result)`
 on the promise type.
 
 For example:
