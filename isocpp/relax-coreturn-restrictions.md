@@ -1,34 +1,40 @@
 ---
-topic: Coroutines TS
-title: In support of allowing both return_void and return_value on a coroutine promise type.
 author: Lewis Baker
 reply_to: lewissbaker@gmail.com
 audience: Evolution
 ---
 
-# Introduction
+# On allowing both `co_return;` and `co_return value;` in coroutines
+
+## Introduction
 
 In the Coroutines TS (N4680) section 8.4.4(4) currently specifies that:
 > The _unqualified-ids_ `return_void` and `return_value` are looked up in the
 > scope of class _P_. **If both are found, the program is ill-formed**.
 
 I believe this restriction is unnecessary to place on coroutine promise types
-and prevents some interesting use cases.
+and prevents some interesting use cases. In particular, this restriction makes
+syntax for implementing tail-recursion of coroutines unnecessarily cumbersome.
 
-# Background
+I propose that we amend the Coroutines TS to allow defining coroutine promise
+types that define both the `return_void` and `return_value` members by removing
+the sentence highlighted in bold above.
+
+## Background
 
 The original motivation for this restriction, as far as I understand it, is to
-maintain consistency with regular functions, where a function cannot contain
+maintain consistency with normal functions. A normal function cannot contain
 both `return;` and `return someValue;` statements.
 
-This rule makes perfect sense for regular functions. The type of the expression passed
+This rule makes perfect sense for normal functions. The type of the expression passed
 to the `return` statement in a function directly corresponds to the return-type of that
 function. A function cannot have both a `void` and non-`void` return-type at the same time
-so it cannot makes sense to have both `return;` and `return someValue;` in the same
+so it cannot make sense to have both `return;` and `return someValue;` in the same
 function.
 
 For example, the following function body isn't able to fulfill the contract
-of the function signature with the second `return` statement and so is ill-formed.
+of the function signature with the second `return` statement (it needs to return an `int`)
+and so the program is considered ill-formed.
 ```c++
 int f()
 {
@@ -40,7 +46,7 @@ int f()
 However, with coroutines, the return-type of a coroutine is _not_ directly
 tied to the type passed to the `co_return` statement. The author of the coroutine
 promise type is able to control the semantics of the `co_return` statement
-by defining either the `return_value` or `return_void` method on the promise type.
+by defining either a `return_value` or `return_void` method on the promise type.
 
 A common example of this is a coroutine that has a return-type of `generator<int>`.
 This coroutine allows a `co_return;` statement, a statement that is equivalent to
@@ -62,23 +68,112 @@ generator<int> collatz_sequence(int n)
 }
 ```
 
-# Tail-Recursive Generators
+With the current TS wording a coroutine promise type author is also able to
+define multiple overloads of `return_value()`, allowing the coroutine to define
+different semantics for `co_return` statements based on the expression type passed.
 
-The cppcoro library I have been working on provides a `recursive_generator<T>` type that
-allows a coroutine to lazily produce a sequence of values of type, `T`, by `co_yield`ing
+It does not seem like a big step to go from allowing the user to define different
+semantics for two different types passed to `co_return <expr>` by defining
+two overloads of `return_value()` to allowing the user to define different semantics
+for `co_return` and `co_return <expr>` by defining both `return_void()` and
+`return_value()`.
+
+## Tail-Recursion of Coroutines
+
+The motivating use-case for the proposed change is to allow use of the `co_return`
+keyword as a convenient and intuitive syntax for indicating a tail-recursive call
+to a coroutine.
+
+A tail-recursive call to another coroutine is an operation where the calling coroutine
+frame is destroyed before resuming execution of the coroutine that is being called
+in the tail-position. This allows you to perform recursion in the tail-position to an
+arbitrary recursion depth while needing at most two coroutine frames to be allocated
+at any one time.
+
+Example: A simple tail-call of an async task.
+```c++
+recursive_task<T> bar();
+
+recursive_task<T> foo_no_tail_recursion()
+{
+  co_await do_something();
+
+  // Call bar() and await result, unwrapping task<T> to obtain T value.
+  // Then returns the value of type T.
+  //  - calls return_value(T) if T is non-void.
+  //  - calls return_void() if T is void.
+  co_return co_await bar();
+}
+
+recursive_task<T> foo_tail_recursive()
+{
+  co_await do_something();
+
+  // Return recursive_task<T> value directly as way of indicating that
+  // the result of bar()'s task should be used as the result
+  // of foo_tail_recursive().
+  co_return bar();
+}
+
+task<> usage()
+{
+  recursive_task<T> t = foo_tail_recursive();
+  T result = co_await t;
+}
+```
+
+The semantics of the tail-recursive statement `co_return bar();` is as follows:
+* Call `bar()` to create a coroutine frame for `bar()`.
+  This coroutine will immediately suspend at `initial_suspend` point and return the `recursive_task<T>` RAII object.
+* Transfer ownership of `bar()`'s coroutine frame to the `recursive_task<T>` object that currently owns the
+  `foo_tail_recursive()` coroutine frame.
+  In the example above, this means updating the coroutine handle stored in the variable `t` in the `usage()` coroutine.
+* Transfer responsibility for resuming awaiter of `foo_tail_recursive()`'s task object to `bar()`'s promise object.
+  In the example above, the awaiting coroutine is `usage()` so this would be copying the `coroutine_handle` for the `usage()`
+  coroutine into `bar()`'s promise object.
+* Destroy `foo_tail_recursive()` coroutine frame.
+* Resume execution of `bar()`.
+
+Note: To guarantee that these tail-recursive statements have bounded memory usage of both heap-allocated coroutine frames
+and stack-frames, it requires an extension to Coroutines TS to allow symmetric transfer of execution when suspending
+one coroutine and resuming another.
+I believe Gor Nishanov is working on a proposal to allows a third variant of `await_suspend()` that returns a
+`coroutine_handle<>` to resume with tail-call semantics. He has already implemented an experimental implementation
+of this extension in Clang.
+
+Assuming that we have the above-mentioned symmetric-transfer extension to Coroutines TS,
+it is already possible to implement such a tail-recursive call operation for tasks that
+return a value. This is because we can define two overloads of `return_value`; one taking
+a `T` and one taking a `recursive_task<T>&&`.
+
+However, it is not currently possible to do this for `void`-returning tasks, as that would
+require defining `return_void()` for the normal return case and `return_value(recursive_task<void>&&)`
+to handle the tail-recursive call case. Something that is currently disallowed by the current TS wording.
+
+If we allowed promise types to define both `return_void` and `return_value` then this
+would allow implementation of the tail-call capapbilities of `recursive_task` for all types,
+not just non-`void` types.
+
+## Tail-Recursive Generators
+
+Another use-case for coroutine tail-recursion is with generator coroutines.
+
+The cppcoro library provides a `recursive_generator<T>` type that allows a
+coroutine to lazily produce a sequence of values of type, `T`, by `co_yield`ing
 either a value of type `T` or a `recursive_generator<T>` value.
 
-In the case that a `recursive_generator<T>` value is yielded, the generator yields all
-of the values produced by the nested generator as its own values and resumes the current
-coroutine only once all elements of the nested generator have been consumed. When the
-consumer asks for the next element by executing `iterator::operator++()`, the most-nested
-coroutine is resumed directly to produce the next element rather than requiring O(depth)
-resume/suspend operations that would otherwise be required if using a non-recursive `generator`.
+If a `recursive_generator<T>` value is yielded then this is equivalent to yielding
+all of the values produced by that generator. Execution of the current coroutine only
+resumes once all of the nested generator values have been consumed.
 
+The advantage of this approach is that it allows the consumer to directly resume the
+leaf-most nested coroutine to produce the next element inside its call to `iterator::operator++()`
+rather than requiring O(depth) resume/suspend operations that would be required if
+using a non-recursive `generator`.
 
-
-For example: Traverse values of a binary tree in left-node-right order.
+For example: Traversing values of a binary tree in left-node-right order.
 ```c++
+// Given a basic tree structure
 template<typename T>
 struct tree
 {
@@ -87,27 +182,6 @@ struct tree
   T value;
 };
 
-// Using a regular generator<T> type.
-generator<T> traverse_tree_slow(tree<T>* tree)
-{
-  if (tree->left)
-  {
-    for (auto& value : traverse_tree_slow(tree->left))
-    {
-      co_yield value;
-    }
-  }
-  co_yield tree->value;
-  if (tree->right)
-  {
-    for (auto& value : traverse_tree_slow(tree->right))
-    {
-      co_yield value;
-    }
-  }
-}
-
-// Using a recursive_generator<T> type.
 recursive_generator<T> traverse_tree(tree<T>* t)
 {
   if (t->left) co_yield traverse_tree(t->left);
@@ -132,24 +206,27 @@ the continuation is going to do when it resumes is run to completion,
 suspend at `co_await promise.final_suspend()` and then resume its
 parent coroutine or return to the consumer.
 
-Typically, the first thing the parent/consumer is going to do when
-the generator reaches the end of the sequence is destroy the
-`recursive_generator<T>` object, which will in turn destroy the
-coroutine frame.
+When execution returns to the parent/consumer after the
+generator has run to completion the parent/consumer will then
+typically immediately destroy the generator object, which will
+in turn destroy the coroutine frame, freeing its memory.
 
-However, this means that we are deferring releasing the parent coroutine
-frame until the consumer has finished consuming all of the child generator's
-elements even though the parent coroutine will not produce any more values.
+However, this means that we are deferring releasing the memory used
+by the parent coroutine frame until the consumer has finished consuming
+all of the child generator's elements even though the parent coroutine
+is not going to be producing any more values.
 
 If we could instead make use of tail-recursion in the case where a 
-`co_yield childGenerator;` statement occurs in the tail position then
-this would allow the parent coroutine frame to be freed earlier, before
-resuming execution of the nested coroutine.
+`co_yield` statement occurs in the tail position then this would allow
+the parent coroutine frame to be freed earlier, before resuming execution
+of the nested coroutine.
 
-Doing so would allow coroutines to support infinite recursion in the tail
-position with at most two coroutine frames needing to be allocated at any one time.
+Doing so would allow coroutines to support recursion to an arbitrary depth
+when recursing in the tail position. This can be done using only a bounded
+amount of memory for the coroutine frames; typically at most two coroutine
+frames allocated at any one time.
 
-## Tail call syntax
+### Tail call syntax
 
 My preferred syntax for indicating a tail-recursive yield is to allow
 `co_return std::move(childGenerator);` in the place of `co_yield childGenerator;`.
@@ -171,10 +248,12 @@ off the end of the coroutine) and a `return_value(recursive_generator<T>&&)` met
 (for the case where we are performing tail-recursion). This is something which is
 currently banned by the Coroutines TS wording in N4680.
 
-There are alternative syntaxes we could implement while staying within the current
-wording of the TS. However I believe they are suboptimal solutions.
+### Alternative tail call syntax
 
-Alternative Syntax 1: Overload `co_yield` with a `tail_call()` helper function.
+There are alternative syntaxes that could be implemented while staying within the current
+wording of the TS. However, these alternative syntaxes have downsides.
+
+**Alternative Syntax 1: Overload `co_yield` with a `tail_call()` helper function.**
 ```c++
 recursive_generator<T> traverse_tree_alternative1(tree<T>* t)
 {
@@ -184,14 +263,20 @@ recursive_generator<T> traverse_tree_alternative1(tree<T>* t)
 }
 ```
 
+This would work by having the `tail_call()` helper wrap the `recursive_generator<T>` object
+in a new type, say `recursive_generator_tail_call<T>`, and then providing a `yield_value()`
+overload for that type which could then perform the tail-recursion operation.
+
 This has the downside of requiring the more verbose syntax.
 
-It may also be difficult for the compiler to determine that execution does
-not continue after the `co_yield tail_call(...)` expression which could
-suppress warnings about dead-code, etc. that would otherwise be possible
-were we using `co_return`.
+It is also less obvious to the developer that the coroutine will not continue exection after
+executing the `co_yield tail_call(...)` expression.
 
-Alternative 2: Remove `return_void()` and keep only `return_value(recursive_generator<T>&&)`
+It may also be difficult for the compiler to determine that execution does not continue after
+the `co_yield tail_call(...)` expression which could make it more difficult to issue warnings
+about dead-code, etc. that would otherwise be possible were we using `co_return`.
+
+**Alternative 2: Remove `return_void()` and keep only `return_value(recursive_generator<T>&&)`**
 ```c++
 recursive_generator<T> traverse_tree_alternative2(tree<T>* t)
 {
@@ -205,79 +290,15 @@ recursive_generator<T> traverse_tree_alternative2(tree<T>* t)
 }
 ```
 
+This approach works by using a special sentinel value (in this case a default-constructed
+`recursive_generator<T>` value) that can be returned to indicate that no tail-recursion
+should be performed.
+
 This has the downside of making simple generator coroutines more verbose
 as it forces every `recursive_generator` coroutine to have a `co_return`
-statement, not just the ones that make use of tail-recursion.
-
-
-
-For another motivating example, consider a function that concatenates two sequences.
-```c++
-template<typename T>
-recursive_generator<T> concat(recursive_generator<T> first, recursive_generator<T> second)
-{
-  co_yield first;
-  co_return std::move(second);
-}
-
-recursive_generator<int> a();
-recursive_generator<int> b();
-recursive_generator<int> c();
-
-void usage()
-{
-  for (int x : concat(a(), concat(b(), c())))
-  {
-    std::cout << x << std::endl;
-  }
-}
-```
-
-The use of `co_return` as a tail-recursive return causes the current coroutine frame to be
-destroyed, which in turn calls the destructor on the `first` generator, allowing its coroutine
-frame to be freed once all of its elements have been consumed.
-
-# Recursive Task
-
-A similar use-case it to support tail-recursive `co_return` statements for async `task<T>`
-objects.
-
-We can already support both `co_return someValue;` and `co_return someTask;` in a `task<T>`
-if `T` is not `void` by implementing both `return_value(T result)` and `return_value(task<T> result)`
-on the promise type.
-
-For example:
-```c++
-task<int> bar();
-task<int> foo()
-{
-  if (someCond) co_return 123;
-
-  // Tail-recursive call.
-  co_return bar(); 
-}
-```
-
-However, we can't currently support tail-recursive behaviour for `task<void>` since
-that would require both `return_void()` and `return_value(task<void> task)` which
-is currently banned.
-
-For example, we can't currently do this:
-```c++
-task<void> bar();
-task<void> foo()
-{
-  if (someCond) co_return;
-
-  // Tail-recursive call.
-  co_return bar();
-}
-```
+statement, not just the ones that make use of tail-recursion. A generator
+coroutine can no longer just let the coroutine 
 
 # Final Words
 
-The author of the coroutine promise type has full control over whether or not to
-support `co_return;` or `co_return value;` and can define semantics that are
-meaningful for their particular coroutine-type.
-
-TODO: A final conclusion.
+TODO: Summary + Call-to-action.
