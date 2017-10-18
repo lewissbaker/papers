@@ -297,7 +297,8 @@ should be performed.
 This has the downside of making simple generator coroutines more verbose
 as it forces every `recursive_generator` coroutine to have a `co_return`
 statement, not just the ones that make use of tail-recursion. A generator
-coroutine can no longer just let the coroutine 
+coroutine can no longer just let execution run off the end since that is
+undefined-behaviour if the promise object has no `return_void()` method.
 
 # Final Words
 
