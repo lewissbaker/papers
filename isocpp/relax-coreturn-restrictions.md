@@ -1,6 +1,6 @@
 ---
 author: Lewis Baker
-reply_to: lewissbaker@gmail.com
+reply_to: ...
 audience: Evolution
 ---
 
@@ -151,7 +151,7 @@ require defining `return_void()` for the normal return case and `return_value(re
 to handle the tail-recursive call case. Something that is currently disallowed by the current TS wording.
 
 If we allowed promise types to define both `return_void` and `return_value` then this
-would allow implementation of the tail-call capapbilities of `recursive_task` for all types,
+would allow implementation of the tail-call capabilities of `recursive_task` for all types,
 not just non-`void` types.
 
 ## Tail-Recursive Generators
