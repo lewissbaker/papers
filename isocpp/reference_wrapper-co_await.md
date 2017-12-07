@@ -70,9 +70,9 @@ task<> safe()
 ```
 
 However, in some cases you still want to allow passing an object by reference but want to ensure that the
-capture-by-reference is explicitly called out at the call-site by use of `std::ref`.
-This helps to call out to the developer reading the code at the calling-site that the value is being
-passed by reference.
+capture-by-reference is explicitly called out at the call-site through the use of `std::ref`. This also
+has the benefit of avoiding capture of temporary values by reference since `std::ref()` does not accept
+rvalue references.
 
 For example:
 ```c++
@@ -86,12 +86,18 @@ task<> foo(async_manual_reset_event& event)
 ```
 
 The problem with this approach, however, is that `std::reference_wrapper<T>` does not implement
-`operator co_await()` and so is not awaitable. Ideally, `std::reference_wrapper<T>` would be awaitable
-if type, `T` is awaitable.
+`operator co_await()` and so is not awaitable.
+
+One possible solution would be to have the coroutine explicitly detect the use of `std::reference_wrapper<T>`
+argument and unwrap the reference. However, this approach is undesirable as it complicates and places a burden
+on all such coroutine implementations.
+
+Ideally, `std::reference_wrapper<T>` would be awaitable itself if `T&` is awaitable.
 
 ## Possible Implementation
 
-Below is a prototype implementation of `operator co_await` for `std::reference_wrapper<T>`.
+Below is a candidate implementation of `operator co_await` for `std::reference_wrapper<T>`.
+
 You can also try out this code using Compiler Explorer here: https://godbolt.org/g/WSCMw1
 
 ```c++
@@ -198,7 +204,8 @@ namespace std
 }
 ```
 
-With some test-cases defined below:
+Here are some test-cases that can be used to verify that `std::reference_wraper<T>` is indeed
+awaitable but only if `T&` is awaitable.
 ```c++
 struct some_awaitable
 {
@@ -244,7 +251,9 @@ task some_coroutine(std::reference_wrapper<some_awaitable> ref)
 
 Please note that this implementation has a limitation in that it only considers types that
 have an `await_suspend()` method that accepts a `std::experimental::coroutine_hande<void>`
-argument. It will not allow use of `operator co_await(std::reference_wrapper<T>)` for types
-that are conditionally awaitable only in certain contexts. ie. where the awaiter's overload
-of `await_suspend` only accepts `std::experimental::coroutine_handle<P>` for particular promise
-types, `P`.
+argument.
+
+It will not allow use of `operator co_await(std::reference_wrapper<T>)` for types
+that are conditionally awaitable only in certain contexts. ie. where the overload
+of `await_suspend` only accepts `std::experimental::coroutine_handle<P>` for
+particular promise types, `P`.
