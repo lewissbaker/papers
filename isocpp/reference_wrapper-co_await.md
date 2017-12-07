@@ -30,8 +30,8 @@ task<> say_hello_when_signalled(async_manual_reset_event& event)
 
 However, one of the common pitfalls of coroutines is that the coroutine can easily outlive the lifetime of the
 parameters, particularly if passing values by rvalue-reference. This can result in unexpected dangling references
-within the coroutine. For an in-depth discussion of the issue see Toby Allsop's article
-[Coroutines and Reference Parameters|https://toby-allsopp.github.io/2017/04/22/coroutines-reference-params.html].
+within the coroutine. For an in-depth discussion of the issue see Toby Allsopp's article
+[Coroutines and Reference Parameters](https://toby-allsopp.github.io/2017/04/22/coroutines-reference-params.html).
 
 For example: An error prone implementation of `make_task()`
 ```c++
