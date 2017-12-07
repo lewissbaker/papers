@@ -1,14 +1,20 @@
-* Add an `operator co_await` for `std::reference_wrapper<T>`
+---
+author: Lewis Baker
+reply_to: ...
+audience: Library Evolution
+---
 
-** Summary
+# Add an `operator co_await` for `std::reference_wrapper<T>`
+
+## Summary
 
 I am proposing that we extend the `std::reference_wrapper<T>` type to conditionally provide an
 `operator co_await` if and only if type `T&` is awaitable.
 
-This allows passing awaitable objects by reference into generic coroutines that normaly takes
-arguments by value for safety reasons
+This allows passing awaitable objects by reference into template coroutine functions that normally
+take arguments by value by using `std::ref()`.
 
-** Rationale
+## Rationale
 
 There are cases where I've needed to be able to pass a reference to an awaitable type into a coroutine
 and then be able to `co_await` that reference from within the coroutine.
@@ -83,7 +89,7 @@ The problem with this approach, however, is that `std::reference_wrapper<T>` doe
 `operator co_await()` and so is not awaitable. Ideally, `std::reference_wrapper<T>` would be awaitable
 if type, `T` is awaitable.
 
-** Possible Implementation
+## Possible Implementation
 
 Below is a prototype implementation of `operator co_await` for `std::reference_wrapper<T>`.
 You can also try out this code using Compiler Explorer here: https://godbolt.org/g/WSCMw1
