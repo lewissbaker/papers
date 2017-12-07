@@ -39,7 +39,7 @@ template<typename AWAITABLE>
 auto make_task(AWAITABLE&& awaitable)
 -> task<await_result_t<AWAITABLE>>
 {
-  co_return co_await std::forward<AWAITABLE(awaitable);
+  co_return co_await std::forward<AWAITABLE>(awaitable);
 }
 
 task<> buggy()
