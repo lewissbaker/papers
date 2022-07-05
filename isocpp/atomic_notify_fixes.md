@@ -226,7 +226,7 @@ store + notify steps. However, as whether or not this is valid is implementation
 the implementation can do this in such a way that it does not invoke the undefined behaviour that
 would be involved if user-code were to attempt the same thing.
 
-This option proposes adding the enum `memory_notification` and the following overloads to the `std::atomic` class:
+This option proposes adding the enum `memory_notification`: and the following overloads to the `std::atomic` class:
 ```c++
 namespace std {
   enum class memory_notification : unspecified {
@@ -237,7 +237,12 @@ namespace std {
   inline constexpr auto memory_notify_none = memory_notification::notify_none;
   inline constexpr auto memory_notify_one = memory_notification::notify_one;
   inline constexpr auto memory_notify_all = memory_notification::notify_all;
+}
+```
 
+Adding the following overloads to the primary template for `std::atomic` class:
+```c++
+namespace std {
   template<class T> struct atomic {
     // ... existing methods omitted for brevity
 
@@ -264,7 +269,7 @@ namespace std {
 }
 ```
 
-And to add the following methods to specialisations of `std::atomic` for integral types
+Adding the following methods to specialisations of `std::atomic` for integral types
 ```c++
 namespace std {
   template<> struct atomic<integral> {
@@ -307,9 +312,9 @@ namespace std {
   };
 ```
 
-And adding similar overloads to `std::atomic_ref` (omitted for brevity)
+Adding similar overloads to `std::atomic_ref` (omitted for brevity)
 
-And adding the following namespace-scope overloads:
+Adding the following namespace-scope overloads:
 ```c++
 namespace std {
   template<class T>
@@ -430,7 +435,6 @@ namespace std {
 }
 ```
 
-
 Where each of the overloads taking a `memory_notification` is equivalent to executing
 the corresponding overload without the `memory_notification` parameter, but with the
 semantic that if the operation stores a value to the atomic variable then it
@@ -474,7 +478,7 @@ bool atomic<T>::compare_exchange_strong(T& old_val, T new_val, memory_notificati
 In practice, existing implementations should be able to call through to the underlying OS
 syscall after performing the atomic operation (i.e. call one of `WakeByAddressSingle/All()`
 or `futex()` depending on the platform), or on platforms without the OS primitives, in
-terms of statically-allocated synchronisation state (e.g. using a mutex/condition-variable).
+terms of operations on statically-allocated synchronisation state (e.g. using a mutex/condition-variable).
 
 For example: On Windows 8 or later
 ```c++
@@ -613,7 +617,7 @@ to use efficiently for scenarios where a preceding write to the atomic object ma
 be destroyed.
 
 This limits the ability for users to implement synchronisation primitives like `std::counting_semaphore` in
-terms of `std::atomic` without relying on implementation-specific behaviour 
+terms of `std::atomic` without relying on implementation-specific behaviour.
 
 We can either pursue language improvements that make it valid to call (some of) the existing notifying functions
 with the address of a potentially destroyed atomic object, or we can pursue a library solution that provides
