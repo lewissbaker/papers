@@ -553,8 +553,8 @@ struct __wait_state {
             std::unique_lock __lk{_M_mut};
             if (_M_version == __prev_version) {
                 _M_cv.wait(__lk);
-                __prev_version = _M_version;
             }
+                __prev_version = _M_version;
         }
         _M_waiters.fetch_sub(1, std::memory_order_release);
     }
