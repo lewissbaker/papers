@@ -1,10 +1,19 @@
 ---
-document: D2616R0
+document: P2616R0
 title: Making std::atomic notification/wait operations usable in more situations
 author: Lewis Baker <lewissbaker@gmail.com>
+date: 2022-07-05
 target: C++26
 audience: SG1
 ---
+
+- [Abstract](#abstract)
+- [Motivation](#motivation)
+- [Option 1 - Allow namespace-scope function `std::atomic_notify_one/all` to accept pointer to potentially-destroyed object](#option-1---allow-namespace-scope-function-stdatomic_notify_oneall-to-accept-pointer-to-potentially-destroyed-object)
+- [Option 2 - Add fused store-and-notify methods for each atomic operation](#option-2---add-fused-store-and-notify-methods-for-each-atomic-operation)
+  - [Other implementations considered](#other-implementations-considered)
+- [Conclusion](#conclusion)
+- [References](#references)
 
 # Abstract
 
