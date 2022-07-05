@@ -77,7 +77,7 @@ T1: executes `x.notify_one()` on a now destroyed object `x` (#4)
 ```
 
 To work around this potential for operating on a dangling reference, we can use two
-separate atomic variables - `wait()` on one and the spin-wait on the second.
+separate atomic variables - `wait()` on one and then spin-wait on the other.
 
 ```c++
 int main() {
@@ -130,9 +130,9 @@ Indeed, if we look at some of the standard library implementations of `std::coun
 see that they do actually follow the same pattern as above for the `release()` operation - an atomic
 store followed by a call to either `notify_all()` or `notify_one()` on the atomic object.
 
-See [libc++ counting_semaphore::release() implementation](https://github.com/llvm/llvm-project/blob/643df8fa8ef58d883cbb554c7e71910dc8a8673c/libcxx/include/semaphore#L90-L99).
-See [libstdc++ counting_semaphore::release() implementation](https://github.com/gcc-mirror/gcc/blob/8467574d8daac47e0cf5b694f6c012aad8d630a6/libstdc%2B%2B-v3/include/bits/semaphore_base.h#L248-L259)
-See [msvc counting_semaphore::release() implementation](https://github.com/microsoft/STL/blob/c34f24920e463a71791c2ee3d2bed14926518965/stl/inc/semaphore#L74-L112)
+* See [libc++ counting_semaphore::release() implementation](https://github.com/llvm/llvm-project/blob/643df8fa8ef58d883cbb554c7e71910dc8a8673c/libcxx/include/semaphore#L90-L99).
+* See [libstdc++ counting_semaphore::release() implementation](https://github.com/gcc-mirror/gcc/blob/8467574d8daac47e0cf5b694f6c012aad8d630a6/libstdc%2B%2B-v3/include/bits/semaphore_base.h#L248-L259)
+* See [msvc counting_semaphore::release() implementation](https://github.com/microsoft/STL/blob/c34f24920e463a71791c2ee3d2bed14926518965/stl/inc/semaphore#L74-L112)
 
 So why don't they run into the same lifetime issues?
 
@@ -554,7 +554,7 @@ struct __wait_state {
             if (_M_version == __prev_version) {
                 _M_cv.wait(__lk);
             }
-                __prev_version = _M_version;
+            __prev_version = _M_version;
         }
         _M_waiters.fetch_sub(1, std::memory_order_release);
     }
