@@ -1,8 +1,8 @@
 ---
-document: P2616R0
+document: P2616R1
 title: Making std::atomic notification/wait operations usable in more situations
 author: Lewis Baker <lewissbaker@gmail.com>
-date: 2022-07-05
+date: 2022-11-09
 target: C++26
 audience: SG1
 ---
@@ -14,6 +14,19 @@ audience: SG1
   - [Other implementations considered](#other-implementations-considered)
 - [Conclusion](#conclusion)
 - [References](#references)
+
+# Revision History
+
+## R1
+
+- Added Option 3 - `atomic_notify_token` approach.
+- Incorporate feedback on limitations of option 2.
+
+## R0
+
+Proposed two options.
+- Option 1 - allow `std::atomic_notify_one/all()` on potentially destroyed pointer
+- Option 2 - add fused modify + notify overloads, `std::memory_notification` enum
 
 # Abstract
 
@@ -31,23 +44,33 @@ calling `notify_one()` on a destroyed object if the waiting thread sees the stor
 immediately completes without waiting to be notified and destroys the atomic object before
 the signalling thread completes the call to `notify_one()`.
 
-This paper proposes two potential directions for solving this, for consideration by
+This paper proposes three potential directions for solving this, for consideration by
 the concurrency sub-group.
 1. Change the semantics of namespace-scope `std::atomic_notify_one()` and `std::atomic_notify_all()`
    to allow passing a pointer to a `std::atomic` object whose lifetime may have ended.
 2. For each operation that can result in a store to the atomic variable, add a new overload
    that takes a `std::memory_notification` enum value and that fuses the store operation
    with a corresponding notify operation such that the operations are (as if) performed atomically.
+3. Provide the ability to obtain an `atomic_notify_token` from the atomic object which can be
+   used to safely notify threads waiting on the atomic object even if the atomic object is
+   potentially destroyed.
 
 The first option is arguably a simpler change to the specification and is possibly the preferable
 approach if concerns about pointer providence and the potential for undefined-behaviour passing
 pointers to destroyed objects can be overcome with core language changes proposed by the "pointer zap"
 papers (P1726 and P2188).
 
+The second and third options do not have the same requirements for core language changes and thus
+can provide a solution independent of core-language changes.
+
 The second option is a much larger interface change to `std::atomic`, involving adding about
 20 new overloads to the `std::atomic` and `std::atomic_ref` classes and additional overloads
-of the namespace-scope atomic functions. However, this option does not have the same requirements
-for core language changes and thus can provide a solution independent of core-language changes.
+of the namespace-scope atomic functions. However, it also has some limitations in terms of ability
+to support safe conditional notification based on the previous value of a RMW operation.
+
+The third option is a much smaller library change - adding a single new method to `std::atomic` and
+`std::atomic_ref` and also adding a new type `std::atomic_notify_token`. This option does not have
+the same limitations on usage as option 2.
 
 I am seeking guidance from the Concurrency sub-group on the preferred direction for addressing
 the issue.
@@ -619,19 +642,177 @@ void std::counting_semaphore<LeastMaxValue>::release(ptrdiff_t update) {
 }
 ```
 
+## Limitations
+
+This option does have some limitations, which were pointed out on the reflector.
+
+Consider the use-cases where the semaphore implementation above wants to conditionally notify
+other threads only if we are incrementing the available count from zero (acquiring threads
+call `counter_.wait(0)`).
+
+```c++
+template<std::ptrdiff_t LeastMaxValue>
+void std::counting_semaphore<LeastMaxValue>::release(ptrdiff_t update) {
+  if (counter_.fetch_add(update, memory_order_release) == 0)
+    counter_.notify_all();
+}
+```
+
+The fused write+notify operations do not provide enough flexibility to support this conditional
+notification safely without resorting to a compare-exchange loop.
+
+For example:
+```c++
+template<std::ptrdiff_t LeastMaxValue>
+void std::counting_semaphore<LeastMaxValue>::release(ptrdiff_t update) {
+  auto old = counter_.load(memory_order_relaxed);
+  while (!counter_.compare_exchange_weak(old, old + 1,
+                                         old == 0 ? memory_notify_all : memory_notify_none,
+                                         memory_order_release, memory_order_relaxed))
+  {}
+}
+```
+
+# Option 3 - Atomic Notify Token
+
+The final option considered here takes the approach of adding a method that lets users obtain from
+an atomic a token that can later be used to notify entities waiting on the atomic from which it was
+obtained, even if the atomic object has since been destroyed.
+
+Synopsis:
+```c++
+namespace std {
+  template<typename T>
+  class atomic_notify_token;
+
+  template<typename T>
+  class atomic {
+  public:
+    // Existing members...
+    
+    atomic_notify_token<T> get_notify_token() noexcept;
+    
+  };
+  
+  template<typename T>
+  class atomic_ref {
+  public:
+    // Existing members...
+    
+    atomic_notify_token<T> get_notify_token() noexcept;
+  };
+  
+  template<typename T>
+  class atomic_notify_token {
+  public:
+    // Copyable
+    atomic_notify_token(const atomic_notify_token&) noxcept = default;
+    atomic_notify_token& operator=(const atomic_notify_token&) noxcept = default;
+    
+    // Perform notifications
+    void notify_one() const noexcept;
+    void notify_all() const noexcept;
+  private:
+    // exposition-only
+    friend class atomic<T>;
+    explicit atomic_notify_token(std::uintptr_t p) noexcept : address(p) {}
+    std::uintptr_t address;
+  };
+  
+}
+```
+
+The idea behind this is that the token can hold enough information to be able to notify waiting
+threads without necessarily doing anything that might cause undefined behaviour if the atomic
+object is potentially destroyed.
+
+## Potential Implementation Strategies
+
+On platforms that use a `futex()`-like OS API to implement waiting, the token could hold the address
+of the object (e.g. as a `void*` or `std::uintptr_t`) assuming on this particular implementation that
+was valid if the object is subsequently destroyed.
+
+Example: Possible implementation on Windows
+```c++
+template<typename T>
+class atomic_notify_token {
+public:
+  void notify_one() noexcept { WakeByAddressSingle(ptr); }
+  void notify_all() noexcept { WakeByAddressAll(ptr); }
+private:
+  friend class atomic<T>;
+  explicit atomic_notify_token(void* p) noexcept : ptr(p) {}
+  void* ptr;
+};
+```
+
+On platforms without native OS support for address-based notification, the token could hold
+a pointer to the state used to manage the waiters.
+
+For example: Using the `__wait_state*` from the example described in Option 2 above.
+```c++
+template<typename T>
+class atomic_notify_token {
+public:
+  void notify_one() noexcept { __state_->__notify(); }
+  void notify_all() noexcept { __state->__notify(); }
+private:
+  explicit atomic_notify_token(__wait_state* __s) noexcept : __state_(__s) {}
+  __wait_state* __state_;
+};
+
+template<typename T>
+atomic_notify_token<T> atomic<T>::get_notify_token() noexcept {
+  __wait_state& __s = __wait_state::__for_address(this);
+  return atomic_notify_token<T>{&__s};
+}
+```
+
+In this case, the `__wait_state*` object is computed from the address of the atomic object while
+the atomic object is still alive. Once the address of the `__wait_state` object is computed there
+is no need for the atomic object address any more - and thus no potential for using a pointer to
+a potentially destroyed object.
+
+## Why is `atomic_notify_token<T>` a template?
+
+The token type is a class-template to allow for specialisations of `atomic_notify_token<T>` to
+use different strategies for different `T` types.
+
+On some platforms, the native os wait/notify functions only work with certain sized types.
+e.g. 4 byte integers. Types with a different size might dispatch to a different implementation
+that uses a proxy 4-byte value for waiting.
+
+## Example usage
+
+The `counting_semaphore::release()` method could be implemented as follows:
+```c++
+template<std::ptrdiff_t LeastMaxValue>
+void std::counting_semaphore<LeastMaxValue>::release(ptrdiff_t update) {
+  // Obtain the token before the operation that might end the lifetime
+  auto token = counter_.get_notify_token();
+  if (counter_.fetch_add(update, memory_order_release) == 0) {
+    // Use the token after the operation that might end the lifetime to notify waiting threads
+    token.notify_all();
+  }
+}
+```
+
 # Conclusion
 
 The current separation of `std::atomic::notify_one/all` from the store operation makes it difficult/impossible
-to use efficiently for scenarios where a preceding write to the atomic object may cause the atomic object to
+to use efficiently and safely for scenarios where a preceding write to the atomic object may cause the atomic object to
 be destroyed.
 
 This limits the ability for users to implement synchronisation primitives like `std::counting_semaphore` in
 terms of `std::atomic` without relying on implementation-specific behaviour.
 
-We can either pursue language improvements that make it valid to call (some of) the existing notifying functions
-with the address of a potentially destroyed atomic object, or we can pursue a library solution that provides
-new overloads to atomic operations that atomically store a value and notify waiting threads so that we avoid
-the lifetime issues for 
+This paper lists three potential design directions we could take to address this shortcoming:
+1. We can pursue language improvements that make it valid to call (some of) the existing notifying functions
+   with the address of a potentially destroyed atomic object.
+2. We can pursue a library solution that provides new overloads to atomic operations that as-if atomically store a
+   value and notify waiting threads so that we avoid the lifetime issues.
+3. We can pursue a library solution based on obtaning a token that can be used to notify waiting threads
+   safely, even if the original atomic object is potentially destroyed.
 
 I am seeking guidance from the Concurrency sub-group on the preferred direction and can produce proposed
 wording in a subsequent revision based on this guidance.
