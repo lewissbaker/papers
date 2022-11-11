@@ -925,7 +925,7 @@ Add the following to the end of the section:
 >
 > _Remarks_: This function is an atomic notifying operation (`[atomics.wait]`).
 >
-> `void notify_one() const noexcept;`
+> `void notify_all() const noexcept;`
 >
 > _Effects_: If `*this` was obtained from an atomic object, `M`, and `M`'s lifetime has not yet ended
 > then unblocks the execution of all atomic waiting operations on `M` that are eligible
@@ -957,7 +957,7 @@ Add the following to the end of the section:
 >
 > _Remarks_: This function is an atomic notifying operation (`[atomics.wait]`).
 >
-> `void notify_one() const noexcept;`
+> `void notify_all() const noexcept;`
 >
 > _Effects_: If `*this` was obtained from an atomic object, `M`, and `M`'s lifetime has not yet ended
 > then unblocks the execution of all atomic waiting operation on `M` that are eligible
