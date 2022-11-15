@@ -1,8 +1,8 @@
 ---
-document: D2616R2
+document: P2616R2
 title: Making std::atomic notification/wait operations usable in more situations
 author: Lewis Baker <lewissbaker@gmail.com>
-date: 2022-11-11
+date: 2022-11-16
 target: C++26
 audience: SG1
 ---
@@ -23,6 +23,7 @@ audience: SG1
 - Rephrase abstract
 - Add design discussion
 - Add proposed wording
+- Extend changes to `atomic_flag`
 
 ## R1
 
@@ -55,7 +56,7 @@ on a pointer to an object whose lifetime has ended has undefined behaviour.
 This paper proposes introducing a new API for obtaining a `std::atomic_notify_token<T>` from
 a `std::atomic<T>` or `std::atomic_ref<T>` which can then be used to notify threads waiting
 on that atomic object without worrying about whether the underlying atomic object is still
-alive. It also proposes adding a new API for obtaining a `std::atomic_flag_notify_token`from
+alive. It also proposes adding a new API for obtaining a `std::atomic_flag_notify_token` from
 a `std::atomic_flag`.
 
 This paper also proposes deprecating the existing `notify_one()` and `notify_all()` member
@@ -197,11 +198,11 @@ of the change.
 This paper proposes the following:
 
 * Adding the `std::atomic_notify_token<T>` class template which provides an interface for
-  safely notifying threads waiting on 
-* Adding the `get_notify_token()` member function to `std::atomic<T>` and `std::atomic_ref<T>` member
-  functions for obtaining a notify-token for the corresponding atomic object.
-* Marking the `notify_one()` and `notify_all()` member functions of `std::atomic<T>` and
-  `std::atomic_ref<T>` as deprecated.
+  safely notifying threads waiting on the value to change.
+* Adding the `get_notify_token()` member function to `std::atomic<T>`, `std::atomic_ref<T>` and `std::atomic_flag` types
+  for obtaining a notify-token for the corresponding atomic object.
+* Marking the `notify_one()` and `notify_all()` member functions of `std::atomic<T>`,
+  `std::atomic_ref<T>` and `std::atomic_flag` as deprecated.
 
 Synopsis:
 ```c++
@@ -214,8 +215,8 @@ namespace std {
   public:
     // Existing members...
     
-	[[deprecated]] void notify_one() noexcept;
-	[[deprecated]] void notify_all() noexcept;
+	  [[deprecated]] void notify_one() noexcept;
+	  [[deprecated]] void notify_all() noexcept;
 	
     atomic_notify_token<T> get_notify_token() noexcept;
     
@@ -226,10 +227,20 @@ namespace std {
   public:
     // Existing members...
 	
-	[[deprecated]] void notify_one() noexcept;
-	[[deprecated]] void notify_all() noexcept;
+	  [[deprecated]] void notify_one() noexcept;
+	  [[deprecated]] void notify_all() noexcept;
     
     atomic_notify_token<T> get_notify_token() noexcept;
+  };
+
+  class atomic_flag {
+  public:
+    // Existing members...
+
+	  [[deprecated]] void notify_one() noexcept;
+	  [[deprecated]] void notify_all() noexcept;
+    
+    atomic_flag_notify_token get_notify_token() noexcept;
   };
   
   template<typename T>
@@ -238,6 +249,22 @@ namespace std {
     // Copyable
     atomic_notify_token(const atomic_notify_token&) noxcept = default;
     atomic_notify_token& operator=(const atomic_notify_token&) noxcept = default;
+    
+    // Perform notifications
+    void notify_one() const noexcept;
+    void notify_all() const noexcept;
+  private:
+    // exposition-only
+    friend class atomic<T>;
+    explicit atomic_notify_token(std::uintptr_t p) noexcept : address(p) {}
+    std::uintptr_t address;
+  };
+
+  class atomic_flag_notify_token {
+  public:
+    // Copyable
+    atomic_flag_notify_token(const atomic_flag_notify_token&) noxcept = default;
+    atomic_flag_notify_token& operator=(const atomic_flag_notify_token&) noxcept = default;
     
     // Perform notifications
     void notify_one() const noexcept;
@@ -260,17 +287,17 @@ int main() {
   {
     std::atomic<int> x{0};
     tp.execute([&] {
-	  // Obtain a notify-token while the object is definitely still alive.
+	    // Obtain a notify-token while the object is definitely still alive.
       auto tok = x.get_notify_token();
 	  
-	  // Perform the store - this may cause wait() to return and the main
-	  // thread to destroy `x'.
+	    // Perform the store - this may cause wait() to return and the main
+	    // thread to destroy `x'.
       x.store(1);
 	  
       // `x' is potentially destroyed from this point on
 	  
-	  // Safely notify any objects still waiting on `x' (if any)
-	  tok.notify_one();
+	    // Safely notify any objects still waiting on `x' (if any)
+	    tok.notify_one();
     });
     x.wait(0);
     assert(x.load() == 1);
@@ -548,7 +575,7 @@ public:
 > - `atomic_­flag_­notify_­one` and `atomic_­flag_­notify_­all`, and
 > - `atomic_­ref<T>​::​notify_­one` and `atomic_­ref<T>​::​notify_­all`, and
 > - <span style="color:green"><code style="color:green">atomic_notify_token&lt;T&gt;::notify_one</code> and <code style="color:green">atomic_notify_token&lt;T&gt;::notify_all</code></span>, and
-> - 
+> - <span style="color:green"><code style="color:green">atomic_flag_notify_token::notify_one</code> and <code style="color:green">atomic_flag_notify_token::notify_all</code></span>
 >
 > — end note\]
 
