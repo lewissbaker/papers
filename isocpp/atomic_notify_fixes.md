@@ -1,5 +1,5 @@
 ---
-document: P2616R2
+document: D2616R3
 title: Making std::atomic notification/wait operations usable in more situations
 author: Lewis Baker <lewissbaker@gmail.com>
 date: 2022-11-16
@@ -16,6 +16,11 @@ audience: SG1
 - [References](#references)
 
 # Revision History
+
+## R3
+
+- Rename `atomic_notify_token` to `notify_token` and change template
+  parameter to be the atomic-object type rather than the value-type.
 
 ## R2
 
@@ -53,11 +58,10 @@ has observed the store, the signalling thread's subsequent call to the atomic ob
 This is becasue the standard `[basic.life]` p6.2 states that a call to a member function
 on a pointer to an object whose lifetime has ended has undefined behaviour. 
 
-This paper proposes introducing a new API for obtaining a `std::atomic_notify_token<T>` from
-a `std::atomic<T>` or `std::atomic_ref<T>` which can then be used to notify threads waiting
-on that atomic object without worrying about whether the underlying atomic object is still
-alive. It also proposes adding a new API for obtaining a `std::atomic_flag_notify_token` from
-a `std::atomic_flag`.
+This paper proposes introducing a new API for obtaining a `std::notify_token<Atomic>` from
+a `std::atomic<T>`, `std::atomic_ref<T>` or `std::atomic_flag` which can then be used to
+notify threads waiting on that atomic object without worrying about whether the underlying
+atomic object is still alive.
 
 This paper also proposes deprecating the existing `notify_one()` and `notify_all()` member
 functions of `std::atomic`, `std::atomic_ref` and `std::atomic_flag` types.
@@ -197,7 +201,7 @@ of the change.
 
 This paper proposes the following:
 
-* Adding the `std::atomic_notify_token<T>` class template which provides an interface for
+* Adding the `std::notify_token<Atomic>` class template which provides an interface for
   safely notifying threads waiting on the value to change.
 * Adding the `get_notify_token()` member function to `std::atomic<T>`, `std::atomic_ref<T>` and `std::atomic_flag` types
   for obtaining a notify-token for the corresponding atomic object.
@@ -207,72 +211,61 @@ This paper proposes the following:
 Synopsis:
 ```c++
 namespace std {
-  template<typename T>
-  class atomic_notify_token;
+  template<typename Atomic>
+  class notify_token;
 
   template<typename T>
   class atomic {
   public:
     // Existing members...
     
-	  [[deprecated]] void notify_one() noexcept;
-	  [[deprecated]] void notify_all() noexcept;
-	
-    atomic_notify_token<T> get_notify_token() noexcept;
-    
+    [[deprecated]] void notify_one() noexcept;
+    [[deprecated]] void notify_one() volatile noexcept;
+    [[deprecated]] void notify_all() noexcept;
+    [[deprecated]] void notify_all() volatile noexcept;
+  
+    notify_token<atomic<T>> get_notify_token() noexcept;
+    notify_token<volatile atomic<T>> get_notify_token() volatile noexcept;
   };
   
   template<typename T>
   class atomic_ref {
   public:
     // Existing members...
-	
-	  [[deprecated]] void notify_one() noexcept;
-	  [[deprecated]] void notify_all() noexcept;
+  
+    [[deprecated]] void notify_one() noexcept;
+    [[deprecated]] void notify_all() noexcept;
     
-    atomic_notify_token<T> get_notify_token() noexcept;
+    notify_token<atomic_ref<T>> get_notify_token() noexcept;
   };
 
   class atomic_flag {
   public:
     // Existing members...
 
-	  [[deprecated]] void notify_one() noexcept;
-	  [[deprecated]] void notify_all() noexcept;
+    [[deprecated]] void notify_one() noexcept;
+    [[deprecated]] void notify_one() volatile noexcept;
+    [[deprecated]] void notify_all() noexcept;
+    [[deprecated]] void notify_all() volatile noexcept;
     
-    atomic_flag_notify_token get_notify_token() noexcept;
+    notify_token<atomic_flag> get_notify_token() noexcept;
+    notify_token<volatile atomic_flag> get_notify_token() volatile noexcept;
   };
   
-  template<typename T>
-  class atomic_notify_token {
+  template<typename Atomic>
+  class notify_token {
   public:
     // Copyable
-    atomic_notify_token(const atomic_notify_token&) noxcept = default;
-    atomic_notify_token& operator=(const atomic_notify_token&) noxcept = default;
+    notify_token(const notify_token&) noxcept = default;
+    notify_token& operator=(const notify_token&) noxcept = default;
     
     // Perform notifications
     void notify_one() const noexcept;
     void notify_all() const noexcept;
   private:
     // exposition-only
-    friend class atomic<T>;
-    explicit atomic_notify_token(std::uintptr_t p) noexcept : address(p) {}
-    std::uintptr_t address;
-  };
-
-  class atomic_flag_notify_token {
-  public:
-    // Copyable
-    atomic_flag_notify_token(const atomic_flag_notify_token&) noxcept = default;
-    atomic_flag_notify_token& operator=(const atomic_flag_notify_token&) noxcept = default;
-    
-    // Perform notifications
-    void notify_one() const noexcept;
-    void notify_all() const noexcept;
-  private:
-    // exposition-only
-    friend class atomic<T>;
-    explicit atomic_notify_token(std::uintptr_t p) noexcept : address(p) {}
+    friend Atomic;
+    explicit notify_token(std::uintptr_t p) noexcept : address(p) {}
     std::uintptr_t address;
   };
 }
@@ -287,17 +280,17 @@ int main() {
   {
     std::atomic<int> x{0};
     tp.execute([&] {
-	    // Obtain a notify-token while the object is definitely still alive.
+      // Obtain a notify-token while the object is definitely still alive.
       auto tok = x.get_notify_token();
-	  
-	    // Perform the store - this may cause wait() to return and the main
-	    // thread to destroy `x'.
+    
+      // Perform the store - this may cause wait() to return and the main
+      // thread to destroy `x'.
       x.store(1);
-	  
+    
       // `x' is potentially destroyed from this point on
-	  
-	    // Safely notify any objects still waiting on `x' (if any)
-	    tok.notify_one();
+    
+      // Safely notify any objects still waiting on `x' (if any)
+      tok.notify_one();
     });
     x.wait(0);
     assert(x.load() == 1);
@@ -335,7 +328,7 @@ on the result of a read-modify-write operation.
 
 This would not be possible were we to take a fused store-and-notify approach.
 
-## Why is `std::atomic_notify_token` a template?
+## Why is `std::notify_token` a template?
 
 The strategy used for notify/wait can vary depending on the type of value being synchronised.
 
@@ -344,9 +337,18 @@ for 32-bit values. When notifying/waiting for types that are not 32-bits in size
 implementation needs to use a proxy 32-bit value which is incremented for every call to notify.
 
 As different types of atomics may need to have different strategies for notification, the
-`atomic_notify_token` needs to be be a type that depends on the type of atomic value.
+`notify_token` needs to be be a type that depends on the type of atomic value.
 
-## Const-qualification of `get_notify_token()` and `atomic_notify_token` methods
+Having the template parameter be the type of the atomic object rather than the value-type
+of the atomic object allows for different implementation strategies for `atomic<T>` and
+`atomic_ref<T>` (some `atomic_ref<T>` implementations might use an external lock while
+`atomic<T>` might use an internal lock).
+
+It also allows having different specialisations for `Atomic` and `volatile Atomic`
+in case implementations need the flexibility to do something different for notifying
+volatile-qualified atomic objects.
+
+## Const-qualification of `get_notify_token()` and `notify_token` methods
 
 The status quo is that the `std::atomic` methods `notify_one()` and `notify_all()`
 methods are non-const and thus are only callable on a non-const `std::atomic` value.
@@ -367,16 +369,23 @@ would be easily worked around by just copying the token.
 This paper proposes introducing a new namespace-scope class template `std::atomic_notify_token<T>`.
 
 This type is needed by methods in both `std::atomic<T>` and `std::atomic_ref<T>`.
-	
+  
 An alternative to consider is defining a nested `std::atomic<T>::notify_token` type and
 then defining `std::atomic_ref<T>::notify_token` as a type-alias of `std::atomic<T>::notify_token`.
 However, this would have the consequence of forcing an template instantiation of `std::atomic<T>`
 for every template instantiation of `std::atomic_ref<T>`, even if it's not used.
 
-## Naming of `atomic_notify_token`
+## Naming of `notify_token`
 
 Is the use of the term "token" here consistent with other usages in the standard library?
-e.g. `std::stop_token`
+e.g. `std::stop_token`, `std::barrier::arrival_token` 
+
+A brief discussion of naming in SG1 Kona 2022 indicated there was no concern about reserving
+the name `notify_token` for use by the atomic notify/wait mechanisms.
+
+An alternative could be to name this `atomic_notify_token`, although this would then tend to
+duplicate the term "atomic" within specialisations.
+e.g. `std:::atomic_notify_token<std::atomic<int>>`
 
 ## Fixing `std::atomic_notify_one/all()`
 
@@ -416,96 +425,97 @@ primitives.
 For example: Given the following `__wait_state` helper class definition
 ```c++
 struct __wait_state {
-    std::atomic<uint64_t> _M_waiters{0};
-    std::mutex _M_mut;
-    std::condition_variable _M_cv;
-    std::uint64_t _M_version{0};
+  std::atomic<uint64_t> _M_waiters{0};
+  std::mutex _M_mut;
+  std::condition_variable _M_cv;
+  std::uint64_t _M_version{0};
 
-	// Get the wait state for a given address.
-    static __wait_state& __for_address(void* __address) noexcept {
-        constexpr std::uintptr_t __count = 16;
-        static __wait_state __w[__count];
-        auto __key = (reinterpret_cast<std::uintptr_t>(__address) >> 2) % __count;
-        return __w[__key];
+  // Get the wait state for a given address.
+  static __wait_state& __for_address(volatile void* __address) noexcept {
+    constexpr std::uintptr_t __count = 16;
+    static __wait_state __w[__count];
+    auto __key = (reinterpret_cast<std::uintptr_t>(__address) >> 2) % __count;
+    return __w[__key];
+  }
+
+  void __notify() noexcept {
+    if (_M_waiters.load() != 0) {
+      {
+        std::lock_guard __lk{_M_mut};
+        ++_M_version;
+      }
+      _M_cv.notify_all();
+    }
+  }
+
+  template<typename _Pred>
+  void __wait(_Pred __pred) noexcept {
+    for (int __i = 0; __i < 10; ++__i) {
+      if (__pred()) return;
+      __yield_thread();
     }
 
-    void __notify() noexcept {
-        if (_M_waiters.load() != 0) {
-            {
-                std::lock_guard __lk{_M_mut};
-                ++_M_version;
-            }
-            _M_cv.notify_all();
-        }
+    _M_waiters.fetch_add(1, std::memory_order_seq_cst);
+    std::uint64_t __prev_version = [&] {
+      std::unique_lock __lk{_M_mut};
+      return _M_version;
+    }();
+    while (!__pred()) {
+      std::unique_lock __lk{_M_mut};
+      if (_M_version == __prev_version) {
+        _M_cv.wait(__lk);
+      }
+      __prev_version = _M_version;
     }
-
-    template<typename _Pred>
-    void __wait(_Pred __pred) noexcept {
-        for (int __i = 0; __i < 10; ++__i) {
-            if (__pred()) return;
-            __yield_thread();
-        }
-
-        _M_waiters.fetch_add(1, std::memory_order_seq_cst);
-        std::uint64_t __prev_version = [&] {
-            std::unique_lock __lk{_M_mut};
-            return _M_version;
-        }();
-        while (!__pred()) {
-            std::unique_lock __lk{_M_mut};
-            if (_M_version == __prev_version) {
-                _M_cv.wait(__lk);
-            }
-            __prev_version = _M_version;
-        }
-        _M_waiters.fetch_sub(1, std::memory_order_release);
-    }
-}
+    _M_waiters.fetch_sub(1, std::memory_order_release);
+  }
+};
 ```
 
 The atomic notify/wait methods can then be defined as follows:
 ```c++
 namespace std {
 
-template<typename T>
-class atomic_notify_token {
+template<typename Atomic>
+class notify_token {
 public:
-	void notify_one() noexcept { __state_->__notify(); }
-	void notify_all() noexcept { __state_->__notify(); }
+  void notify_one() noexcept { __state_->__notify(); }
+  void notify_all() noexcept { __state_->__notify(); }
 private:
-    friend class atomic<T>;
-	friend class atomic_ref<T>;
-    explicit atomic_notify_token(__wait_state& __state) noexcept
-	: __state_(&__state) {}
-	__wait_state* __state_;
+  friend Atomic;
+  explicit atomic_notify_token(__wait_state& __state) noexcept
+  : __state_(&__state) {}
+  __wait_state* __state_;
 };
-	
+  
 template<typename T>
 class atomic {
 public:
   
   [[deprecated("Use get_notify_token().notify_one() instead")]]
   void notify_one() noexcept {
-	  get_notify_token().notify_one();
+    get_notify_token().notify_one();
   }
   
   [[deprecated("Use get_notify_token().notify_all() instead")]]
   void notify_all() noexcept {
-	  get_notify_token().notify_all();
+    get_notify_token().notify_all();
   }
 
-  atomic_notify_token<T> get_notify_token() noexcept {
-	  __wait_state& __s = __wait_state::__for_address(this);
-	  return atomic_notify_token<T>{__s};
+  notify_token<atomic<T>> get_notify_token() noexcept {
+    __wait_state& __s = __wait_state::__for_address(this);
+    return atomic_notify_token<T>{__s};
   }
-	
-  void wait(T __old, memory_order __mo) noexcept {
+
+  void wait(T __old, memory_order __mo = memory_order_seq_cst) const noexcept {
     auto __pred = [__mo, __old, this]() noexcept { return this->load(__mo) != __old; };
     auto& __s = __wait_state::__for_address(this);
     __s.wait(__pred);
   }
+
+  // NOTE: volatile overloads omitted for brevity.
 };
-	
+  
 } // namespace std
 ```
 
@@ -525,15 +535,15 @@ it defines it as valid to pass a pointer to a potentially destroyed object.
 Example: Possible implementation on Windows
 ```c++
 namespace std {
-	
-template<typename T>
-class atomic_notify_token {
+  
+template<typename Atomic>
+class notify_token {
 public:
   void notify_one() noexcept { WakeByAddressSingle(ptr); }
   void notify_all() noexcept { WakeByAddressAll(ptr); }
 private:
-  friend class atomic<T>;
-  explicit atomic_notify_token(void* p) noexcept : ptr(p) {}
+  friend Atomic;
+  explicit notify_token(void* p) noexcept : ptr(p) {}
   void* ptr;
 };
 
@@ -542,23 +552,25 @@ class atomic {
 public:
   [[deprecated("Use get_notify_token().notify_one() instead")]]
   void notify_one() noexcept {
-	get_notify_token().notify_one();
+    get_notify_token().notify_one();
   }
   
   [[deprecated("Use get_notify_token().notify_all() instead")]]
   void notify_all() noexcept {
-	get_notify_token().notify_all();
+    get_notify_token().notify_all();
   }
 
   atomic_notify_token<T> get_notify_token() noexcept {
-	return atomic_notify_token<T>{this};
+    return atomic_notify_token<T>{this};
   }
-	
-  void wait(T __old, memory_order __mo) noexcept {
-	while (load(__mo) == __old) {
-	  WaitOnAddress(this, std::addressof(__old), sizeof(T), INFINITE);
+  
+  void wait(T __old, memory_order __mo = memory_order_seq_cst) noexcept {
+    while (load(__mo) == __old) {
+      WaitOnAddress(this, std::addressof(__old), sizeof(T), INFINITE);
     }
   }
+
+  // NOTE: volatile overloads omitted for brevity
 };
 
 }
@@ -574,8 +586,7 @@ public:
 > - `atomic_­notify_­one` and `atomic_­notify_­all`,
 > - `atomic_­flag_­notify_­one` and `atomic_­flag_­notify_­all`, and
 > - `atomic_­ref<T>​::​notify_­one` and `atomic_­ref<T>​::​notify_­all`, and
-> - <span style="color:green"><code style="color:green">atomic_notify_token&lt;T&gt;::notify_one</code> and <code style="color:green">atomic_notify_token&lt;T&gt;::notify_all</code></span>, and
-> - <span style="color:green"><code style="color:green">atomic_flag_notify_token::notify_one</code> and <code style="color:green">atomic_flag_notify_token::notify_all</code></span>
+> - <span style="color:green"><code style="color:green">notify_token&lt;Atomic&gt;::notify_one</code> and <code style="color:green">notify_token&lt;Atomic&gt;::notify_all</code></span>, and
 >
 > — end note\]
 
@@ -592,7 +603,7 @@ namespace std {
     void wait(T, memory_order = memory_order::seq_cst) const noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_one() const noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_all() const noexcept;
-    <span style="color:green">atomic_notify_token&lt;T&gt; get_notify_token() const noexcept;</span>
+    <span style="color:green">notify_token&lt;atomic_ref&lt;T&gt;&gt; get_notify_token() const noexcept;</span>
   };
 }
 </pre>
@@ -618,11 +629,9 @@ Modify the following definitions:
 > _Remarks_: This function is an atomic notifying operation (`[atomics.wait]`) on atomic object
 > `*ptr`.
 
-
-
 Add following at end of the section:
 
-> `atomic_notify_token<T> get_notify_token() const noexcept;`
+> `notify_token<atomic_ref<T>> get_notify_token() const noexcept;`
 >
 > _Effects_: None.
 >
@@ -642,7 +651,7 @@ namespace std {
     void wait(<i>integral</i>, memory_order = memory_order::seq_cst) const noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_one() const noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_all() const noexcept;
-    <span style="color:green">atomic_notify_token&lt;T&gt; get_notify_token() const noexcept;</span>
+    <span style="color:green">notify_token&lt;atomic_ref&lt;<i>integral</i>&gt;&gt; get_notify_token() const noexcept;</span>
   };
 }
 </pre>
@@ -660,7 +669,7 @@ namespace std {
     void wait(<i>floating-point</i>, memory_order = memory_order::seq_cst) const noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_one() const noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_all() const noexcept;
-    <span style="color:green">atomic_notify_token&lt;T&gt; get_notify_token() const noexcept;</span>
+    <span style="color:green">notify_token&lt;atomic_ref&lt;<i>floating-point</i>&gt;&gt; get_notify_token() const noexcept;</span>
   };
 }
 </pre>
@@ -678,7 +687,7 @@ namespace std {
     void wait(T*, memory_order = memory_order::seq_cst) const noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_one() const noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_all() const noexcept;
-    <span style="color:green">atomic_notify_token&lt;T&gt; get_notify_token() const noexcept;</span>
+    <span style="color:green">notify_token&lt;atomic_ref&lt;T*&gt;&gt; get_notify_token() const noexcept;</span>
   };
 }
 </pre>
@@ -696,8 +705,8 @@ namespace std {
     <span style="color:green">[[deprecated]]</span> void notify_one() noexcept;    
     <span style="color:green">[[deprecated]]</span> void notify_all() volatile noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_all() noexcept;
-    <span style="color:green">atomic_notify_token&lt;T&gt; get_notify_token() volatile noexcept;</span>
-    <span style="color:green">atomic_notify_token&lt;T&gt; get_notify_token() noexcept;</span>
+    <span style="color:green">notify_token&lt;volatile atomic&lt;T&gt;&gt; get_notify_token() volatile noexcept;</span>
+    <span style="color:green">notify_token&lt;atomic&lt;T&gt;&gt; get_notify_token() noexcept;</span>
   };
 }
 </pre>
@@ -722,8 +731,8 @@ Make the following changes to existing methods:
 
 Add the following at the end of the section:
 
-> `atomic_notify_token<T> get_notify_token() volatile noexcept;`<br/>
-> `atomic_notify_token<T> get_notify_token() noexcept;`<br/>
+> `notify_token<volatile atomic<T>> get_notify_token() volatile noexcept;`<br/>
+> `notify_token<atomic<T>> get_notify_token() noexcept;`<br/>
 >
 > _Effects_: None
 >
@@ -742,8 +751,8 @@ namespace std {
     <span style="color:green">[[deprecated]]</span> void notify_one() noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_all() volatile noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_all() noexcept;
-    <span style="color:green">atomic_notify_token<T> get_notify_token() volatile noexcept;</span> 
-    <span style="color:green">atomic_notify_token<T> get_notify_token() noexcept;</span>    
+    <span style="color:green">notify_token&lt;volatile atomic&lt;<i>integral</i>&gt;&gt; get_notify_token() volatile noexcept;</span>
+    <span style="color:green">notify_token&lt;atomic&lt;<i>integral</i>&gt;&gt; get_notify_token() noexcept;</span>
   };
 }
 </pre>
@@ -760,8 +769,8 @@ namespace std {
     <span style="color:green">[[deprecated]]</span> void notify_one() noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_all() volatile noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_all() noexcept;
-    <span style="color:green">atomic_notify_token<T> get_notify_token() volatile noexcept;</span> 
-    <span style="color:green">atomic_notify_token<T> get_notify_token() noexcept;</span>    
+    <span style="color:green">notify_token&lt;volatile atomic&lt;<i>floating-point</i>&gt;&gt; get_notify_token() volatile noexcept;</span>
+    <span style="color:green">notify_token&lt;atomic&lt;<i>floating-point</i>&gt;&gt; get_notify_token() noexcept;</span>
   };
 }
 </pre>
@@ -778,8 +787,8 @@ namespace std {
     <span style="color:green">[[deprecated]]</span> void notify_one() noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_all() volatile noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_all() noexcept;
-    <span style="color:green">atomic_notify_token<T> get_notify_token() volatile noexcept;</span> 
-    <span style="color:green">atomic_notify_token<T> get_notify_token() noexcept;</span>    
+    <span style="color:green">notify_token&lt;volatile atomic&lt;T*&gt;&gt; get_notify_token() volatile noexcept;</span>
+    <span style="color:green">notify_token&lt;atomic&lt;T*&gt;&gt; get_notify_token() noexcept;</span>
   };
 }
 </pre>
@@ -796,7 +805,7 @@ namespace std {
     void wait(shared_ptr&lt;T&gt; old, memory_order order = memory_order::seq_cst) const noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_one() noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_all() noexcept;
-    <span style="color:green">atomic_notify_token&lt;shared_ptr&lt;T&gt;&gt; get_notify_token() noexcept;</span>    
+    <span style="color:green">notify_token&lt;atomic&lt;shared_ptr&lt;T&gt;&gt;&gt; get_notify_token() noexcept;</span>
   };
 }
 </pre>
@@ -817,7 +826,7 @@ Modify the method specifications as follows:
 
 Add the following to the end of the section:
 
-> `atomic_notify_token<shared_ptr<T>> get_notify_token() noexcept;`
+> `notify_token<atomic<shared_ptr<T>>> get_notify_token() noexcept;`
 >
 > _Effects_: None.
 >
@@ -836,7 +845,7 @@ namespace std {
     void wait(weak_ptr&lt;T&gt; old, memory_order order = memory_order::seq_cst) const noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_one() noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_all() noexcept;
-    <span style="color:green">atomic_notify_token&lt;weak_ptr&lt;T&gt;&gt; get_notify_token() noexcept;</span>    
+    <span style="color:green">notify_token&lt;atomic&lt;weak_ptr&lt;T&gt;&gt;&gt; get_notify_token() noexcept;</span>
   };
 }
 </pre>
@@ -857,7 +866,7 @@ Modify the method specifications as follows:
 
 Add the following to the end of the section:
 
-> `atomic_notify_token<weak_ptr<T>> get_notify_token() noexcept;`
+> `notify_token<atomic<weak_ptr<T>>> get_notify_token() noexcept;`
 >
 > _Effects_: None.
 >
@@ -878,8 +887,8 @@ namespace std {
     <span style="color:green">[[deprecated]]</span> void notify_one() noexcept;
     <span style="color:green">[[deprecated]]</span> void notify_all() noexcept volatile;
     <span style="color:green">[[deprecated]]</span> void notify_all() noexcept;
-    <span style="color:green">atomic_flag_notify_token get_notify_token() noexcept volatile;</span>    
-    <span style="color:green">atomic_flag_notify_token get_notify_token() noexcept;</span>    
+    <span style="color:green">notify_token&lt;volatile atomic_flag&gt; get_notify_token() noexcept volatile;</span>
+    <span style="color:green">notify_token&lt;atomic_flag&gt; get_notify_token() noexcept;</span>
   };
 }
 </pre>
@@ -906,7 +915,8 @@ Modify the method specifications as follows:
 
 Add the following to the end of the section:
 
-> `atomic_notify_token<weak_ptr<T>> get_notify_token() noexcept;`
+> `notify_token<volatile atomic_flag> get_notify_token() volatile noexcept;`
+> `notify_token<atomic_flag> get_notify_token() noexcept;`
 >
 > _Effects_: None.
 >
@@ -928,14 +938,14 @@ Add the following to the end of the section:
 > All copies of an atomic notify token obtained from atomic object `M` can be used to
 > unblock atomic waiting operations on `M`.
 >
-> ## Class template `atomic_notify_token`   `[atomics.notifytoken.generic]`
+> ## Class template `notify_token`   `[atomics.notifytoken.generic]`
 >
 > <pre>
 > namespace std {
->   template<class T> struct atomic_notify_token {
+>   template<class Atomic> struct notify_token {
 >   public:
->     atomic_notify_token(const atomic_notify_token&) noexcept = default;
->     atomic_notify_token& operator=(const atomic_notify_token&) noexcept = default;
+>     notify_token(const notify_token&) noexcept = default;
+>     notify_token& operator=(const notify_token&) noexcept = default;
 > 
 >     void notify_one() const noexcept;
 >     void notify_all() const noexcept;
@@ -956,38 +966,6 @@ Add the following to the end of the section:
 >
 > _Effects_: If `*this` was obtained from an atomic object, `M`, and `M`'s lifetime has not yet ended
 > then unblocks the execution of all atomic waiting operations on `M` that are eligible
-> to be unblocked (`[atomics.wait]`) by this call.
-> Otherwise has no effect.
->
-> _Remarks_: This function is an atomic notifying operation (`[atomics.wait]`).
-> ## Class `atomic_flag_notify_token`  `[atomics.notifytoken.flag]`
->
-> <pre>
-> namespace std {
->   struct atomic_flag_notify_token {
->   public:
->     atomic_flag_notify_token(const atomic_flag_notify_token&) noexcept;
->     atomic_flag_notify_token& operator=(const atomic_flag_notify_token&) noexcept;
-> 
->     void notify_one() const noexcept;
->     void notify_all() const noexcept;
->   };
-> }
-> </pre>
->
-> `void notify_one() const noexcept;`
->
-> _Effects_: If `*this` was obtained from an atomic object, `M`, and `M`'s lifetime has not yet ended
-> then unblocks the execution of at least one atomic waiting operation on `M` that is eligible
-> to be unblocked (`[atomics.wait]`) by this call, if any such atomic waiting operations exist.
-> Otherwise has no effect.
->
-> _Remarks_: This function is an atomic notifying operation (`[atomics.wait]`).
->
-> `void notify_all() const noexcept;`
->
-> _Effects_: If `*this` was obtained from an atomic object, `M`, and `M`'s lifetime has not yet ended
-> then unblocks the execution of all atomic waiting operation on `M` that are eligible
 > to be unblocked (`[atomics.wait]`) by this call.
 > Otherwise has no effect.
 >
