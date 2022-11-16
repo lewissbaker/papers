@@ -4,7 +4,7 @@ title: Making std::atomic notification/wait operations usable in more situations
 author: Lewis Baker <lewissbaker@gmail.com>
 date: 2022-11-16
 target: C++26
-audience: SG1
+audience: SG1, LEWG
 ---
 
 - [Abstract](#abstract)
