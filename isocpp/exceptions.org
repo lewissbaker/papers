@@ -1,12 +1,93 @@
-* Scratch
+* Abstract
 
-** ~throw()~ specifiers
+Exceptions are the C++ language's primary tool for communicating errors to callers.
+However, the dynamic exceptions we have today come with runtime overheads that
+cause many people to avoid using, or even completely disable exceptions in domains
+that are performance-sensitive.
+
+This leads to a variety of alternative error-signalling patterns being used in
+code-bases, including ~std::error_code~ out-parameters, or ~std::optional~,
+~std::variant~ and ~std::expected~ return-types. These alternatives have their
+limitations, however. For example, they are difficult/impossible to apply to
+constructors or overloaded operators, where we cannot change the return-type,
+or add additional out-parameters.
+
+Exceptions can also be problematic in embedded or safety-critical contexts, where
+the use of ~noexcept~ in conjunction with exceptions can potentially insert hidden
+calls to ~std::terminate()~, which is banned by some coding guidelines for
+safety-critical systems, and that might only be discovered as reachable at runtime.
+
+Both of these problems with exceptions can be somewhat traced back to the dynamic
+nature of C++ exceptions.
+
+This paper proposes introducing static exception specifications, repurposing the
+~throw()~ specification syntax which was removed in C++17, to provide additional
+type-information about the closed-set of possible exception types that might be
+thrown from a function, while avoiding the shortcomings of the previous design of
+throw-specifications.
+
+Function definitions with a ~throw()~ specification are statically checked by the
+compiler at compile-time to ensure that there are no code-paths that might allow
+exceptions to exit the function that would violate the declared throw-specification,
+rather than dynamically check this at runtime and terminate.
+
+While we are yet to gain implementation experience for this proposal, the design
+for static exception specifications should permit implementation strategies that
+can achieve efficiency of throwing exceptions close to that of normal return values,
+with exception objects able to be returned on the stack or in registers using
+similar conventions to normal return-values.
+
+This design is less limiting than the design proposed in [[https://wg21.link/P0709R4][P0709R4 - Zero-overhead deterministic exceptions: Throwing values]]
+in that it does not require the introduction of a special ~std::error~ type and
+does not require falling back to heap-allocation for exception types that do not
+fit in the small-object optimisation built into ~std::error~.
+
+This design does not change the semantics of existing C++20 code. It can be
+incrementally adopted throughout a code-base by annotating functions with
+static exception specifications using the ~throw()~ syntax where appropriate
+in much the same way that programmers could incrementally adopt ~noexcept~
+specifiers in their code-base when they were introduced.
+
+This proposal aims to enable use of static exception specifications in freestanding
+environments which were traditionally unable to use exceptions. The ability to enable
+compile-time checking that all exceptions are handled and that there are no hidden
+calls to ~std::terminate()~ inserted by the compiler due to unhandled exceptions
+also removes some barriers to C++ exceptions being used in embedded environments
+which cannot afford to terminate.
+
+* Motivation
+
+TODO: Basically see Herb's paper [[https://wg21.link/P0709][P0709]] for motivation on improving exceptions,
+which does a better job than I could of covering the background. Much of the
+same philosophy went into the design of this paper, albeit taking a slightly
+different approach.
+
+* Proposal
+
+** Overview
+
+Adds ~throw()~ specifiers which can be used to declare a function as having either
+a static exception specifier or dynamic exception specifier.
+
+Adds ~declthrow(expr)~ syntax for querying what set of exception types might be thrown
+from a particular exception.
+
+Defines rules for statically checking that the bodies of function definitions with
+~throw()~ specifiers do not violate their exception specification.
+
+** (Re)Adding ~throw()~ specifiers
 
 The original design of exceptions in C++ included a throw-specification that allowed
 the programmer to declare a list of exceptions that a function might exit with, by
 specifying the ~throw(E1, E2, E3)~ specifier after the function parameter list.
 
-The throw-specification as originally designed has a number of issues that limited
+For example:
+#+begin_src c++
+    void Example(const std::string_view& path)
+      throw(std::bad_alloc, std::system_error);
+#+end_src
+
+The throw-specification as originally designed had a number of issues that limited
 its usability and utility, and in time most people came to avoid the feature as its
 pitfalls outweighed the benefits of using it.
 
@@ -21,32 +102,30 @@ TODO: Elaborate on what the issues were
 In C++11, we introduced ~noexcept~, initially as a tool needed to restore the strong exception-safety
 guarantee to types like ~std::vector~ after the introduction of move-constructors.
 
-The original throw-specifications have since been deprecated and, in C++17, removed from the C++
-language. This frees up the syntax for being reused for a similar purpose, but with an improved
-design that tries to avoid the pitfalls of the original design.
+The original throw-specifications were deprecated along with the introduction of ~noexcept~ and,
+in C++17, were removed from the C++ language. This frees up the syntax for being reused for a similar
+purpose, albeit with an improved design that tries to avoid the pitfalls of the original design.
 
 ** Static exception specifications
 
 A /static exception specification/ is an exception specification that lists a finite
 list of possible exception types that a function may exit with.
 
-
-
 A /dynamic exception specification/ is an exception specification that allows the function
-to exit with any exception.
+to exit with any exception type.
 
-A /throw-specifier/ can be used to define either a static or dynamic exception specification.
+A /throw-specifier/ can be used to declare a function with either a static or dynamic exception specification.
 
 For example:
 #+BEGIN_SRC c++
-  void f() throw(); // equivalent to noexcept(true)     - static-exception-specification with empty exception type list
+  void f() throw();    // equivalent to noexcept(true)  - static-exception-specification with empty exception type list
   void g() throw(...); // equivalent to noexcept(false) - dynamic-exception-specification
   void g() throw(std::any_exception); // equivalent to throw(...) - see section on declthrow for rationale
-  void h() throw(E1); // throws only E1                 - static-exception-specification
+  void h() throw(E1);     // throws only E1             - static-exception-specification
   void i() throw(E1, E2); // throws either E1 or E2
-  void j() throw(Es...); // throws one of the types in pack Es...
-  void k() throw(auto); // set of exceptions it could throw is deduced from body of function
-                        // much like using decltype(auto) as the return-type.
+  void j() throw(Es...);  // throws one of the types in pack Es...
+  void k() throw(auto);   // set of exceptions it could throw is deduced from body of function,
+                          // much like using decltype(auto) to deduce the return-type.
 #+END_SRC
 
 A declaration signature of ~void foo() throw();~ is equivalent to ~void foo() noexcept;~.
@@ -66,7 +145,7 @@ result in a call to ~std::terminate~.
 
 Similarly, it is permitted to declare a function with the specifier ~noexcept(false)~ and define
 it with the specifier ~throw(...)~, and vica versa. However, there are no differences in semantics
-of the definition between these two.
+of the definition between these two syntaxes - they are pure aliases for each other.
 
 A forward declaration of a function with a non-empty static exception specification on its
 definition must have an equivalent static exception specification on the declaration.
@@ -74,27 +153,27 @@ definition must have an equivalent static exception specification on the declara
 *** Types in a throw-specification form an unordered set
 
 The order of the types in the throw-specification is not significant. The throw-specification
-is an unordered set of types rather than an ordered list of types.
+declares an unordered set of types that may be thrown, rather than an ordered list of types.
 
 Two throw-specifications are equivalent if they contain the same set of types, regardless
-of the order in which those types are listed
+of the order in which those types are listed.
 
 It is valid to list a type multiple times in a throw-specification.
 Duplicates are ignored/eliminated by the compiler.
 Eliminating duplicates is helpful when composing lists of exception types
 from multiple ~declthrow~ expressions - see the section "Querying the throw-specification".
 
-For example, the following functions have the same type:
+For example, the following functions all have the same type:
 #+BEGIN_SRC c++
 void f() throw(E1, E2);
 void g() throw(E2, E1);
 void h() throw(E1, E1, E2);
 #+END_SRC
 
-The rationale for making this an unordered set rather than an ordered list is to reduce
-the chance of annoying incompatibilities when casting a function to a function-pointer.
+The rationale for making the set of exceptions an unordered set rather than an ordered list is
+to reduce the chance of annoying incompatibilities when casting a function to a function-pointer.
 
-For example, it would be annoying if 
+For example:
 #+begin_src c++
   // declared in lib1
   void f() throw(E1, E2);
@@ -105,32 +184,41 @@ For example, it would be annoying if
 
   void (*func)() throw(E1, E2) = &f;
   if (cond) {
-    func = &g; // would be annonying if this did not work.
+    func = &g; // It would be annonying if this was ill-formed because the throw-specification had a different order.
   }
 #+end_src
+
 
 *** The types in the throw specification describe all concrete types that may be thrown
 
 One of the prime motivations behind bringing back throw-specifications is to provide the compiler
 with enough static type information for it to be able to allocate storage for exceptions that
 may be thrown on the stack of the caller, rather than the runtime having to dynamically-allocate
-storage for them on the heap.
+storage for them on the heap. It also allows the compiler to statically dispatch to the appropriate
+handler for each possible exception that might be thrown, without requiring dynamic type-matching
+or run-time type information.
 
 For this to be possible, the compiler needs to know the size/alignment of all exception types so
 that it can reserve storage in the stack-frame for any exception-types which cannot be passed
-back to the caller in registers. e.g. because they are too large, or are not trivially copyable.
+back to the caller in registers. Similarly, it needs to know which exception types may be passed
+back in registers.
 
 This means that we cannot just list an exception base-class in the throw-specification and then
-permit the function to throw any type derived from that base-class, as this would not allow
-callers to reserve space for any such exception on the stack-frame caller.
+leave the set of possible exception types open to include any type derived from that base-class,
+as this would not allow callers to reserve space for any such exception on the stack-frame caller.
 
-This also means that any changes to the set of exception-types that may be returned is
-an ABI break for that function, which would require recompilation of all callers of that
-function. This is no different to changing the return-type of a function. e.g. when adding
-a new entry to a ~std::variant~-returning function.
+For example, a declaration with a throw-specification of ~throw(std::exception)~ does not declare
+that the function may throw an exception derived from ~std::exception~, it instead states that
+the function may emit instances of ~std::exception~ (e.g. as if via ~throw std::exception{};~)
+and does not emit any other type of exception.
+
+The implication of this restriction, however, is that any changes to the set of exception-types
+that may be returned by a function is a potential ABI break for that function, requiring at a minimum,
+recompilation of all callers of that function. This is no different to changing the return-type of a
+function. e.g. when adding a new entry to a ~std::variant~-returning function.
 
 This places some interesting constraints on the evolution of such functions, which are discussed
-in detail in a later section.
+in detail in a later section (TODO: Put link to other section).
 
 *** Exception types may not be references, cv-qualified, or void
 
@@ -206,12 +294,193 @@ For example:
 
 The existing type-conversions between ~noexcept(true)~ and ~noexcept(false)~ function-pointers are unchanged.
 
-*** Deducing throw-specifications from the body of a function
+*** Deducing throw-specifications from a function signature
+
+It is permitted to allow template arguments to be deduced from the throw-specification
+in a function-signature.
+
+For example:
+#+begin_src c++
+  template<typename Ret, typename... Args, typename... Errors>
+  void Call(Ret(*func_ptr)(Args...) throw(Errors...));
+
+  void a() throw();
+  void b() throw(int);
+  void c() throw(std::bad_alloc, std::system_error);
+  void d() throw(...);
+
+  Call(&a); // deduces Errors to be the empty pack.
+  Call(&b); // deduces Errors to be the pack: int
+  Call(&c); // deduces Errors to be the pack: std::bad_alloc, std::system_error   (in some unspecified order)
+  Call(&d); // deduces Errors to be the pack: std::any_exception
+#+end_src
+
+*** Deducing exception-specifications from the body of a function
 
 Often, when writing forwarding functions, or function templates, you just want the function to be
-transparent to exceptions. In these cases, ideally the function's exception-specification should
-mirror the set of exceptions that the body of the function may throw.
+transparent to exceptions. i.e. any unhandled exceptions should be propagated to the caller.
 
+In these cases, ideally the function's exception-specification should mirror the set of
+exceptions that the body of the function may throw.
+
+With the current facilities available with ~noexcept~, this typically means that you need to
+repeat every expression in the body of the function in the ~noexcept~ specifier for that function.
+
+For simple functions this is manageable, although tedious. However, for more complicated function bodies,
+or for function-bodies that include conditionally-executed logic guarded by an ~if constexpr~ branch,
+the expression needed to compute the ~noexcept~ specifier argument quickly becomes unwieldy.
+
+**** Prior work on deducing exception specifications
+
+This usability issue was identified as a problem back when ~noexcept~ was originally proposed for C++11:
+- [[https://wg21.link/N3227][N3227]] - Please reconsider ~noexcept~
+
+There have since been multiple papers exploring the idea of deducing the exception-specification:
+- [[https://wg21.link/N3202][N3202]] - To which extent can ~noexcept~ be deduced? (Stroustrup, 2010)
+- [[https://wg21.link/N3207][N3207]] - ~noexcept(auto)~ (Merrill, 2010)
+- [[https://wg21.link/N4473][N4473]] - ~noexcept(auto)~, again (Voutilainen, 2015)
+- [[https://wg21.link/P0133R0][P0133R0]] - Putting ~noexcept(auto)~ on hold, again (Voutilainen, 2015)
+
+It is worth noting that the rationale given in P0133R0 for putting on hold the pursuit of
+~noexcept(auto)~ was mainly because it did not solve the whole problem of having to duplicate
+the function-body in the declaration - the expressions of the body still needed to be duplicated
+in the return-type for SFINAE purposes.
+
+Since this paper was written, we have gained support for contracts in C++20
+
+**** 
+
+With the (re)introduction of throw-specifications, the task of computing a correct throw-specification
+from a set of sub-expressions becomes even more onerous, as you need to compute lists of types,
+not just a boolean expression.
+
+This paper therefore proposes the addition of the ~throw(auto)~ specifier on a function declaration,
+as a way of declaring that the compiler should compute the set of exception types that may exit the
+function from the definition of the body of the function.
+
+For example, consider a hypothetical ~for_each~ function that invokes a function for each
+element of a range. If we wanted this function to have the same exception-specification as its
+body, it would need to be written with ~noexcept~ specifiers, something similar to the following:
+#+begin_src c++
+  template<
+    std::ranges::range Range,
+    typename Func>
+  requires std::invocable<Func&, std::ranges::range_reference_t<Range>>
+  void for_each(Range&& range, Func&& func)
+    noexcept(noexcept(std::ranges::begin(range)) &&
+             noexcept(std::ranges::end(range)) &&
+             noexcept(++std::declval<std::ranges::iterator_t<Range>&>()) &&
+             noexcept(std::declval<std::ranges::iterator_t<Range>&>() != std::declval<std::ranges::sentinel_t<Range>&>()) &&
+             noexcept(func(*std::declval<std::ranges::iterator_t<Range>&>()))) {
+    auto iterEnd = std::ranges::end(range);
+    auto iter = std::ranges::begin(range);
+    while (iter != iterEnd) {
+      func(*iter);
+      ++iter;
+    }
+  }
+#+end_src
+
+And with the ~throw()~ specifier proposed by this paper, in conjunction with the ~declthrow()~ expression
+(described in detail in the following section), we would need to write:
+#+begin_src c++
+  template<std::ranges::range Range, typename Func>
+  requires std::invocable<Func&, std::ranges::range_reference_t<Range>>
+  void for_each(Range&& range, Func&& func)
+    throw(declthrow(std::ranges::begin(range))...,
+          declthrow(std::ranges::end(range))...,
+          declthrow(++std::declval<std::ranges::iterator_t<Range>&>())...,
+          declthrow(std::declval<std::ranges::iterator_t<Range>&>() != std::declval<std::ranges::sentinel_t<Range>&>())...
+          declthrow(func(*std::declval<std::ranges::iterator_t<Range>&>()))...)  {
+    auto iterEnd = std::ranges::end(range);
+    auto iter = std::ranges::begin(range);
+    while (iter != iterEnd) {
+      func(*iter);
+      ++iter;
+    }
+  }
+#+end_src
+
+Having to repeat the body in a different way in the ~noexcept~ or ~throw~ specification like
+this is tedious and error-prone. It can be easy to miss an expression, or to later modify the
+body of the function and forget to update the throw-specification.
+
+Instead, if we add support for ~throw(auto)~, then the function definition simply becomes:
+#+begin_src c++
+  template<std::ranges::range Range, typename Func>
+  requires std::invocable<Func&, std::ranges::range_reference_t<Range>>
+  void for_each(Range&& range, Func&& func) throw(auto) {
+    auto iterEnd = std::ranges::end(range);
+    auto iter = std::ranges::begin(range);
+    while (iter != iterEnd) {
+      func(*iter);
+      ++iter;
+    }
+  }
+#+end_src
+
+This is much more concise, and is now impossible for the throw-specification to be
+inconsistent with the function body.
+
+*** Forward declarations of ~throw(auto)~ functions
+
+
+
+The use of ~throw(auto)~ on a forward-declaration of the function requires that the definition
+of the function is visible before the use of the function, in the same way that a function
+declared with a deduced-return-type requires that the function definition is available before
+it's ODR-used.
+
+The throw-specification of a function need only be computed when the function is selected by
+overload resolution, so  
+
+
+*** Do we also need ~noexcept(auto)~?
+
+We could also consider adding support for the ~noexcept(auto)~ syntax, in addition to ~throw(auto)~.
+
+The primary semantic difference between these two would be that ~noexcept(auto)~ would only deduce
+to either ~noexcept(true)~ or ~noexcept(false)~, (equivalent to ~throw()~ or ~throw(...)~ respectively),
+whereas ~throw(auto)~ could also deduce to a non-empty static-exception-specification.
+
+While, in most cases, it would be preferable to use ~throw(auto)~, as that allows the exception-specification
+to deduce to the more-efficient static-exception-specification where possible, there may be some scenarios
+where deducing to either ~noexcept(true)~ or ~noexcept(false)~ could be preferable.
+
+The one use-case I can think of is where you want to have the exception-specification deduce to a function
+whose signature allows a pointer to that function to be assigned to a function-pointer variable that has a
+~noexcept(false)~ exception-specification.
+
+However, this use-case is somewhat tenuous as it would still be possible to directly cast any function
+to a signature-compatible function-pointer with a ~noexcept(false)~ exception-specification, it's just
+not possible to cast every function to a function-pointer of the same type and then cast that function-pointer
+to a function-pointer with a ~noexcept(false)~ exception-specification.
+
+*** Deduced exception-specifications and recursive functions
+
+Supporting deduced exception-specifications for recursive functions is a challenge.
+
+While in some cases we could define the language such that the compiler could deduce
+the exception-specification for recursive functions by analysing the expressions which
+are not recursive calls, it is relatively easy to construct examples where such
+rules.
+
+Consider:
+#+begin_src c++
+  void confounding(int arg) throw(auto) {
+    if constexpr (noexcept(confounding(arg)) {
+        throw X{};
+    } else {
+        return confounding(arg - 1);
+    }
+  }
+#+end_src
+
+Querying the exception specification from within the definition of the function is ill-formed.
+
+TODO: Expand on this more.
+- cases that might work
+- mutually recursive functions with deduced specifications
 
 ** Querying the throw-specification
 
@@ -784,10 +1053,10 @@ TODO: Read up about Midori error-handling experiements.
         template<> void maybe_throw<true>() noexcept(auto) { throw 0; } // deduced noexcept(false)
         template<> void maybe_throw<false>() noexcept(auto) { } // deduced noexcept
         void f() noexcept(auto) { maybe_throw<(sizeof(B) > 10)>(); };
-        M<noexcept(f())> data; // supposedly ill-formed because the noexcept-specification for f() is not yet deduced.
+        M<noexcept(f())> data; // ill-formed because the noexcept-specification for f() is not yet deduced.
       };
+      // Definition of f() isn't available until the end of the class-definition, here.
     #+END_SRC
-    I think this may be because the definition of ~f()~ is not processed until the end of the definition of ~B~?
   - Recursion is also interesting:
     #+BEGIN_SRC c++
       int f(int i) noexcept (auto) 
@@ -848,7 +1117,7 @@ TODO: Read up about Midori error-handling experiements.
           Not an issue if it terminates.
         
       
-- N3227 - Please reconsider noexcept
+- N3227 - Please reconsider noexcept (2010)
   - Draft: https://wiki.edg.com/pub/Wg21batavia/EvolutionWorkingGroup/reconsider_noexcept.html
   - https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2010/n3227.html
   - Suggests that we should support deducing ~noexcept~-ness of a function
