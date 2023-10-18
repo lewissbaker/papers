@@ -188,6 +188,48 @@ For example:
   }
 #+end_src
 
+*** Handling of ~std::any_exception~ in the throw-specifier
+
+The ~std::any_exception~ type is a type that is handled specially by throw specifications.
+
+If the list of types passed as arguments to the ~throw~ specifier contains the type
+~std::any_exception~ then the overall exception-specification is evaluated to be
+~throw(...)~. i.e. that it can throw any exception type.
+
+
+For example:
+#+begin_src c++
+  void a() throw(std::any_exception);       // -> throw(...)
+  void b() throw(A, B, std::any_exception); //  -> throw(...)
+#+end_src
+
+The use of a type ~std::any_exception~ allows template metaprogramming libraries to be
+able to conditionally compute a throw-specification that can evaluate as either a static exception specification
+or a dynamic exception specification.
+
+For example: Using the pack expansion syntax from P1858R2
+#+begin_src c++
+  template<typename... Ts>
+  using ...type_list = Ts...;
+
+  template<typename T>
+  struct _compute_foo_throw_types {
+    using ...types = type_list<std::any_exception>...;
+  };
+
+  template<typenaem T>
+    requires Foo<T>
+  struct _compute_foo_throw_types<T> {
+    using ...types = type_list<FooError, std::bad_alloc>...;
+  };
+
+  template<typename T>
+  void foo(const T& x) throw(_compute_foo_throw_types<T>::types...); // P1858R2 pack expansion syntax
+
+#+end_src
+
+Here, the function ~foo~ has an exception specification that is either ~throw(FooError, std::bad_alloc)~ or ~throw(...)~.
+
 
 *** The types in the throw specification describe all concrete types that may be thrown
 
@@ -315,7 +357,9 @@ For example:
   Call(&d); // deduces Errors to be the pack: std::any_exception
 #+end_src
 
-*** Deducing exception-specifications from the body of a function
+This is similar to the ability to deduce whether a function signature is ~noexcept~ or not.
+
+*** ~throw(auto)~ - Deducing exception-specifications from the body of a function
 
 Often, when writing forwarding functions, or function templates, you just want the function to be
 transparent to exceptions. i.e. any unhandled exceptions should be propagated to the caller.
@@ -333,7 +377,7 @@ the expression needed to compute the ~noexcept~ specifier argument quickly becom
 **** Prior work on deducing exception specifications
 
 This usability issue was identified as a problem back when ~noexcept~ was originally proposed for C++11:
-- [[https://wg21.link/N3227][N3227]] - Please reconsider ~noexcept~
+- [[https://wg21.link/N3227][N3227]] - Please reconsider ~noexcept~ (Ottosen, 2010)
 
 There have since been multiple papers exploring the idea of deducing the exception-specification:
 - [[https://wg21.link/N3202][N3202]] - To which extent can ~noexcept~ be deduced? (Stroustrup, 2010)
@@ -344,19 +388,29 @@ There have since been multiple papers exploring the idea of deducing the excepti
 It is worth noting that the rationale given in P0133R0 for putting on hold the pursuit of
 ~noexcept(auto)~ was mainly because it did not solve the whole problem of having to duplicate
 the function-body in the declaration - the expressions of the body still needed to be duplicated
-in the return-type for SFINAE purposes.
+in the return-type for SFINAE purposes - and therefore it was not good use of committee time
+to pursue a partial solution.
 
-Since this paper was written, we have gained support for contracts in C++20
+Since this paper was written, we have gained support for concepts in C++20, which goes someway
+to simplifying the code needed to write function-templates that eliminates overloads with SFINAE.
+However, this only applies when there are existing concepts defined that can be used to constrain
+the function. For many cases you still need to duplicate the expressions of the function body
+in a ~requires~ clause.
 
-**** 
+Despite this limitation, I feel there is still benefit to enabling deduced exception specifications
+as there are often case that are either covered by concepts or that do not require SFINAE, but that
+do need to compute accurate exception specifications.
+
+**** ~throw(auto)~
 
 With the (re)introduction of throw-specifications, the task of computing a correct throw-specification
-from a set of sub-expressions becomes even more onerous, as you need to compute lists of types,
-not just a boolean expression.
+from a set of sub-expressions becomes even more onerous than for ~noexcept~, as you need to compute
+lists of types, not just a boolean expression.
 
 This paper therefore proposes the addition of the ~throw(auto)~ specifier on a function declaration,
 as a way of declaring that the compiler should compute the set of exception types that may exit the
-function from the definition of the body of the function.
+function from the definition of the body of the function and use that as the exception-specification
+for the function.
 
 For example, consider a hypothetical ~for_each~ function that invokes a function for each
 element of a range. If we wanted this function to have the same exception-specification as its
@@ -424,16 +478,123 @@ inconsistent with the function body.
 
 *** Forward declarations of ~throw(auto)~ functions
 
-
-
 The use of ~throw(auto)~ on a forward-declaration of the function requires that the definition
 of the function is visible before the use of the function, in the same way that a function
 declared with a deduced-return-type requires that the function definition is available before
 it's ODR-used.
 
 The throw-specification of a function need only be computed when the function is selected by
-overload resolution, so  
+overload resolution, so that the body of the function is not needlessly instantiated.
 
+For example:
+#+begin_src c++
+  void example() throw(auto);
+
+  void caller1() {
+    example();  // ill-formed. cannot be ODR-used before the definition is seen
+  }
+
+  auto* example_ptr = &example; // ill-formed. Type of example() is not known until definition is seen.
+
+  void caller2() throw(declthrow(example())...); // ill-formed. Cannot query the exception specification of example() before it's definition is seen.
+  void caller3() noexcept(noexcept(example())); // ill-formed. For same reason.
+
+  void example() throw(auto) {
+    if (foo()) {
+      do_thing1();
+    } else {
+      try {
+        do_thing2();
+      } catch (Thing2Failure) {
+        do_backup_thing2();
+      }
+    }
+  }
+
+  // Now that the definition is visible and the exception-specification
+  // can be deduced, the following things are well-formed.
+
+  void caller4() throw(declthrow(example())...) { // OK
+    example(); // OK
+  }
+
+  auto* example_ptr2 = &example; // OK
+#+end_src
+
+The restriction that the function definition with a deduced exception specification needs to be visible before
+it can be used has implications for recursive functions, however.
+
+*** Deduced exception-specifications and recursive functions
+
+Supporting deduced exception-specifications for recursive functions is a challenge.
+
+In theory we could define some language rules that would allow some kinds of recursive
+functions to be able to deduce their exception-specification.
+
+For example:
+#+begin_src c++
+  struct Tree {
+    Tree* left;
+    Tree* right;
+    int value;
+  };
+
+  void process_value(int value) throw(InvalidValue);
+
+  void process_tree(Tree& tree) throw(auto) {
+    if (tree.left != nullptr)
+      process_tree(*tree.left);
+
+    process_value(tree.value); // recursive-call
+
+    if (tree.right != nullptr)
+      process_tree(*tree.right);
+  }
+#+end_src
+
+In this case, the only call that is made that is not recursive is the call to ~process_value()~
+which can throw ~InvalidValue~. Therefore, we could in theory deduce that the overall throw
+specification is ~throw(InvalidValue)~.
+
+However, it is relatively easy to construct examples where such rules would not work.
+
+Consider:
+#+begin_src c++
+  void contradiction(int arg) throw(auto) {
+    if constexpr (noexcept(contradiction(arg)) {
+        throw X{};
+    } else {
+        if (arg > 0)
+             return contradiction(arg - 1);
+    }
+  }
+#+end_src
+
+If the throw-specification is deduced to be ~throw()~ then it throws an exception,
+otherwise if it is potentially throwing, it calls itself but no longer contains
+any statements that might throw an exception except the call to itself, leading
+to a contradiction.
+
+The key feature of this example that makes it problematic is that it is attempting
+to query the exception specification before the exception specification has been deduced.
+
+There are also other cases that can directly or indirectly require the exception specification to be known.
+Including:
+- Calling the function within a ~try { ... } template catch (auto e) { ... }~ block.
+  The template catch block needs to know the types that might be thrown in order to
+  instantiate the catch-block with the correct types.
+- Passing a pointer to the function to an algorithm.
+  Constructing the function-pointer type to pass requires knowing the exception specification.
+- Forming a call to the function as a sub-expression passed to ~declthrow()~.
+
+There are also further challenges with defining mutually-recursive functions that both
+have deduced exception specifications.
+
+TODO: Add example here.
+
+While we may be able to eventually define rules that may allow a subset of recursive
+function use-cases to have deduced exception specifications, this seems like a relatively
+niche case which can be left ill-formed for now.
 
 *** Do we also need ~noexcept(auto)~?
 
@@ -453,34 +614,44 @@ whose signature allows a pointer to that function to be assigned to a function-p
 
 However, this use-case is somewhat tenuous as it would still be possible to directly cast any function
 to a signature-compatible function-pointer with a ~noexcept(false)~ exception-specification, it's just
-not possible to cast every function to a function-pointer of the same type and then cast that function-pointer
-to a function-pointer with a ~noexcept(false)~ exception-specification.
+not possible to cast first to a function-pointer with a non-empty static exception specification and
+then cast that function-pointer to a function-pointer with a ~noexcept(false)~ exception-specification.
 
-*** Deduced exception-specifications and recursive functions
-
-Supporting deduced exception-specifications for recursive functions is a challenge.
-
-While in some cases we could define the language such that the compiler could deduce
-the exception-specification for recursive functions by analysing the expressions which
-are not recursive calls, it is relatively easy to construct examples where such
-rules.
-
-Consider:
+For example:
 #+begin_src c++
-  void confounding(int arg) throw(auto) {
-    if constexpr (noexcept(confounding(arg)) {
-        throw X{};
-    } else {
-        return confounding(arg - 1);
-    }
+  void a() throw(A);
+  void b() throw(B);
+
+  void c() throw(auto) { // deduces to throw(A, B)
+    a();
+    b();
+  }
+
+  void d() noexcept(auto) { // deduces to noexcept(false)
+    a();
+    b();
+  }
+
+  void execute(void(*func)());
+
+  void example() {
+    auto* c_ptr = &c;
+    execute(c_ptr); // ill-formed: no conversion from 'void(*)() throw(A,B)' to 'void(*)()'
+
+    auto* d_ptr = &d;
+    execute(d_ptr); // OK: 'void(*)() noexcept' implicitly convertible to 'void(*)()'.
+  }
+
+  void workaround() {
+    execute(static_cast<void(*)()>(c)); // OK: explicit cast to noexcept(false) function-pointer from function
+    execute(&d); // OK: Explicit cast not needed
   }
 #+end_src
 
-Querying the exception specification from within the definition of the function is ill-formed.
-
-TODO: Expand on this more.
-- cases that might work
-- mutually recursive functions with deduced specifications
+It is an open question whether adding support for ~noexcept(auto)~ in addition to ~throw(auto)~ is
+worth the extra complexity/specification effort. In the author's opinion, it is probably not necessary
+to add in the initial version. It can be added later if usage experience shows that it would have
+sufficient value.
 
 ** Querying the throw-specification
 
@@ -489,12 +660,15 @@ will inevitably be cases where we want to be able to know what that set of excep
 types is in library code.
 
 For example, one of the common expected use-cases is in computing a derived throw-specification
-for a function composing other functions.
+for a function composing other functions such that if their exception specifications change
+then so does the exception specification of the function composing them.
 #+begin_src c++
-  template<typename T
+  void PartA() throw(OutOfWidgets);
+  void PartB() throw(ProtocolError, Timeout);
 
+  void ComposedOperation() throw(declthrow(PartA())...,
+                                 declthrow(PartB())...);
 #+end_src
-
 
 This paper proposes adding ~declthrow(expr)~ syntax as a way of querying what the list of exceptions
 that ~expr~ may exit with.
@@ -502,39 +676,30 @@ that ~expr~ may exit with.
 As the ~declthrow(expr)~ needs to be able to produce a list of types, it is proposed that this
 form names a pack of types, which can be expanded as needed using ~declthrow(expr)...~.
 
+*** ~declthrow~ of a ~throw(...)~ expression
+
 If the expression may exit with a dynamic-exception (i.e. one of the sub-expressions has an exception specification of ~noexcept(false)~ or ~throw(...)~)
-then the result of this is special compiler-generated type. An alias for this type is made available as ~std::any_exception~ in the header ~<exception>~.
+then the result of this is an unspecified, compiler-generated type, much like ~decltype(nullptr)~.
+
+An alias for this type is made available as ~std::any_exception~ in the header ~<exception>~.
 
 #+name: <exception>
 #+begin_src c++
-namespace std {
-  using any_exception = declthrow(static_cast<void(*)()throw(...)>(nullptr)())[0];
-}
+  namespace std {
+    // NOTE: using pack indexing syntax proposed in P2662R2
+    using any_exception = declthrow(static_cast<void(*)()throw(...)>(nullptr)())...[0];
+  }
 #+end_src
 
 The ~std::any_exception~ type is not constructible or usable as a value.
 It is only intended for use as a placeholder/marker for throw-specifications to indicate
 a dynamic exception specification.
 
-
-Can be used in metaprogramming:
-#+BEGIN_SRC c++
-  if constexpr (noexcept(foo(a, b, c))) {
-    foo(a, b, c);
-  } else {
-    std::variant<declthrow(foo(a, b, c))...> error;
-    try {
-      foo(a, b, c);
-    } template catch (auto e) {
-      error.emplace<decltype(e)>(std::move(e));
-    }
-  }
-#+END_SRC
-
+*** Mixed dynamic and static exception specifications
 
 There is the question of what the ~declthrow(expr)~ expression should produce if ~expr~
-contains some sub-expressions with a static-exception-specification and some sub-expressions
-with a dynamic-exception-specification.
+contains a mixture of sub-expressions with a static-exception-specification and sub-expressions
+with a dynamic-exception-specification (i.e. ~throw(...)~)
 
 #+begin_src c++
   // Given the following
@@ -547,14 +712,22 @@ with a dynamic-exception-specification.
   using types = type_list<declthrow(bar(foo()))...>;
 #+end_src
 
+There are two viable options to consider here:
+- We say that the overall expression could emit any exception, so the deduced exception
+  specification of a function containing this expression would be ~throw(...)~, and so
+  the resulting type list should contain only ~std::any_exception~.
+- We list the union of all of the types listed in static exception specifications and
+  also list ~std::any_exception~ in the result.
 
-Should it just return a pack with the single type ~std::any_exception~?
-Or should it return the set of the union of all of the static exception specification types
-/plus/ the ~std::any_exception~ type?
+This paper proposes the latter, for the following reasons:
+- It can be used to determine what types might be instantiated with a ~template catch~
+  block (see section on this below) that contains this expression.
+- It can be used to allow handling of at least some static types statically
 
-There can be benefits to knowing at least /some/ of the exception types that will be
-thrown statically. e.g. if storing the error in a variant
-
+The argument for the latter is that it at least lets libraries know what type of static
+exceptions might be thrown and thus what types a ~template catch~ (see below) handler
+will be instantiated with. It also allows at least some types of exceptions to be handled
+statically, without resorting to ~catch(...)~ and ~std::current_exception()~.
 
 *** Order of the exception types
 
@@ -1557,6 +1730,129 @@ TODO: Read up about Midori error-handling experiements.
         Such problems would cause people to avoid using the exception specification mechanism
         or else subvert it [Koenig, 1990]
         #+END_QUOTE
+
+  - Java Checked Exceptions
+    - [[https://medium.com/javarevisited/its-2022-should-we-give-up-using-checked-exception-176429e05d4b][The exception mechanism of Java has been controversial. | by lance | Javarevisited | Medium]]
+
+    - [[http://articles.vconst.com/2009/08/error-handling-and-exceptions-in-java.html][Constantine's Column: Error Handling and Exceptions in Java]]
+
+    - [[https://www.oracle.com/technical-resources/articles/enterprise-architecture/effective-exceptions-part1.html][Effective Java Exceptions]]
+      - 
+         #+begin_quote
+         After all, compiler-imposed constraints on data types encouraged rigorous coding and precise thinking.
+         Compile-time type checking helped prevent nasty surprises at run-time.
+         Compile-time exception checking would work similarly, reminding developers that a method had potential
+         alternate outcomes that needed to be addressed.
+         #+end_quote
+      -
+        #+begin_quote
+        To programmers, it seemed like most of the common methods in Java library classes declared checked exceptions
+        for every possible failure. For example, the ~java.io~ package relies heavily on the checked exception ~IOException~.
+        At least 63 Java library packages issue this exception, either directly or through one of its dozens of subclasses.
+
+        An I/O failure is a serious but extremely rare event. On top of that, there is usually nothing your code can do
+        to recover from one. Java programmers found themselves forced to provide for ~IOException~ and similar unrecoverable
+        events that could possibly occur in a simple Java library method call. Catching these exceptions added clutter to
+        what should be simple code because there was very little that could be done in a catch block to help the situation.
+        Not catching them was probably worse since the compiler required that you add them to the list of exceptions your
+        method ~throws~. This exposes implementation details that good object-oriented design would naturally want to hide.
+
+        This no-win situation resulted in most of the notorious exception handling anti-patterns we are warned about today.
+        It also spawned lots of advice on the right ways and the wrong ways to build workarounds.
+
+        Some Java luminaries started to question whether Java's checked exception model was a failed experiment.
+        Something failed for sure, but it had nothing to do with including exception checking in the Java language.
+        The failure was in the thinking by the Java API designers that most failure conditions were the same and could be
+        communicated by the same kind of exception.
+        #+end_quote
+      - Talks about two classes of errors: contingency and fault
+        - contingencies are expected failures that the caller should be able to handle
+        - faults are generally programming bugs / pre-condition failures
+      - Contingencies are usually handled relatively close to where they are thrown
+        they are part of the return-value / result of a given function call
+        - "A contingency represents an alternative method result that is just as important as the principal return result."
+      - Faults are usually handled with a high-level "Fault Barrier" that simply logs the
+        fault and continues.
+      - Recommendation is that contingencies use checked exceptions, while faults use unchecked exceptions
+        - Programmers don't want to have to document in the API of all callers that there might be an
+          exception thrown due to a programmer bug in the implementation which the caller won't
+          have any idea how to handle.
+
+      - Rules for use:
+        - The fault barrier method must reside at the head of a graph of method calls that traverses the participating classes.
+        - They must all use unchecked exceptions to signify fault contiditions.
+        - They must all use the specific unchecked exception types that the fault barrier is expecting to receive.
+        - They all must catch and translate checked exceptions from lower methods that are deemed to be faults in their execution context.
+        - They must not interfere with the propagation of fault exceptions on their way to the barrier.
+
+    - [[https://markonovakovic.medium.com/checked-exceptions-vs-either-6468ce94c0c9][Checked exceptions vs Either. Exploring the pros and cons of Java’s… | by Marko Novakovic | Medium]]
+
+    - [[https://softwareengineering.stackexchange.com/questions/420898/why-do-checked-exceptions-i-e-value-or-error-return-values-work-well-in][language design - Why do "checked exceptions", i.e., "value-or-error return values", work well in Rust and Go but not in Java? - Software Engineering Stack Exchange]]
+
+    - [[https://stackoverflow.com/questions/613954/the-case-against-checked-exceptions][java - The case against checked exceptions - Stack Overflow]]
+      - checked exceptions are about being able to communicate errors between layers
+
+      - 
+
+    - [[https://www.artima.com/articles/the-trouble-with-checked-exceptions][artima - The Trouble with Checked Exceptions]] (Bill Venners, Bruce Eckel, Anders Hejlsberg)
+      - Versioning
+        - Adding a new exception is a breaking change for client code in many cases.
+          - Would need to add a new method with a wider exception specification.
+          - Without checked exceptions you are breaking the client code silently anyway
+            - In lots of cases people don't care - they want to let most errors propagate up to some top-level handler.
+
+      - Scalability
+        - In small, checked exceptions are enticing, dealing with small numbers of errors.
+        - At scale, high-level ends up with an unwieldy list of exceptions it might throw
+          - e.g. code that calls into 4-5 different subsystems that each throw 4-10 exception types can easily end up with 40 exceptions they might need to list
+            in their throw-specification
+            - Also, adding a new exception to a leaf API you then need to update all caller throw specifications to add this
+              new exception.
+          - so people end up just writing ~throws Exception~ which then circumvents the benefits of checked exceptions
+          - or they end up writing ~try { ... } catch(Exception) {}~ and just suppressing the errors - leading to worse outcomes
+            
+    - [[https://docs.oracle.com/javase/tutorial/essential/exceptions/runtime.html][Unchecked Exceptions — The Controversy (The Java™ Tutorials > Essential Java Classes > Exceptions)]]
+      - Inheritance hierarchy:
+        - ~Object~
+          - ~Throwable~
+            - ~Error~ - serious problems that a resonable application should not try to catch (e.g. VM error, assertion failure)
+            - ~Exception~
+              - ~RuntimeException~ - 
+                - all user unchecked exceptions go here
+              - all user checked exceptions go here
+      - RuntimeException, Error and their subclasses are "unchecked exceptions"
+        - language doesn't require unchecked exceptions to be listed in the throw specification, or caught
+      - "Any Exception that can be thrown by a method is part of the method's public programming interface."
+        "Those who call a method must know about the exceptions that a method can throw so that they can decide what to do about them."
+        "These exceptions are as much a part of that method's programming interface as its parameters and return value."
+      - Unchecked exceptions represent problems that are the result of a programming problem, and as such, the API client
+        code cannot reasonably be expected to recover from them or to handle them in any way.
+        e.g. divide by zero, null-pointer dereference, out-of-bounds index
+        - In C++ these would be undefined-behaviour / pre-condition failures.
+      - "If a client can reasonably be expected to recover from an exception, make it a checked exception.
+         If a client cannot do anything to recover from the exception, make it an unchecked exception."
+        - These broadly break down to pre-condition violations and recoverable errors.
+
+    - 
+
+  - Rust error handling
+    - [[https://doc.rust-lang.org/book/ch09-03-to-panic-or-not-to-panic.html][To panic! or Not to panic! - The Rust Programming Language]]
+      -
+        #+begin_quote
+        You could call ~panic!~ for any error situation, whether there’s
+        a possible way to recover or not, but then you’re making the
+        decision that a situation is unrecoverable on behalf of the
+        calling code. When you choose to return a ~Result~ value, you
+        give the calling code options. The calling code could choose
+        to attempt to recover in a way that’s appropriate for its
+        situation, or it could decide that an ~Err~ value in this case
+        is unrecoverable, so it can call ~panic!~ and turn your
+        recoverable error into an unrecoverable one. Therefore,
+        returning ~Result~ is a good default choice when you’re defining
+        a function that might fail.
+        #+end_quote
+
+
 
   - Previous papers relating to customisation points / overload-sets / ADL
     - P0119R1   Overload sets as function arguments
