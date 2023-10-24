@@ -1,3 +1,6 @@
+#+title: Static Exception Specifications
+#+author: Lewis Baker <lewissbaker@gmail.com>
+
 * Abstract
 
 Exceptions are the C++ language's primary tool for communicating errors to callers.
@@ -66,14 +69,29 @@ different approach.
 
 ** Overview
 
-Adds ~throw()~ specifiers which can be used to declare a function as having either
-a static exception specifier or dynamic exception specifier.
+The key components of this proposal are as follows:
 
-Adds ~declthrow(expr)~ syntax for querying what set of exception types might be thrown
-from a particular exception.
+It proposes (re)adding ~throw()~ specifiers which can be used to declare a function
+as having either a static exception specifier or dynamic exception specifier.
 
-Defines rules for statically checking that the bodies of function definitions with
-~throw()~ specifiers do not violate their exception specification.
+It proposes adding the ~throw(auto)~ syntax for deducing the throw-specification of a
+function from its definition, which must be visible before use of the function.
+
+It proposes rules for statically checking at compile-time that the bodies of function
+definitions with ~throw()~ specifiers do not violate their exception specification.
+
+It proposes adding the ~declthrow(expr)~ syntax for querying what set of exception
+types might be thrown from a particular exception.
+
+It proposes adding the ~template catch~ syntax to allow catching static exceptions
+thrown from the associated try-block, allowing a way to use the same handler template
+to handle different types, without the need for type-erasing the exception.
+
+It proposes limiting the scope of ~throw;~ statements within the dynamic scope
+of the most-recently activated catch-block of a function definition that has a
+throw-specification to the immediately lexical scope of the handler.
+i.e. you can you only rethrow an exception from the body of the handler, not
+from a from a function called by that handler.
 
 ** (Re)Adding ~throw()~ specifiers
 
@@ -93,11 +111,10 @@ pitfalls outweighed the benefits of using it.
 
 TODO: Elaborate on what the issues were
 - runtime/code-size overhead cost due to need to dynamically-check for unhandled exceptions
-- std::unexpected() notification mechanism did not lend itself to recovery
+- ~std::unexpected()~ notification mechanism did not lend itself to recovery
 - MSVC (at the time) did not enforce the contract - a function with a ~throw()~ specification
   could still throw exceptions of types other than those mentioned in the throw-specification,
   but the compiler would optimise based assumptions that it did not. Made it dangerous to use.
-
 
 In C++11, we introduced ~noexcept~, initially as a tool needed to restore the strong exception-safety
 guarantee to types like ~std::vector~ after the introduction of move-constructors.
@@ -110,6 +127,9 @@ purpose, albeit with an improved design that tries to avoid the pitfalls of the 
 
 A /static exception specification/ is an exception specification that lists a finite
 list of possible exception types that a function may exit with.
+
+A /non-empty static exception specification/ is a static exception specification that contains
+one or more exception types listed in the throw specification.
 
 A /dynamic exception specification/ is an exception specification that allows the function
 to exit with any exception type.
@@ -132,11 +152,11 @@ A declaration signature of ~void foo() throw();~ is equivalent to ~void foo() no
 However, a function definition with a ~throw()~ specification differs from one with ~noexcept~
 in that the definition is ill-formed if an exception can possibly escape the function,
 whereas ~void foo() noexcept~ detects such a failure to fulfil its contract at runtime and terminates.
-i.e. throw-specifications are statically checked/enforced rather than dynamically checked.
+i.e. throw-specifications are statically checked/enforced rather than dynamically checked/enforced.
 
 Similarly, ~void bar() throw(E1, E2)~ is ill-formed if any exception types other than ~E1~ or ~E2~
 can possibly escape the body of the function. The aim is to avoid the compiler inserting any hidden
-calls to ~std::terminate()~ in the body of the coroutine.
+calls to ~std::terminate~ in the body of the coroutine.
 
 It is permitted to declare a function with the specifier ~noexcept(true)~ and define it with
 the specifier ~throw()~, and vica versa. Doing so allows you to have the compiler statically
@@ -159,11 +179,13 @@ Two throw-specifications are equivalent if they contain the same set of types, r
 of the order in which those types are listed.
 
 It is valid to list a type multiple times in a throw-specification.
-Duplicates are ignored/eliminated by the compiler.
-Eliminating duplicates is helpful when composing lists of exception types
-from multiple ~declthrow~ expressions - see the section "Querying the throw-specification".
+Any duplicates are ignored/eliminated by the compiler.
 
-For example, the following functions all have the same type:
+Eliminating duplicates is helpful when composing lists of exception types
+from multiple ~declthrow~ expressions that have overlap in the set of exceptions
+they may throw - see the section "Querying the throw-specification".
+
+For example, the following functions all have the same exception specification:
 #+BEGIN_SRC c++
 void f() throw(E1, E2);
 void g() throw(E2, E1);
@@ -191,33 +213,39 @@ For example:
 *** Handling of ~std::any_exception~ in the throw-specifier
 
 The ~std::any_exception~ type is a type that is handled specially by throw specifications.
+See the section "~declthrow~ of a ~throw(...)~ expression" below for a definition of this type.
 
 If the list of types passed as arguments to the ~throw~ specifier contains the type
 ~std::any_exception~ then the overall exception-specification is evaluated to be
 ~throw(...)~. i.e. that it can throw any exception type.
 
-
 For example:
 #+begin_src c++
   void a() throw(std::any_exception);       // -> throw(...)
-  void b() throw(A, B, std::any_exception); //  -> throw(...)
+  void b() throw(A, B, std::any_exception); // -> throw(...)
 #+end_src
 
 The use of a type ~std::any_exception~ allows template metaprogramming libraries to be
 able to conditionally compute a throw-specification that can evaluate as either a static exception specification
 or a dynamic exception specification.
 
-For example: Using the pack expansion syntax from P1858R2
+For example: Computing a throw-specification to either be ~throw(...)~ or
+a static exception specification, depending on a template parameter.
+
+
 #+begin_src c++
   template<typename... Ts>
-  using ...type_list = Ts...;
+  using ...type_list = Ts...; // P1858R2 pack alias syntax
 
+  // Generic case
   template<typename T>
   struct _compute_foo_throw_types {
-    using ...types = type_list<std::any_exception>...;
+    using ...types = type_list<std::any_exception>...; // P1858R2 pack alias syntax
   };
 
-  template<typenaem T>
+  // When T satisfies the Foo concept, we know it will only
+  // fail with two possible exceptions.
+  template<typename T>
     requires Foo<T>
   struct _compute_foo_throw_types<T> {
     using ...types = type_list<FooError, std::bad_alloc>...;
@@ -225,15 +253,14 @@ For example: Using the pack expansion syntax from P1858R2
 
   template<typename T>
   void foo(const T& x) throw(_compute_foo_throw_types<T>::types...); // P1858R2 pack expansion syntax
-
 #+end_src
 
-Here, the function ~foo~ has an exception specification that is either ~throw(FooError, std::bad_alloc)~ or ~throw(...)~.
-
+Here, the function ~foo<T>~ has an exception specification that is either ~throw(FooError, std::bad_alloc)~ or ~throw(...)~,
+depending on the type, ~T~.
 
 *** The types in the throw specification describe all concrete types that may be thrown
 
-One of the prime motivations behind bringing back throw-specifications is to provide the compiler
+One of the prime motivations behind re-adding throw-specifications is to provide the compiler
 with enough static type information for it to be able to allocate storage for exceptions that
 may be thrown on the stack of the caller, rather than the runtime having to dynamically-allocate
 storage for them on the heap. It also allows the compiler to statically dispatch to the appropriate
@@ -251,13 +278,15 @@ as this would not allow callers to reserve space for any such exception on the s
 
 For example, a declaration with a throw-specification of ~throw(std::exception)~ does not declare
 that the function may throw an exception derived from ~std::exception~, it instead states that
-the function may emit instances of ~std::exception~ (e.g. as if via ~throw std::exception{};~)
-and does not emit any other type of exception.
+the function may throw an instance of ~std::exception~ (e.g. as if via ~throw std::exception{};~)
+and does not exit with any other type of exception.
 
 The implication of this restriction, however, is that any changes to the set of exception-types
 that may be returned by a function is a potential ABI break for that function, requiring at a minimum,
-recompilation of all callers of that function. This is no different to changing the return-type of a
-function. e.g. when adding a new entry to a ~std::variant~-returning function.
+recompilation of all callers of that function.
+
+This is no different to changing the return-type of a function.
+e.g. when adding a new entry to a ~std::variant~-returning function.
 
 This places some interesting constraints on the evolution of such functions, which are discussed
 in detail in a later section (TODO: Put link to other section).
@@ -334,7 +363,8 @@ For example:
   pi = ph; // ERROR: Can't cast function-ptr with static exception specification to function-ptr with different exception specification.
 #+END_SRC
 
-The existing type-conversions between ~noexcept(true)~ and ~noexcept(false)~ function-pointers are unchanged.
+The existing type-conversions from pointers to a function with a ~noexcept(true)~ exception specification
+to a pointer to a function with a ~noexcept(false)~ exception specification are unchanged.
 
 *** Deducing throw-specifications from a function signature
 
@@ -476,15 +506,15 @@ Instead, if we add support for ~throw(auto)~, then the function definition simpl
 This is much more concise, and is now impossible for the throw-specification to be
 inconsistent with the function body.
 
+This facility will greatly simplify the definition of function-templates, in particular the
+function-templates that are defined as "expression-equivalent to" some expression.
+
 *** Forward declarations of ~throw(auto)~ functions
 
 The use of ~throw(auto)~ on a forward-declaration of the function requires that the definition
 of the function is visible before the use of the function, in the same way that a function
 declared with a deduced-return-type requires that the function definition is available before
 it's ODR-used.
-
-The throw-specification of a function need only be computed when the function is selected by
-overload resolution, so that the body of the function is not needlessly instantiated.
 
 For example:
 #+begin_src c++
@@ -596,16 +626,27 @@ While we may be able to eventually define rules that may allow a subset of recur
 function use-cases to have deduced exception specifications, this seems like a relatively
 niche case which can be left ill-formed for now.
 
+*** Delayed computation of deduced throw specifications
+
+The throw-specification of a function or function-template need only be computed when the
+function is selected by overload resolution, or is otherwise ODR-used.
+
+This allows the compiler to avoid instantiating function-templates that are part of an overload
+set but that are never selected for overload resolution.
+
+Taking the address of a function with a deduced throw-specification will also force the compiler
+to compute the throw-specification.
+
 *** Do we also need ~noexcept(auto)~?
 
 We could also consider adding support for the ~noexcept(auto)~ syntax, in addition to ~throw(auto)~.
 
 The primary semantic difference between these two would be that ~noexcept(auto)~ would only deduce
-to either ~noexcept(true)~ or ~noexcept(false)~, (equivalent to ~throw()~ or ~throw(...)~ respectively),
+to either ~noexcept(true)~ or ~noexcept(false)~, (equivalent to ~throw()~ or ~throw(...)~, respectively),
 whereas ~throw(auto)~ could also deduce to a non-empty static-exception-specification.
 
 While, in most cases, it would be preferable to use ~throw(auto)~, as that allows the exception-specification
-to deduce to the more-efficient static-exception-specification where possible, there may be some scenarios
+to deduce to the more-efficient static-exception-specification, where possible, there may be some scenarios
 where deducing to either ~noexcept(true)~ or ~noexcept(false)~ could be preferable.
 
 The one use-case I can think of is where you want to have the exception-specification deduce to a function
@@ -649,9 +690,10 @@ For example:
 #+end_src
 
 It is an open question whether adding support for ~noexcept(auto)~ in addition to ~throw(auto)~ is
-worth the extra complexity/specification effort. In the author's opinion, it is probably not necessary
-to add in the initial version. It can be added later if usage experience shows that it would have
-sufficient value.
+worth the extra complexity/specification effort.
+
+However, in the author's opinion, it is probably not necessary to add in the initial version.
+It can be added later if usage experience shows that it would have sufficient value.
 
 ** Querying the throw-specification
 
@@ -659,22 +701,40 @@ Once we have the ability to specify static-exception-specifications on functions
 will inevitably be cases where we want to be able to know what that set of exception
 types is in library code.
 
-For example, one of the common expected use-cases is in computing a derived throw-specification
-for a function composing other functions such that if their exception specifications change
-then so does the exception specification of the function composing them.
-#+begin_src c++
-  void PartA() throw(OutOfWidgets);
-  void PartB() throw(ProtocolError, Timeout);
-
-  void ComposedOperation() throw(declthrow(PartA())...,
-                                 declthrow(PartB())...);
-#+end_src
-
 This paper proposes adding ~declthrow(expr)~ syntax as a way of querying what the list of exceptions
 that ~expr~ may exit with.
 
 As the ~declthrow(expr)~ needs to be able to produce a list of types, it is proposed that this
 form names a pack of types, which can be expanded as needed using ~declthrow(expr)...~.
+
+Note that the pack of types produced by ~declthrow()~ does not contain any duplicate types.
+
+One of the common expected use-cases is in computing a derived throw-specification
+for a function composing other functions such that if their exception specifications change
+then so does the exception specification of the function composing them.
+
+For example:
+#+begin_src c++
+  // Header file
+  void PartA() throw(OutOfWidgets);
+  void PartB() throw(ProtocolError, Timeout);
+
+  void ComposedOperation() throw(declthrow(PartA())...,
+                                 declthrow(PartB())...);
+
+  // ... out-of-line definition in .cpp file
+
+  void ComposedOperation() throw(declthrow(PartA())...,
+                                 declthrow(PartB())...) {
+    PartA();
+    PartB();
+    try {
+      PartC();
+    } catch (...) {
+      NothrowFallbackPart();
+    }
+  }
+#+end_src
 
 *** ~declthrow~ of a ~throw(...)~ expression
 
@@ -697,10 +757,11 @@ a dynamic exception specification.
 
 *** Mixed dynamic and static exception specifications
 
-There is the question of what the ~declthrow(expr)~ expression should produce if ~expr~
-contains a mixture of sub-expressions with a static-exception-specification and sub-expressions
-with a dynamic-exception-specification (i.e. ~throw(...)~)
+When the operand to ~declthrow()~ contains multiple sub-expressions, some of which have
+non-empty static exception specifications and some of which have dynamic exception specifications,
+there is the question of what the result of the ~decthrow()~ expression should be.
 
+For example:
 #+begin_src c++
   // Given the following
   struct X;
@@ -719,15 +780,36 @@ There are two viable options to consider here:
 - We list the union of all of the types listed in static exception specifications and
   also list ~std::any_exception~ in the result.
 
-This paper proposes the latter, for the following reasons:
-- It can be used to determine what types might be instantiated with a ~template catch~
-  block (see section on this below) that contains this expression.
-- It can be used to allow handling of at least some static types statically
+This paper proposes to have the result include both ~std::any_exception~ and the types
+from any static exception specifications, for the following reasons:
+- It can be used to determine what types might be used to instantiate a ~template catch~
+  block (see section on this below) associated with a try-block that contains this expression.
+- It is not necessary to reduce the result to ~std::any_exception~ in the ~declthrow()~
+  expression if it is being used as the argument to a ~throw~ specifier - the ~throw~
+  specifier will do the reduction for you. Reducing the result early is just throwing away
+  type information.
 
-The argument for the latter is that it at least lets libraries know what type of static
-exceptions might be thrown and thus what types a ~template catch~ (see below) handler
-will be instantiated with. It also allows at least some types of exceptions to be handled
-statically, without resorting to ~catch(...)~ and ~std::current_exception()~.
+For example:
+#+begin_src c++
+  template<typename T, typename... Ts>
+  concept one_of = (std::same_as<T, Ts> || ...);
+
+  template<typename... Es>
+  using err_variant = std::variant<std::monostate,
+                                   std::conditional_t<std::same_as<std::any_exception, Es>,
+                                                      std::exception_ptr, Es>...>;
+
+  err_variant<declthrow(do_foo())...> error;
+  try {
+    do_foo();
+  } template catch (auto e) {
+    error.emplace<decltype(e)>(std::move(e));
+  } catch (...) {
+    if constexpr (one_of<std::any_exception, declthrow(do_foo())...>) {
+      error.emplace<std::exception_ptr>(std::current_exception());
+    }
+  }
+#+end_src
 
 *** Order of the exception types
 
@@ -740,34 +822,184 @@ order, and so we need to specify what the constraints of that order are.
 
 At the very least, the order of the types returned needs to be deterministic and consistent across
 different queries of the same expression, across all translation-units. This is because code may
-compute types that have different layouts or ABIs based on the order of the types, and having
-the same computation produce the results in different orders is a sure-fire way to introduce ODR-violations.
+compute types that have different layouts or ABIs based on the order of the types produced by the
+~declthrow~ expression, and having the same computation produce the results in different orders
+is a sure-fire way to introduce ODR-violations.
 
 There are a few other questions around the ordering of the exception types:
 - Should the order be some partial-ordering of all types?
   i.e. if ~E1~ appears before ~E2~ in some ~declthrow()~ query, then ~E1~ appears before ~E2~ in /all/ ~declthrow()~ queries.
   - This would effectively provide a built-in facility for sorting types in type-lists.
-  - 
 - Should the order be specified by the standard? or should it be unspecified/implementation-defined?
-  - It might be difficult to specify an ordering of all types.
+  - It might be difficult to specify an ordering of all types in a portable way.
   - Doing so may improve portability/compatibility of code across compilers.
+  - Standard library implementations do not necessarily define all types with portable canonical names.
+    e.g. some implementations place some ~std::~ library types inside inline ABI-version namespaces, which would give those
+    types different names to the same types defined in other standard library implementations.
+    This would negate some of the portability benefit.
+- Should the order of the exceptions be consistent with the order of exception types
+  deduced by querying the type of a function and deducing the types listed in the throw-specification?
+  #+begin_src c++
+    // Given the following.
+    void foo() throw(A, B);
+
+    template<typename T>
+    struct throw_specifier;
+
+    template<typename Ret, typename... Args, typename... Es>
+    struct throw_specifier<Ret(Args...) throw(Es...)> {
+      using ...types = Es...;
+    };
+
+    template<typename... Ts>
+    struct type_list {};
+
+    // Should the following static_assert be guaranteed to hold on all conforming implementations?
+    static_assert(std::same_as<type_list<declthrow(foo())...>,
+                               type_list<throw_specifier<decltype(foo())>::types...>>);
+  #+end_src
 - Should the ~std::any_exception~ type appear in a specific location within the types returned
   by ~declthrow()~ if it is present? e.g. as the first or last type in the pack.
   - This might make it easier/more compile-time efficient to write metafunctions that want to
     detect whether there is a dynamic exception that may be thrown.
+    e.g.
+    #+begin_src c++
+      // If std::any_exception is always first type
+      template<typename... Es>
+      concept DynamicException = sizeof...(Es) > 0 && std::same_as<std::any_exception, Es...[0]>; // P2662R2 pack indexing
+
+      // vs
+
+      // If std::any_exception could appear anywhere
+      template<typename... Es>
+      concept DynamicException = (std::same_as<std::any_exception, Es> || ...);
+    #+end_src
 - Do exception types need to be complete when used in throw specifications and
   subsequently queried via ~declthrow()~?
   - This may be somewhat limiting.
   - It would open the possibility of sorting types based on their ABI properties like size/trivial-copyability, etc.
+    e.g. so that all error-types that might be returned by register appear earlier in the list
   - The exception types need to be complete anyway when a function that might throw them is invoked, just like
     the return-type needs to be complete.
+  - The syntax proposed below for filtering exception types would need the exception types
+    to be complete so that it can determine whether they would match a given ~catch~ handler.
     
 Implementations may choose to sort exception types in the throw-specification by their mangled names,
 or by their fully-scoped names.
 
 It would not be appropriate for an implementation to sort them based on some non-stable attribute (like the
-address of the 'Type' object representing that type in the compiler, which may change with different compilation runs).
-    
+address of the 'Type' object representing that type in the compiler) which may change with different compilation runs.
+
+*** Exception specifications of defaulted special member functions
+
+See [dcl.fct.def.default].
+
+The following functions may have defaulted definitions
+- special member functions
+  - default ctor
+  - move ctor
+  - copy ctor
+  - move assignment
+  - copy assignment
+  - destructor
+- comparison operators
+  - equality
+  - three-way-comparison
+
+- implicitly defaulted functions have an implicit exception specification
+- explicitly defaulted functions which are defaulted on first declaration have an implicit exception specification
+  if they don't explicitly specify an exception specification.
+- explicitly defaulted functions which are defaulted on first declaration that have an explicit exception specification
+  use that explicit exception specification.
+
+This paper proposes changing the implicit exception specifications of defaulted functions
+to be equivalent to a throw-specification of ~throw(auto)~.
+
+This should have no semantic effect on existing types / existing programs as
+all existing types will have either a ~noexcept(true)~ or ~noexcept(false)~
+member function and thus the deduced exception specification will either
+deduce to ~noexcept(false)~ or ~noexcept(true)~. The rules for deduction of
+the exception specification via ~throw(auto)~ are consistent with the pre-existing
+rules of deduction for defaulted member functions.
+
+However, it would ideally have an effect on types that compose new types that
+are defined with static exception specifications for these special
+member functions.
+
+For example: Defining a struct that composes two types with static exception
+specifications on their special member functions.
+#+begin_src c++
+  struct A {
+    A() throw(std::bad_alloc);
+    A(const A&) throw(std::bad_alloc);
+    A(A&&) throw();
+    ~A();
+  };
+
+  struct B {
+    B() throw(std::system_error);
+    B(const B&) throw(std::system_error);
+    B(B&&) throw();
+    ~B();
+  };
+
+  struct C {
+    A a;
+    B b;
+
+    // C has implicitly defaulted special member functions.
+  };
+
+  template<typename... Ts>
+  struct type_list;
+
+  template<typename Func>
+  struct throw_specification;
+
+  template<typename Ret, typename... Args, typename... Es>
+  struct throw_specification<Ret(Args...) throw(Es...)> {
+    using types = type_list<Es...>;
+  };
+
+  // Sorts the list of types in the canonical order for a throw-specification
+  template<typename... Ts>
+  using throw_specification_t = typename throw_specification<void() throw(Ts...)>::types;
+
+  // The following static_asserts will always pass for conforming implementations.
+  
+  static_assert(std::same_as<throw_specification_t<declthrow(C{})...>,
+                             throw_specification_t<std::bad_alloc, std::system_error>>);
+  static_assert(std::same_as<throw_specification_t<declthrow(C{std::declval<const C&>()})...>,
+                             throw_specification_t<std::bad_alloc, std::system_error>>);
+  static_assert(std::is_nothrow_move_constructible_v<C>);
+#+end_src
+
+It would also be ideal if the same approach could be applied to special member
+functions of certain standard library types.
+
+For example: Constructing a ~std::tuple~ of types with default-constructors with
+static exception specifications would ideally result in the ~std::tuple~ type
+having a static exception specification.
+#+begin_src c++
+  // Ideally the following would hold true for all implementations.
+  // i.e. the throw-specification of the default constructor of std::tuple is the union
+  // of the throw-specifications for all of the tuple member default constructors.
+  static_assert(std::same_as<throw_specification_t<declthrow(std::tuple<A, B>{})...>,
+                             throw_specification_t<std::bad_alloc, std::system_error>>);
+#+end_src
+
+It's worth noting that, as currently specified, the default constructor of ~std::pair~ or
+~std::tuple~ is not required to be declared ~noexcept~ if all of its member default constructors are
+declared ~noexcept~, so making this work would require a change to the exception-specification of
+the default constructors.
+
+The copy/move constructors are, however, declared as either implicitly or explicitly defaulted,
+which therefore implies that the exception specification for these functions is deduced from the
+exception specifications of the members.
+
+A more in-depth analysis of standard library types is required to determine where this kind
+of defaulting exception specifications can be applied.
+
 *** Introducing a pack outside of a template
 
 The introduction of a ~declthrow(expr)~ syntax that can introduce a pack of types at an arbitrary
@@ -777,8 +1009,8 @@ It may be problematic for some compilers to support arbitrary use of anonymous p
 of templates.
 
 If this is a restriction we want to maintain in the language, then it's possible we can
-instead restrict ~declthrow(expr)~ to having to be immediately expanded in-place to
-the list of types. i.e. ~declthrow(expr)~ must be immediately followed by a ~...~ to
+restrict, for now, the ~declthrow(expr)~ syntax to having to be immediately expanded in-place
+to the list of types. i.e. ~declthrow(expr)~ must be immediately followed by a ~...~ to
 expand the pack.
 
 While this would be somewhat restrictive, it would still allow some basic common usage
@@ -787,24 +1019,30 @@ variadic class templates, or concepts.
 
 For example:
 #+begin_src c++
-  template<typename... Ts> class type_list {};
-  using error_types = type_list<declthrow(foo(a,b,c))...>;
+    template<typename... Ts> class type_list {};
 
-  template<typename T, typename... Ts>
-  concept one_of = (std::same_as<T, Ts> || ...);
+    // Can pass the result as template arguments to a class-template.
+    using error_types = type_list<declthrow(foo(a,b,c))...>;
 
-  constexpr bool throws_bad_alloc =
-     one_of<std::bad_alloc, declthrow(foo(a,b,c))...>;
+    template<typename T, typename... Ts>
+    concept one_of = (std::same_as<T, Ts> || ...);
 
-  std::variant<std::monostate, declthrow(foo(a,b,c))...> error;
-  try {
-      foo(a,b,c);
-  } template catch (auto e) {
-    error.template emplace<decltype(e)>(std::move(e));
-  }
+    // Can pass the result as template-arguments to a concept.
+    constexpr bool throws_bad_alloc =
+       one_of<std::bad_alloc, declthrow(foo(a,b,c))...>;
 
-  // Throws whatever foo() throws, plus std::system_error
-  void example(int a, int b, int c) throw(std::system_error, declthrow(foo(a,b,c))...);
+    // Can use it to compute the type of a variant that can hold all
+    // possible exception types that might be thrown.
+    std::variant<std::monostate, declthrow(foo(a,b,c))...> error;
+    try {
+        foo(a,b,c);
+    } template catch (auto e) {
+      error.template emplace<decltype(e)>(std::move(e));
+    }
+
+    // Can use it in the throw-specification of a function that wants to transparently
+    // throw whatever exceptions foo() throws, plus errors that it throws itself.
+    void example(int a, int b, int c) throw(std::system_error, declthrow(foo(a,b,c))...);
 #+end_src
 
 However, it wouldn't be able to support things like the following:
@@ -850,7 +1088,7 @@ that type-list into elements of the ~throw()~ specification.
 While additional workarounds could be added to the ~throw()~ specification to make this
 work, I think doing this would needlessly complicate the design. I am hopeful that we
 can instead make progress on improving general pack-manipulation facilites to make
-some of these cases possible.
+some of these cases possible. See P1858R2, P2632R0.
 
 *** Packs of ~declthrow~ packs
 
@@ -876,11 +1114,9 @@ Ideally we'd be able to write something like the following:
   void for_each(std::tuple<Ts...>& values, Func&& func) throw(declthrow(func(std::declval<Ts&>()))... ...);
 #+end_src
 
-However, there are known issues with expanding a pack of packs.  (TODO: What issues?).
-TODO: If we require that ~declthrow~ is immediately expanded, the first ~...~ would unambiguously
-be the expansion of ~declthrow~ pack here. So would this be ok?
+However, there are known issues with expanding a pack of packs (see P2632R0 - section "Single level of packness").
 
-As a workaround, we could instead write this with a single ~declthrow~ expressiont that
+As a workaround, we could instead write this with a single ~declthrow~ expression that
 contains a compound expression using ~operator,~.
 For example:
 #+begin_src c++
@@ -892,9 +1128,9 @@ For example:
 This way the ~Ts~ pack is expanded inside the argument to ~declthrow~ and it is no longer problematic
 expanding the ~declthrow~ expression.
 
-However, for the meantime, function templates that wish to be transparent in the set of exceptions they may throw
-can more simply just use ~throw(auto)~ to deduce the throw-specification from the body, rather than having to
-duplicate the relevant parts of the body in the ~throw()~-specification.
+The other alternative for function templates / inline functions that wish to be transparent in the set
+of exceptions they may throw is to just use ~throw(auto)~ to deduce the throw-specification
+from the body, rather than having to duplicate the relevant parts of the body in the ~throw()~-specification.
 
 *** Availability of the ~declthrow~ keyword
 
@@ -914,58 +1150,343 @@ However, this syntax would have a potential inconsistency with ~sizeof...(pack)~
 which takes an unexpanded pack and returns a single value. Whereas ~throw...(expr)~
 needs to take a single expression and produce a pack.
 
-The ~declthrow~ keyword also has the benefit of association with ~decltype~ which is
-used to query the 
+The ~declthrow~ keyword also has the benefit of association/similarity with ~decltype~ which is
+used to query the value-type of an expression.
 
 *** Filtering the set of exceptions
 
 Sometimes we want to build a throw-specification that indicates that we throw any exception
 that some other expression throws, but that we handle some number of errors within the function
-and so we want to exclude those from the list.
+and so we want to exclude those from the list. This way if the exception-specification of the
+other expression changes, then the expression-specification of our function changes to
+include the new set of exceptions.
 
 While this could, in theory, be done with some template metaprogramming on packs, which would
-become easier with the introduction of more pack-manipulation facilites described in P???? (TODO),
-the resulting code is still onerous, and compile-time expensive compared to just forwarding
-through all exceptions.
+become possible with the introduction of more pack-manipulation facilites described in P2632R0,
+the resulting code is still onerous, and compile-time expensive compared to not filtering
+the exceptions.
 
-TODO: Add example of how this would look with type_list->pack-expansion syntax from Corentin's papers.
+For example: Using P1858R2 generalized pack facilities, we can define a helper ~filter_exceptions~
+#+begin_src c++
+  template<typename HandledType, typename ErrorType>
+  concept handler_for = std::same_as<HandledType, std::any_exception> ||
+                        (std::derived_from<ErrorType, HandledType> &&
+                         std::convertible_to<ErrorType, HandledType>);
+
+  template<typename... Ts>
+  struct type_list {};
+
+  template<typename... Ts>
+  struct std::tuple_size<type_list<Ts...>>
+    : std::integral_constant<std::size_t, sizeof...(Ts)> {};
+
+  template<std::size_t Idx, typename... Ts>
+  struct std::tuple_element<Idx, type_list<Ts...>> { using type = Ts...[Idx]; };
+
+  template<typename... Lists>
+  struct concat_type_lists;
+
+  template<typename A>
+  struct concat_type_lists<A> {
+    using type = A;
+  };
+  template<typename A, typename B, typename... Rest>
+  struct concat_type_lists<A, B, Rest...>
+    : concat_type_lists<type_list<A::[:]..., B::[:]...>, Rest...>
+  {};
+
+  template<typename HandledType, typename ErrorType>
+  struct filter_exception {
+    using type = type_list<ErrorType>;
+  };
+  template<typename HandledType, typename ErrorType>
+  requires handler_for<HandledType, ErrorType>
+  struct filter_exception<HandledType, ErrorType> {
+    using type = type_list<>;
+  };
+
+  template<typename HandledType, typename... Errors>
+  using ...filter_exceptions = concat_type_lists<typename filter_exception<HandledType, Errors>::type...>::type::[:]...;
+#+end_src
+
+Which could then be used as follows:
+#+begin_src c++
+  void example() throw(filter_exceptions<CaughtException, declthrow(some_expression)...>...);
+#+end_src
+
+One alternative would be to add a syntax that allowed the programmer to describe the intent
+to filter the exception list directly in the language.
 
 A strawman syntax for this could be to allow additional arguments to ~declthrow()~ to list types
-to exclude from the list of types.
+to exclude from the list of types. i.e. ~declthrow(expr, filter-clauses...)~
 
-For example: Given a strawman syntax of adding additional ~catch(type)~ arguments afterthe first argument to ~declthrow()~
+For example: We could add additional ~catch(type)~ arguments after the first argument to ~declthrow()~
 to list exception types from the expression that are caught and thus should be removed from the list.
-#+BEGIN_SRC
-// Given.
-struct A : std::exception {};
-struct FooError : std::exception {};
-struct B : FooError {};
-struct C : FooError {};
+#+BEGIN_SRC c++
+  // Given.
+  struct A : std::exception {};
+  struct FooError : std::exception {};
+  struct B : FooError {};
+  struct C : FooError {};
 
-void foo() throw(A, B, C);
+  void foo() throw(A, B, C);
 
-void example1() throw(declthrow(foo())...);                        // -> throw(A, B, C)
-void example2() throw(declthrow(foo(), catch(A))...);              // -> throw(B, C)
-void example3() throw(declthrow(foo(), catch(A), catch(B))...);    // -> throw(C)
-void example4() throw(declthrow(foo(), catch(FooError))...);       // -> throw(A)
-void example5() throw(declthrow(foo(), catch(std::exception))...); // -> throw()
+  void example1() throw(declthrow(foo())...);                        // -> throw(A, B, C)
+  void example2() throw(declthrow(foo(), catch(A))...);              // -> throw(B, C)
+  void example3() throw(declthrow(foo(), catch(A), catch(B))...);    // -> throw(C)
+  void example4() throw(declthrow(foo(), catch(FooError))...);       // -> throw(A)
+  void example5() throw(declthrow(foo(), catch(std::exception))...); // -> throw()
 #+END_SRC
 
 Note that listing the ~catch(FooError)~ base class removes both derived types from the list.
 
-Having the catch-line match types based on inheritance, however, requires that the exception types
-are complete - a forward declaration would only allow exact matches.
+Despite the potential syntactic and compile-time benefits that might arise from adding such a syntax,
+it's not clear whether the added complexity is worthwhile at this point. Usage experience is needed
+to better understand how often such a feature would be needed.
+
+For a lot of these cases, it is expected that the ~throw(auto)~ syntax will serve most of the
+needs in this direction, and assuming that more generalised pack facilities become available,
+users that really need to do such filtering would still be able to do this in library.
+
+If we can specify the syntax of ~declthrow~ such that it reserves the right to be extended
+in some way such that this capability could be added later, then we can take a wait-and-see
+approach.
 
 ** Checked Exceptions
 
-A function declaration that contains a /static-exception-specification/ 
+A function declaration that includes a /static-exception-specification/ must have a definition that
+ensures that only exceptions of those types may exit the function.
+
+To assist with this, the compiler looks at the exception-specifications of all expressions
+within the body of the function and computes the set of possible exception types that could
+potentially exit the current function. If this set of possible exception types is not a
+subset of the set of exception types listed in the exception-specifications then the
+program is ill-formed.
+
+*** Computing the set of exception-types
+
+When computing the set of exception types that might exit an expression, statement or function,
+we idealy want a set of rules that can be reliably evaluated in a consistent way across all
+conforming implementations, and that is not dependent on inlining, or compiler optimisations.
+This is because the computation can be important for correctness and well-formedness of a program,
+and can also affect the ABI of functions with deduced throw specifications.
+
+The following algorithm describes such a set of rules for computing the
+set of potentially-thrown-exception-types for each grammar term that
+may appear within a /function-body/.
+
+The descriptions here are not as precise as they would need to be for wording, but are hopefully
+descriptive enough to understand the proposed semantics.
+
+**** /function-body/ 
+
+Let /A/ be the set of potentially-thrown exception types for the function body's
+/compound-statement/.
+
+If the function is for a constructor, then let /B/ be the set of potentially-thrown
+exception types of the function call expressions of the constructors of the base-classes
+and non-static data-members, otherwise let /B/ be the empty set.
+
+Let /C/ be the union of the sets /A/ and /B/.
+
+If the /function-body/ has a /function-try-block/, then;
+- let /D/ be the subset of types in /C/ that would be caught by the handlers of the /function-try-block/.
+  (see the /try-block/ description for more details about this); and
+- for each potentially reachable handler, /Hi/, of the try-block, let /Ei/ be the set of potentially-thrown
+  exception types corresponding to the /compound-statement/ of that handler.
+
+Then the set of potentially-thrown exception types of the /function-body/ is the set
+of types described by (/C/ - /D/) ∪ /Ei/...
+
+**** /compound-statement/
+
+The set of potentially thrown exception types for a /compound-statement/ is the union of
+the set of potentially-thrown exception types for each of the /statement/s in the
+/statement-seq/ of the /compound-statement/.
+
+Note that we do not attempt to do analysis of control-flow to eliminate exceptions that might
+be thrown from unreachable statements in a /statement-seq/. e.g. ignoring a statement because a
+preceding statement branched unconditionally to some other code-path via ~return~, ~break~,
+~continue~, ~goto~, ~throw~ or calling a ~[﻿[noreturn]]~ function.
+
+For example: Assuming the following declarations:
+#+begin_src c++
+  void foo() throw(A);
+  void bar() throw(B, C);
+  void baz() throw(D);
+#+end_src
+
+The set of potentially-thrown-exceptions from the following compound-statement is still { ~A~, ~B~, ~C~, ~D~ }
+#+begin_src c++
+  {
+    foo(); // might throw A
+    goto label;
+    bar(); // might throw B or C (note this is unreachable)
+  label:
+    baz(); // might throw D
+  }
+#+end_src
+
+While this will be overly conservative in computing the set of potentially-thrown exception types for some
+cases, it avoids some complications which make specifying more accurate behaviour difficult.
+
+For example, let's say we wanted to avoid including any statements that appear after a statement that
+unconditionally branches to some other location via some form of control-flow.
+1. We'd first have to reliably define what statements/expressions contain unconditional branches.
+2. We'd then need to consider all statements in a compound-statement after a statement with an
+   unconditional branch as unreachable.
+3. However, we also need to consider labels on some of those statements that might be jump targets
+   for ~goto~ statements. So any statement in a compound-statement after a label is potentially
+   reachable again (until the next unconditional branch statement).
+4. Then there is the question of reachability of those labels.
+   - What if there are no ~goto~ statements within the function that target that label?
+     Should we still consider the label reachable?
+   - What if there is a ~goto~ statement that targets the label, but the ~goto~ statement is not reachable
+     because it has a preceding unconditional-branch statement?
+   
+This is a slippery slope that is difficult in general to analyze reliably.
+
+It might be possible to specify this in some way at some stage in the future,
+but for now this paper does not propose to exclude statements that occur
+after some unconditional branching as
+
+**** /statement/
+
+A statement is one of the following cases:
+- /expression-statement/ - Has the same set of potentially-thrown exception types as the contained /expression/.
+- /compound-statement/ - Already handled above
+- /selection-statement/
+- /iteration-statement/
+- /jump-statement/
+- /declaration-statement/
+- /try-block/
+
+See the relevant section for a description of each.
+
+**** /selection-statement/
+
+Selection statements include both ~if~, ~if constexpr~, ~if consteval~ and ~switch~ statements.
+
+***** ~if~ statements
+
+The set of potentially-thrown exception types of an ~if~ statement is the
+union of the exception types of the:
+- /init-statement/ - if present
+- /condition/
+- /statement/ - the first substatement
+- /statement/ - the second substatement (if the ~else~ part is present)
+
+***** ~if constexpr~ statements
+
+As the condition of a constexpr if statement is evaluated as part of constant evaluation
+and constant evaluation is not permitted to throw exceptions, /condition/ part does not
+contribute to the set of potentially-thrown exception types.
+
+If the /selection-statement/ contains an /init-statement/ part, then let /I/ be
+the set of potentially-thrown exception types of the /init-statement/,
+otherwise let /I/ be the empty set.
+
+If the value of the converted /condition/ expression is ~true~ then then set of
+potentially-thrown exception types of the /selection-statement/ is the union of
+/I/ and the set of potentially-thrown exception types of the the first substatement.
+i.e. the body of the ~if~ /statement/.
+
+Otherwise, if the ~else~ part of the selection statement is present, then the
+set of potentially-thrown exception types of the /selection-statement/ is the union of
+/I/ and the set of potentially-thrown exception types of the second substatement.
+i.e. the body of the ~else~ /statement/.
+
+Otherwise, the set of potentially-thrown exception types of the /selection-statement/
+is /I/.
+
+***** ~if consteval~
+
+An if statement of the form ~if consteval /compound-statement/~ has a set of
+potentially-thrown exception types that is the empty set.
+
+Note that the /compound-statement/ is manifestly constant-evaluated and so is
+not permitted to throw exceptions. Therefore it does not contribute to the
+set of potentially-thrown exception types.
+
+An if statement of the form ~if !consteval /compound-statement/~ has a set of
+potentially-thrown exception types that is equal to the set of potentially thrown
+exception types of the first substatement.
+
+An if statement of the form ~if consteval /compound-statement/ else /statement/~ has
+a set of potentially-thrown exception types that is equal to the set of potentially
+thrown exception types of the second substatement.
+
+An if statement of the form ~if ! consteval /compound-statement/ else /statement/~
+has a set of potentially-thrown exception types that is equal to the set of potentially
+thrown exception types of the first substatement.
+
+***** ~switch~
+
+A switch statement of the form ~switch ( /init-statement/ /condition/ ) /statement/~
+or ~switch ( /condition/ ) /statement/~
+has a set of potentially thrown exception-types equal to union of the sets of potentially
+thrown exception types of the following parts:
+- /init-statement/ (if present)
+- /condition/
+- /statement/
+
+**** /init-statement/
+
+An init-statement is either a:
+- /expression-statement/ - Expression statements are already described above.
+- /simple-declaration/ 
+- /alias-declaration/ - These do not contain any executable code and thus do not contribute to the set of potentially-throw exception types.
 
 
-TODO: Talk about how the compiler computes the set of exceptions that may exit a function.
+If the statement is a /simple-declaration/ that is an object declaration,
+the set of potentially-thrown exception types of that statement is the union
+of the sets of potentially-thrown exception types of the /initializer/ expression,
+the function call expression of the objects selected constructor and the
+function call expression of the object's destructor.
+
+**** /iteration-statement/
+
+The following kinds of iteration-statement are possible:
+- ~while (~ /condition/ ~)~ /statement/
+- ~do~ /statement/ ~while (~ /expression/ ~) ;~
+- ~for (~ /init-statement/ /condition/ ~;~ /expression/ ~)~ /statement/
+- ~for (~ /init-statement/ /for-range-declaration/ ~:~ /for-range-initializer/ ~)~ /statement/
+
+For all of these forms of iteration statement, the set of potentially-thrown exception types
+of the iteration statement is the union of the sets of potentially-thrown exception types
+from each of the relevant subexpressions or substatements:
+- /condition/
+- /statement/
+- /expression/
+- /init-statement/
+- /for-range-declaration/
+- /for-range-initiailizer/
+
+Note that this includes exceptions that may be thrown from the body of the iteration statement,
+even if the statement's /condition/ is such that the body will never be executed.
+
+**** /jump-statement/
+
+TODO
+
+**** /declaration-statement/
+
+TODO
+
+**** /try-block/
+
+TODO
+
+**** /expression/
+
+TODO
+
+*** Ill-formedness of a function definition
 
 TODO: Talk about functions being ill-formed if any exception may escape the function that
 is not listed in the exception-specification.
 
+**** 
 
 ** Template catch blocks
 
@@ -975,6 +1496,18 @@ not already caught by preceding catch-blocks.
 
 TODO: Describe this in more detail.
 
+#+begin_src c++
+  void do_something() throw(A, B, C);
+
+  try {
+    do_something();
+  } template catch (auto e) {
+    // catch-block instantiated for each unique type in the static-exception specification
+    // In this case where 'e' has type A, B or C.
+  } 
+#+end_src
+
+
 ** Virtual Functions
 
 TODO: Describe implications for virtual functions
@@ -983,6 +1516,26 @@ TODO: Describe implications for virtual functions
   - What would the calling convention look like for these functions?
   - Can we have two different functions - one for where the function is called directly vs
     where it is called through the vtable entry (and thus uses the base class calling convention).
+
+** Concepts
+
+TODO: Describe extension of requires clauses to allow checking the throw-specification of an expression.
+
+For example, something like:
+#+begin_src c++
+
+  template<typename T>
+  concept Foo = requires(const T& x) {
+    { x.foo() } throw(A, B) -> std::same_as<int>;
+  };
+#+end_src
+
+In this case, the concept passes only if the ~declthrow(x.foo())...~ expression evaluates to
+a subset of the types listed in the throw specification.
+
+Q. Should the ~throw(A,B)~ detect that the exception specification is exactly one of ~throw()~, ~throw(A)~, ~throw(B)~ or ~throw(A,B)~?
+Or should it allow throwing exceptions that derive from ~A~ and ~B~.
+i.e. such that if I call it inside a try/catch block with handlers for ~catch (A)~ and ~catch (B)~ then that's ok?
 
 ** Coroutines
 
@@ -1408,6 +1961,41 @@ TODO: Read up about Midori error-handling experiements.
   - 2004
     - N1664 - Toward Improved Optimization Opportunities in C++0x
       - Describes type-effects of ~throwing()~ / ~nothrow~ qualifier on a function as part of the function's type.
+  - 2003
+    - N1462 	03-0045 	Safe Exceptions and Compiler Security Checks
+  - 2004
+    - N1725 	04-0165 	Copy Elision in Exception Handling
+  - 2005
+    - [[https://www.stroustrup.com/fast_dynamic_casting.pdf][Fast dynamic casting]] (Gibbs, Stroustrup)
+      - Talks about fast dynamic casting using integer ids and the Chinese Remainder Theorem.
+        Assigns each type in the hierarchy a prime number.
+        Type id for each type is the product of the prime numbers of all base classes.
+        Can test for castability by checking if concrete type id is divisible by base-class type id.
+      - Referenced in Bjarne's paper from 2019 P1947R0.
+
+    - N1825 	05-0085 	Addressing Exception Specifications for Next Generation of C++
+      - talks about making exception specifications similar to contract post-conditions
+        - std::bad_exception - exception thrown when exception-specification violated
+          - inherits from std::broken_contract, which inherits from std::exception
+  - 2006
+    - N2061 	06-0131 	Library Exception Propagation Support
+    - N2089 	06-0159 	Asynchronous Exceptions for Threads
+    - N2096 	06-0166 	Transporting Values and Exceptions between Threads
+    - N2106 	06-0176 	Cloning and Throwing Dynamically Typed Exceptions
+    - N2107 	06-0177 	Exception Propagation across Threads
+    - 
+  - 2007
+    - N2309 	07-0169 	Error-handling and Exception-related library changes for C++0x
+    - 
+  - 2008
+    - N2509 	08-0019 	Nesting Exceptions
+    - N2538 	08-0048 	Removal of System error support
+    - N2559 	08-0069 	Nesting Exception Objects (Revision 1)
+    - N2636 	08-0146 	Error Handling Specification for Chapter 30 (Threads)
+    - N2678 	08-0188 	Error Handling Specification for Chapter 30 (Threads)
+    - N2809 	08-0319 	Library Support for hybrid error handling
+    
+        
   - 2009
     - [[https://wg21.link/N2815][N2815]] - Improving the standard library's exception specifications
       - Proposes adding "no-fail" guarantees to certain container methods
@@ -1855,6 +2443,7 @@ TODO: Read up about Midori error-handling experiements.
 
 
   - Previous papers relating to customisation points / overload-sets / ADL
+   - N2216 	07-0076 	Report on language support for Multi-Methods and Open-Methods for C++ (2007)
     - P0119R1   Overload sets as function arguments
     - P0084R1   Emplace Return Type (Revision 1)
       - Might be relevant to call-with-return-value-slot() function idea I had for fibers/coroutines
