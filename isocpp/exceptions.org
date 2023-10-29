@@ -1298,6 +1298,10 @@ If the /function-body/ has a /function-try-block/, then;
 Then the set of potentially-thrown exception types of the /function-body/ is the set
 of types described by (/C/ - /D/) ∪ /Ei/...
 
+TODO: Talk about coroutines where execution may flow off the end of the function-body.
+These need to consider the implicit ~co_return;~ statement at the closing curly-brace
+of the function-body.
+
 **** /compound-statement/
 
 The set of potentially thrown exception types for a /compound-statement/ is the union of
@@ -1467,19 +1471,814 @@ even if the statement's /condition/ is such that the body will never be executed
 
 **** /jump-statement/
 
-TODO
+Jump statements include:
+- ~break;~
+- ~continue;~
+- ~return~ /expr-or-braced-init-list/ ~;~
+- /coroutine-return-statement/
+- ~goto~ /identifier/ ~;~
+
+Only the ~return~ and ~co_return~ statements can potentially affect the set of potentially-thrown
+exception types here. The others are just pure control flow, and while they can potentially trigger
+exceptions to be thrown when exiting scopes via that control-flow (if destructors are potentially-throwing),
+those exceptions should be covered by the declaration statement for that variable.
+
+***** ~return~ statements
+
+A ~return~ statement has a set of potentially-thrown exception types equal to the
+union of the set of potentially-thrown exception types of the operand expression,
+and the set of potentially-thrown exception types from any implicit conversion
+or constructor call required to initialize the return-value.
+
+Note that there is an edge-case here that needs to be considered, where the operand
+to the return statement is a prvalue which is returned with guaranteed copy-elision
+and where the object has a potentially-throwing destructor. Normally, an expression
+that creates a pr-value includes the potentially-throwing types of both the call to
+the constructor, and the call to the destructor, as a statement containing that
+expression will also call the destructor at the end of the full-expression.
+However, for a return-value that is initialized with guaranteed copy-elision, the
+destructor will be invoked by the caller of the function, rather than the local
+function, and so the exception-specification of the return-value type should not
+included in the calculation of the set of potentially-thrown exception types for
+the return statement.
+
+For example:
+#+begin_src c++
+  struct Foo {
+    Foo() throw(A);
+    Foo(Foo&&) throw(B);
+    ~Foo() throw(C);
+  };
+
+  Foo f() throw(auto) { // deduces to throw(A)
+    return Foo{}; // constructor called here but not destructor
+  }
+
+  Foo g() throw(auto) { // deduces to throw(A, B, C)
+    Foo f; // declaration statement potentially throws A (from constructor) and C (from destructor)
+    return f; // move-constructor potentially called here, even if copy is elided due to NRVO
+  }
+#+end_src
+
+We also need to consider the case where the returned object is initialized using aggregate
+initialization, where there may be a whole tree of sub-expressions that potentially initialize
+sub-objects of the returned object.
+
+Any expression in such a return-statement that directly initializes an object or sub-object of
+the return-value that will be destroyed by the caller should not consider the exception-specification
+of that sub-object's type's destructor when computing the set of potentially-thrown exceptions of
+the ~return~ statement.
+
+Note that, while it may be possible that the return-statement may execute the destructor of some
+of these sub-objects in the case that initialization of a subsequent sub-object exits with an
+exception, we do not need to consider this case for the purposes of computing the potentially-thrown
+exceptions as these destructors will only be called in case there is an unwind due to another
+exception - if these destructors then throw their own exceptions during unwind then this results
+in an immediate call to ~std::terminate~.
+
+***** ~co_return~ statements
+
+A ~co_return~ statement of the form ~co_return;~ has a set of potentially-thrown exception types
+equal to the set of potentially-thown exception types of the statement ~promise.return_void();~,
+where /promise/ is the current coroutine's promise object.
+
+A ~co_return~ statement of the form ~co_return~ /expr/ ~;~, where /expr/ has type ~void~ has
+a set of potentially-thrown exception types equal to the union of the set of potentially-thrown
+exception types of /expr/ and the set of potentially-thrown exception types of the statement
+~promise.return_void()~, where /promise/ is the current coroutine's promise object.
+
+A ~co_return~ statement of the form ~co_return~ /expr-braced-init-list/ ~;~, where the operand
+is either an /expression/ of non-~void~ type or is a /braced-init-list/, has a set of potentially-thrown
+exception types equal to the set of potentially thrown exception types of the statement
+~promise.return_value(~ /expr-or-braced-init-list/ ~);~.
 
 **** /declaration-statement/
 
-TODO
+A declaration statement consists of a /block-declaration/, which in turn consists of one of the following:
+- /simple-declaration/
+- /asm-declaration/
+- /namespace-alias-definition/
+- /using-declaration/
+- /using-enum-declaration/
+- /using-directive/
+- /static_assert-declaration/
+- /alias-declaration/
+- /opaque-enum-declaration/
+ 
+Other than the first to cases, the rest of the declarations do not introduce any executable code that
+might throw exceptions.
+
+Note that, while the /static_assert-declaration/ has a child expression, this expression is evaluated
+as a manifestly constant expression, and therefore cannot throw an exception.
+
+***** /simple-declaration/
+
+A declaration statement that declares one or more block variables with automatic storage duration
+has a set of potentially-thrown exception types equal to union of the sets of potentially
+thrown exception types of any /initializer/ expressions and any calls to constructors or
+conversion operators required to initialize the local variables, and any potentially thrown
+exception types of calls to the destructors of the declared variables.
+
+A declaration statement that declares one or more block variables with either static storage duration
+or thread storage duration has a set of potentially-thrown exception types equal to the union
+of the sets of potentiall thrown exception types of any /initializer/ expressions and any calls
+to constructors of conversion operators required to initialize the local variables, but does _not_
+include exception types of calls to the destructors of the declared variables.
+
+We do not include the exceptions thrown by destructors of static/thread_local variables because
+these destructors are not called from within the scope of a function that initializes these
+variables.
+
+Q. Initialization of variables with static storage duration needs to perform synchronization
+in multi-threaded environments in order to guard against data-races initializing the
+variable. Is it possible that operations on the synchronization primitives might fail with an
+implementation-defined or unspecified exception (in which case we would need to include this
+in the set of exception types) or can we assume that the synchronization will always succeed?
+
+A declaration statement that declares a constant expression (i.e. is declared with the ~constexpr~
+specifier) has an empty set of potentially-thrown exception types.
+
+***** /asm-declaration/
+
+The /asm-declaration/ has implementation defined behaviour and, while in theory, on some implementations,
+an assembly declaration might be able to throw an exception, we cannot, in general, deduce anything about
+the set of exception types that might be thrown in a portable way.
+
+There are three possible options we take here:
+- the /asm-declaration/ has implementation-defined behaviour, so the set of potentially-thrown exceptions
+  from such a declaration should be implementation-defined.
+- the /asm-declaration/ could potentially do anything (invoke a potentially-throwing function,
+  implement some exception-throwing mechanics, etc.) so we should treat this as potentially throwing
+  any type of exception.
+- the vast majority of /asm-declaration/ usage is for implementing optimized, inline
+- we could make it ill-formed to use an /asm-declaration/ in any context in which the
+  exception-specification needs to be deduced.
+  
+This paper suggests treating an /asm-declaration/ statement as having an implementation-defined
+set of potentially-thrown exceptions as this at least allows the possibility of the implementation
+being able to analyse a declaration and deduce what exceptions might be thrown in an implementation-specific
+way.
+
+However, it would be worth a more detailed discussion within the Evolution sub-group about
+what the desired semantics are here.
 
 **** /try-block/
 
-TODO
+A /try-block/ statement has the form ~try~ /compound-statement/ followed by one or more
+handlers of the form ~catch (~ /exception-declaration/ ~)~ /compound-statement/.
+
+In addition, a /function-try-block/ statement for a constructor can also have the form
+~try~ /ctor-initializer/ /compound-statement/ followed by one or more handlers of the
+form ~catch (~ /exception-declaration/ ~)~ /compound-statement/.
+
+Let /A/ be the set of potentially-thrown exception types of the try block's /compound-statement/.
+
+If this is a function try block for a constructor then let /B/ be the union of /A/ and
+the sets of potentially-thrown exceptions of initializer expressions and calls to
+constructors of any base classes and non-static data-members.
+
+Otherwise, let /B/ be the set /A/.
+
+Let /E/ initially be the empty set.
+
+For each type, /x/, in the set /B/
+- if /x/ is ~std::any_exception~ then
+  - add the set of potentially-thrown exception types of the /compound-statement/ of every reachable
+    handler to /E/.
+    NOTE: a handler is not reachable if the /exception-declaration/ for that handler names a type
+    unambiguously derived from a base class type that is listed in an earlier handler's /exception-declaration/.
+    NOTE: this does not include template handlers as those are only invoked from exceptions thrown
+    from expressions that have a static exception specification.
+  - if the list of handlers associated with this try-block does not include a handler with an /exception-declaration/ of ~...~
+    then add ~std::any_exception~ to /E/.
+- otherwise, if any handler is a match for an exception object of type /x/ then
+  - add the set of potentially-thrown exception-types for the /compound-statement/
+    associated with the first handler that matches an exception object of type /E/.
+  - add the set of potentially-thrown exception-types of a function call expression
+    that invokes the destructor of an object of type, /x/.
+    Note: This is because exiting the handler's /compound-statement/ will potentiallly
+    invoke the destructor of the exception object of type /x/.
+- otherwise,
+  - add /x/ to /E/
+  
+The set of potentially-thrown exception types of the try-block is the resulting set, /E/.
 
 **** /expression/
 
-TODO
+There are many different types of expressions that need to be considered.
+
+I am not going to list all of them here, but instead give some general rules that
+apply to most expressions and then describe separately the rules for any expressions
+that do not follow the general rules.
+
+***** General rules for expressions
+
+In general, an expression has a set of potentially-thrown exception types that is the
+union of the sets of potentially-thrown exception types from all of the explicit
+sub-expressions, as well as an implicit  
+
+Expressions that have sub-expressions in general have a set of potentially-thrown exception
+types that includes the union of the sets of potentially-thrown exception types of the
+immediate-sub-expressions of that expression.
+
+Operator expressions or conversions that resolve to calls to user-defined operator
+functions have a set of potentially-thrown exception types of a function call expression to
+that user-defined operator function. Built-in implicit conversions and operators
+generally have an empty set of potentially-thrown exceptions.
+
+***** Function call expressions
+
+Function call expressions have a set of potentially-thrown exception types equal to the
+union of the sets of potentially-thrown exception types of the following expressions:
+- the expressions provided as arguments to the function, including any default argument expressions.
+- any implicit conversion expression required to convert the argument to the corresponding parameter type, and
+- the /postfix-expression/ immediately preceding the parenthesised argument-list
+with the set of exception types listed in the /postfix-expression/'s function type's or function-pointer type's
+exception-specification.
+
+If the /postfix-expression/ has function type then the set of potentially-thrown exception types
+is taken from the exception-specification of the function declaration.
+
+If the /postfix-expression/ has function-pointer type then the set of potentially-thrown exception
+types is taken from the exception-specification of the pointed-to function type.
+Note that this may include a superset of the set of functions.
+
+If the function or function-pointer has an dynamic exception-specification then the
+set of potentially-thrown exception types is the set { ~std::any_exception~ },
+otherwise, if it has a static exception-specification then the set of potentially
+thrown exception types is the set of types listed in the exception specification.
+
+Note that if any parameter types of the function or function-pointer being called have
+a value category of prvalue then the set of potentially-thrown exception types will also
+include the exception types listed in the type's destructor's exception-specification,
+as per the next section.
+
+***** prvalue expressions
+
+If an expression has a prvalue value category then the set of potentially thrown exception
+types of that expression includes the set of potentially thrown exception types of a
+function call expression to that object's destructor, unless that expression is the operand
+of a ~return~ statement of a function returning a prvalue of the same type as the operand
+and the operand is used to initialize the result object via copy-initialization.
+
+See the section on ~return~ statements for more details (in particular regarding aggregate
+initialization of return values).
+
+***** Standard conversions
+
+The set of potentially-thrown exceptions from all standard conversions listed under
+[conv.general] is the empty set.
+
+***** Constant expressions
+
+Any expression that is a manifestly constant expression has an empty set of potentially-thrown
+exceptions. Note this includes expressions of the form ~sizeof(~ /expr/ ~)~ and ~alignof(~ /expr/ ~)~.
+
+The intent here is that we only want to ignore exception specifications of expressions
+that are guaranteed to be constant expressions, and not for expressions that are only
+potentially constant evaluated.
+
+For example:
+#+begin_src c++
+  constexpr int parse_integer(const char* s) throw(parse_error) {
+    int result = 0;
+    while (*s != '\0') {
+      if (!std::isdigit(*s)) throw parse_error{};
+      result = 10 * result  + (*s - '0');
+    }
+    return result;
+  }
+
+  int example_1() throw(auto) { // deduces to throw()
+    constexpr int i = parse_integer("1234");
+    return i;
+  }
+
+  int example_2() throw(auto) { // deduces to throw(parse_error)
+    const int i = parse_integer("1234");
+    return i;
+  }
+#+end_src
+
+In ~example_2()~, even though a compiler could potentially evaluate the call to ~parse_integer()~
+as a constant-expression, it is not required to do so and so could potentially have a runtime
+call to a function that is potentially-throwing.
+
+Also, if the function does happen to throw during a speculative constant execution of the function
+then the compiler falls back to inserting a runtime call to the function instead, rather than
+making the program ill-formed, like it would be if the invocation in ~example_1()~ were to throw.
+
+For example, consider what the semantics should be if ~example_2()~ replaced the argument to
+~parse_integer~ with ~"not-a-number"~ . In this case, we would expect that calling ~example_2~
+would throw ~parse_error~ at runtime. Simply changing the value of the string literal passed
+to ~parse_integer~ should not change the deduced exception-specification of the function.
+
+***** Throw expressions
+
+We need to consider both:
+- ~throw <expr>~ expressions that throw new exception objects, and
+- ~throw~ expressions that rethrow an existing exception.
+
+****** ~throw <expr>~
+
+A throw-expression constructs and throws new exception of type equal to the decayed type of the operand expression.
+
+Some throw-expressions may require dynamic allocation of storage for the exception object,
+which might fail due to resource exhaustion. In this case, the throw expression may instead
+result in throwing an exception of type ~std::bad_alloc~.
+
+Note that currently, the behaviour of a program that fails to allocate storage for a newly
+thrown exception is unspecified. However, the behaviour for failure to allocate/rethrow
+an exception_ptr is well-defined and so I would expect most implementations to do something
+similar - i.e. throw ~std::bad_alloc~.
+
+TODO: Update this pending the output of mailing list thread: https://lists.isocpp.org/core/2023/10/15012.php
+
+This paper proposes defining some forms of throw expressions as not requiring dynamic memory
+allocation, but instead requiring that implementations allocate the exception objects as
+automatic storage duration objects. This is necessary to be able to provide the guarantee
+to programs that particular throw expressions actually throw an exception of that type
+and do not throw an expression of some other type (like ~std::bad_alloc~) and therefore
+that the set of potentially-thrown exception types is limited to the 
+
+******* Dynamic throw expressions
+
+The function that contained the throw expression that created the exception object is
+called the "originating function".
+
+If the exception thrown by a throw-expression is either handled within the originating
+function or if the exception escapes the originating function (possibly after a number
+of catch/rethrow steps) and the function definition has a throw-specifier with a static
+exception specification (note this implies the exception type is listed in the
+throw-specification as otherwise the program would be ill-formed), then the throw
+expression is considered a /static throw expression/. All other throw-expressions
+are /dynamic throw expressions/.
+
+
+Here is a rather extreme example:
+#+begin_src c++
+  void example() throw(X) {
+    try {
+      try {
+        throw X{}; // original throw expression
+      } catch (X) { // handler #1
+        if (cond1)
+          throw; // potential rethrow #1 - associated with handler #1
+        try {
+          throw; // potential rethrow #2 - associated with handler #1
+        } catch (X) { // handler #2 for potential rethrow #2
+          if (cond2)
+            throw; // potential rethrow #3 - associated with handler #2
+        }
+      } // potential end-of-lifetime of exception object if cond2 was false
+    } catch (X) { // handler #3 for potential rethrow #1 and #3
+      try {
+        throw; // potential rethrow #4
+      } catch (X) { // handler #4 for potential rethrow #4
+        try {
+          if (cond3)
+            throw; // potential rethrow #5 - associated with handler #4
+
+          try {
+            throw; // potential rethrow #6
+          } catch (X) { // handler # 5 for potential rethrow #6
+            throw; // potential rethrow #7 - associated with handler #5
+          }
+        } catch (X) { // handler #6 for potential rethrow #5 and #7
+          try {
+            throw; // potential rethrow #8
+          } catch (Y) {
+          }
+        }
+      }
+    }
+  }
+#+end_src
+
+In this case, there is no handler within this function for potential rethrow #8
+and therefore the lifetime of the exception object escapes this function.
+
+The storage for the exception object of a /deterministic throw expression/ has automatic
+storage duration. Note this means that allocation of the storage for the exception object
+is not performed dynamically and therefore cannot fail with a ~std::bad_alloc~ exception.
+
+
+
+According to [except.throw] p4
+#+begin_quote
+The points of potential destruction for the exception object ar:
+- when an active handler for the exception exits by any means other than rethrowing, immediately after
+  the destruction of the object (if any) declared in the exception-declaration in the handler.
+- when an object of type std::exception_ptr that refers to the exception object is destroyed, before
+  the destructor of std::exception_ptr returns.
+
+Among all points of potential destruction for the exception object, there is an unspecified last one
+where the exception object is destroyed. All other points /happen before/ the last one.
+#+end_quote
+
+From this, we can deduce that, in the following snippet:
+#+begin_src c++
+  try {
+  throw X{};
+} catch (X) {
+  try {
+    throw;
+  } catch (X) {
+  } // #1
+
+  try {
+    throw;
+  } catch (X) {
+  } // #2
+} // #3
+#+end_src
+
+That the exception object is destroyed at #3 since this is the later of all potential handlers
+of the thrown exception object - #1 and #2 are sequenced before #3 and so #3 is the last point
+at which the exception object may be destroyed.
+
+Note that capturing the exception in a ~std::exception_ptr~ by calling ~std::current_exception()~
+and ~std::rethrow_exception~ does not necessarily throw the same exception object. An implementation
+is allowed to copy the current exception object into storage referenced by the returned ~std::exception_ptr~.
+
+******* Rules for throw expressions
+
+The set of potentially-thrown exception types of a throw expression is the union of
+- the set of potentially-thrown exception types of the operand expression
+- the type ~std::decay_t<decltype(<expr>)>~
+- the set of potentially-thrown exception type of copy-initialization of the exception-object
+
+Additionally, if the implementation fails to allocate storage for the exception
+
+Additionally, if the throw expression exists within a function with a static exception specification, then
+thrown exception objects are allocated in automatic-storage duration storage of either the
+current function, or a calling function
+
+If a throw expression exists within a function with a dynamic exception specification, then
+thrown 
+
+
+****** ~throw~ (rethrowing the currently handled exception)
+
+If the rethrow expression occurs lexically within the body of a handler and is not nested within
+a locally defined function body or a lambda expression body defined in the scope of that handler,
+then we say that the rethrow expression is associated with the inner-most enclosing handler.
+
+Otherwise, we say that the rethrow expression is unassociated with a handler.
+
+For example:
+#+begin_src c++
+
+  void example() {
+    throw; // unassociated - not inside handler
+
+    try {
+      throw; // unassociated - not inside handler
+    } catch (A a) { // #1
+      if (!can_handle(a)) {
+        throw; // associated with #1
+      }
+
+      auto rethrow = [] {
+        throw; // unassociated - inside lambda
+      };
+
+      struct LocalClass {
+        static void Rethrow() {
+          throw; // unassociated - inside nested function
+        }
+      };
+    } catch (...) { // #2
+      try {
+        throw; // associated with #2
+      } catch (B b) { // #3
+        throw; // associated with #3
+      }
+    }
+  }
+#+end_src
+
+If a rethrow expression is associated with a handler then we potentially have more static information about
+the set of possible exception types that might be thrown by that expression than an unassociated rethrow
+expression.
+
+We can compute the set of exception types that might be thrown by such a rethrow exception
+based on the set of exception-types that may propagate out of the try-block and based on the exception
+types that may be handled by handlers earlier in the sequence of handlers for that try-block.
+
+******* Unreachable handlers
+
+One of the interesting cases to handle is when we can statically determine whether the handler is
+unreachable. This can happen in one of two cases:
+- When an earlier handler matches an unambiguous base-class of the later handler's exception-declaration type and
+  will therefore preferentially match any exception types that would be handled by the later later handler.
+- When the set of potentially thrown exception types of the try-block's /compound-statement/ is a finite set
+  (i.e. does not contain contain ~std::any_exception~) and there are no types in that finite set that match
+  this handler and that do not match any earlier handler.
+
+In this case, there is the question of what the set of potentially-thrown exception types should be for
+a rethrow expression that is associated with such an unreachable handler.
+
+As the handler itself is statically determined to be unreachable, the body of the handler's compound-statement does
+not contribute to the overall set of potentially-thrown exception types of the try-block,  so we might say
+"it doesn't matter". However, if we consider the ability to query the set of potentially-thrown exception types
+using ~declthrow()~ then a program might want to query within the context of the handler, what types might
+be thrown by a rethrow expression. i.e. ~declthrow(throw)...~.
+
+The ability to query whether or not a given handler is reachable can be useful in eliminating code that would
+otherwise be ill-formed, or that we want to avoid instantiating to reduce compile-times.
+
+For example: Code for implementing the P2300 ~std::execution::then()~ algorithm needs to determine whether invoking
+the transformation function might throw and only if it does then invoke the receiver with ~set_error()~, otherwise
+it should not form a call to ~set_error()~.
+
+For example:
+#+begin_src c++
+  template<typename... Args>
+  void then_receiver::set_value(Args&&... args) noexcept {
+    try {
+      if constexpr (std::is_void_v<decltype(this->func(std::forward<Args>(args)...)>) {
+        this->func(std::forward<Args>(args)...);
+        std::execution::set_value(this->receiver);
+      } else {
+        std::execution::set_value(this->receiver, this->func(std::forward<Args>(args)...));
+      }
+    } catch (...) {
+      // Only want to instantiate the call to set_error() if there are actually
+      // any errors possible.
+      if constexpr (noexcept(this->func(std::forward<Args>(args)...)) {
+        std::execution::set_error(this->receiver, std::current_exception());
+      }
+    }
+  }
+#+end_src
+
+Note that here we need to repeat the essential parts of the body of the try-block in a
+constexpr if condition noexcept clause to determine whether or not the catch(...) block
+was reachable. And while, for this example, the body only has one such expression, it
+is relatively easy to conceive of try-block logic that could be much more involved.
+
+If, instead, we were able to query whether or not the handler was reachable by querying
+the set of exception types that might be thrown by ~throw;~ within that handler, then
+we could avoid having to duplicate the body expressions in the constexpr if condition.
+
+For example:
+#+begin_src c++
+  template<typename... Args>
+  void then_receiver::set_value(Args&&... args) noexcept {
+    try {
+      if constexpr (std::is_void_v<decltype(this->func(std::forward<Args>(args)...)>) {
+        this->func(std::forward<Args>(args)...);
+        std::execution::set_value(this->get_receiver());
+      } else {
+        std::execution::set_value(this->get_receiver(), this->func(std::forward<Args>(args)...));
+      }
+    } catch (...) {
+      // Only want to instantiate the call to set_error() if there are actually
+      // any errors possible.
+      //
+      // declthrow(throw)... will produce the empty pack if the try-block body
+      // cannot emit an exception.
+      if constexpr (sizeof...(declthrow(throw)...) != 0) {
+        std::execution::set_error(this->get_receiver(), std::current_exception());
+      }
+    }
+  }
+#+end_src
+
+
+******* Rethrow expression rules
+
+If the rethrow expression is unassociated with a handler then the set of potentially-thrown exception types
+for that rethrow expression is equal to the set { ~std::any_exception~ }.
+This is because the expression could potentially be executed within the dynamic scope of any handler and
+thus could rethrow any caught exception type.
+
+Otherwise, if the rethrow expression is associated with a handler, /H/, then;
+
+Let /E/ be the set of potentially-thrown exception types of the /compound-statement/ of the try-block associated with /H/.
+
+Let /H-pre/ be the set of handlers associated with the same try-block as /H/ that precede /H/ in the try-block's /handler-seq/.
+
+Let /X/ be initially the empty set.
+
+For each type, ~e~, in the set /E/
+- if ~e~ is ~std::any_exception~ then
+  - if the /exception-declaration/ of /H/ is ~...~ then add ~std::any_exception~ to the set /X/
+  - otherwise, let ~h~ be the type named in /H/'s /exception-declaration/
+    - if any handler in /H-pre/ matches exceptions of type ~h~ then, do nothing (this handler is unreachable)
+    - otherwise, if ~h~ is of non-class type or is a final class then add ~h~ to /X/
+    - otherwise add ~std::any_exception~ to /X/ (it might handle an unbounded set of potential exceptions derived from ~h~)
+- otherwise,
+  - if any handler in /H-pre/ matches exceptions of type ~e~, then do-nothing
+  - otherwise, if /H/ matches exceptions of type ~e~, then add ~e~ to /X/
+  - otherwise, do nothing
+
+The set of potentially-thrown exception types for a rethrow expression associated with /H/ is /X/.
+
+Note that this algorithm can produce a set of potentially-thrown exception types that includes
+a list of concrete exception types as well as ~std::any_exception~.
+
+Note that these rules make the result of a ~declthrow(throw)~ expression context dependent.
+
+******* Examples
+
+Given the following declarations:
+#+begin_src c++
+  struct A {};
+  struct B : A {};
+  struct C : A {};
+  struct D : B, C {};
+  struct E final {};
+
+  template<typename... Ts>
+  void throws() throw(Ts...);
+#+end_src
+
+Example 1: static exception list, catch(...)
+#+begin_src c++
+  try {
+    throws<A>();
+  } catch (...) {
+    throw; // declthrow -> { A }
+  }
+#+end_src
+
+Example 2: static exception list, typed handler, unreachable catch (...)
+#+begin_src c++
+  try {
+    throws<A>();
+  } catch (A) {
+    throw; // declthrow -> { A }
+  } catch (...) {
+    throw; // declthrow -> { }
+  }
+#+end_src
+
+Example 3: multiple exceptions caught by single handler
+#+begin_src c++
+  try {
+    throws<A, B>();
+  } catch (A) {
+    throw; // declthrow -> { A, B }
+  } catch (...) {
+    throw; // declthrow -> { }
+  }
+#+end_src
+
+Example 4: multiple exceptions caught by multiple handlers
+#+begin_src c++
+  try {
+    throws<A, B>();
+  } catch (B) {
+    throw; // declthrow -> { B }
+  } catch (A) {
+    throw; // declthrow -> { A }
+  } catch  (...) {
+    throw; // declthrow - > { }
+  }
+#+end_src
+
+Example 5: ambiguous bases
+#+begin_src c++
+  try {
+    throws<D>();
+  } catch (A) {
+    throw; // declthrow -> { } - empty because A is ambiguous base of D and so doesn't match
+  } catch (B) {
+    throw; // declthrow -> { D } - catch (B) unambiguously handles exceptions of type D
+  } catch (C) {
+    throw; // declthrow -> { } - already handled by catch (B)
+  } catch (D) {
+    throw; // declthrow -> { } - already handled by catch (B)
+  }
+#+end_src
+
+Example 6: mixed static/dynamic
+#+begin_src c++
+  try {
+    throws<A>();
+    throws<std::any_exception>();
+  } catch (A) {
+    throw; // declthrow -> { std::any_exception, A }
+  } catch (...) {
+    throw; // declthrow -> { std::any_exception }
+  }
+#+end_src
+
+Example 7: dynamic throw with final class
+#+begin_src c++
+  try {
+    throws<std::any_exception>();
+  } catch (E) {
+    throw; // declthrow -> { E }
+  } catch (...) {
+    throw; // declthrow -> { std::any_exception }
+  }
+#+end_src
+
+Example 8: mixed static/dynamic with final class
+#+begin_src c++
+  try {
+    throws<E>();
+    throws<std::any_exception>();
+  } catch (E) {
+    throw; // declthrow -> { E }
+  } catch (...) {
+    throw; // declthrow -> { std::any_exception }
+  }
+#+end_src
+
+Example 9: template handler, single type
+#+begin_src c++
+  try {
+    throws<A>();
+  } template catch (auto e) { // Instantiated for types { A }
+    throw; // -> declthrow -> { decltype(e) }
+  }
+#+end_src
+
+Example 10: template handler, multiple types
+#+begin_src c++
+  try {
+    throws<A, B, C, D>();
+  } template catch (auto e) { // Instantiated for following types { D, B, C, A } - handlers for derived types before handlers for base types
+    throw; // declthrow -> { decltype(e) }
+  }
+#+end_src
+
+Example 11: template handler + non-template handler
+#+begin_src c++
+  try {
+    throws<A, B, C, D>();
+  } catch (B) {
+    throw;  // declthrow -> { B, D }
+  } template catch (auto e) { // Instantiated for { C, A } - handlers for derived types before handlers for base types
+    throw; // declthrow -> { decltype(e) } - either A or C
+  }
+#+end_src
+
+Example 12: template handler + non-template handler + dynamic throw
+#+begin_src c++
+  try {
+    throws<A, B, C, D>();
+    throws<std::any_exception>();
+  } catch (B) {
+    throw; // declthrow -> { B, D, std::any_exception }
+  } template catch (auto e) { // Instantiated for { C, A }
+    throw; // declthrow -> { decltype(e) }
+  } catch (...) {
+    throw; // declthrow -> { std::any_exception }
+  }
+#+end_src
+
+Note that for example 12 the template handler is instantiated for
+types A and C and rethrowing within the template handler only
+rethrows those concrete types, despite the possibility of the
+~throws<std::any_exception>()~ potentially being able to throw
+exceptions of type derived from either ~C~ or ~A~.
+
+Example 13: constrained template handler + non-template handler + dynamic throw
+#+begin_src c++
+  try {
+    throws<A, B, C, D>();
+    throws<std::any_exception>();
+  } template catch (std::one_of<B, C> auto e) { // instantiated for { B, C }
+    throw; // declthrow -> { decltype(e) }
+  } catch (A) {
+    throw; // declthrow -> { A, D, std::any_exception }
+  } catch (...) {
+    throw; // declthrow -> { std::any_exception }
+  }
+#+end_src
+
+Note that with this example, the compiler tries to instantiate the template
+handler for each of the static exception types, but substitution fails for
+types A and D, succeeding only for types B and C.
+
+The handler for A matches A and D and potentially also an unbounded set of other types derived from A.
+
+The final handler matches an unbounded set of types not derived from A.
+
+***** /yield-expression/
+
+***** ~dynamic_cast~
+
+***** ~typeid~
+
+
+***** Name expressions
+
+Expressions that simply name an object
+
+These expressions include:
+- /id-expression/
+- ~this~
+  
+***** Lambda expressions
+
+
+
 
 *** Ill-formedness of a function definition
 
@@ -1490,7 +2289,7 @@ is not listed in the exception-specification.
 
 ** Template catch blocks
 
-Add ~catch (auto e)~ syntax to allow deducing the static type of an exception.
+Add ~template catch (auto e)~ syntax to allow deducing the static type of an exception.
 The catch-block is instantiated for every statically-known set of possible exception types
 not already caught by preceding catch-blocks.
 
@@ -1504,9 +2303,79 @@ TODO: Describe this in more detail.
   } template catch (auto e) {
     // catch-block instantiated for each unique type in the static-exception specification
     // In this case where 'e' has type A, B or C.
-  } 
+  }
 #+end_src
 
+or the more general syntax
+
+#+begin_src c++
+    try {
+      do_something();
+     }
+     template<typename T>
+     catch (T e) {
+       //... do something with 'e'
+     }
+
+    template<typename Inner>
+    struct MyException : std::exception {
+      Inner inner;
+    };
+
+    try {
+      do_something();
+    }
+    template<std::derived_from<std::exception> Inner>
+    catch (MyException<T> err) {
+      LOG("Failed with MyException because: {}", err.inner.what());
+    }
+#+end_src
+
+#+begin_src c++
+  template<typename T, typename Inner>
+  struct NestedException : public T {
+    Inner inner;
+  };
+
+  template<typename T>
+  constexpr bool is_nested_v = false;
+  template<typename T, typename Inner>
+  constexpr bool is_nested_v<NestedException<T, Inner>> = true;
+
+  void foo() throw(FooError,
+                   NestedException<FooError, std::bad_alloc>,
+                   NestedException<FooError, std::system_error>);
+
+  try {
+    foo();
+  } template catch (std::derived_from<FooError> auto err) {
+    // generic FooError handling
+    if constexpr (is_nested_v<decltype(err)>) {
+      if (err
+    }
+  }
+#+end_src
+
+
+- Edge-cases to consider
+  - Deduced return-types - order of instantiation of catch-block templates
+    may affect the return-type-deduction, which is specified to deduce to
+    based on the lexically first ~return~ statement in the function body.
+    But what if we have:
+    #+begin_src c++
+      decltype(auto) foo() throw(int, long);
+
+      decltype(auto) bar() {
+        try {
+          foo();
+        }
+        template catch (auto err) {
+          return err;
+        }
+      }
+    #+end_src
+
+    What is the return-type of this function?
 
 ** Virtual Functions
 
