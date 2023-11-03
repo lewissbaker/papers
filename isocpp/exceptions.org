@@ -65,6 +65,53 @@ which does a better job than I could of covering the background. Much of the
 same philosophy went into the design of this paper, albeit taking a slightly
 different approach.
 
+Key points:
+- Exceptions are expensive on many platforms for error-handling that is not rare.
+  - In some cases, taking the exceptional path is 1000x slower than the normal return-path.
+  - This leads to people using alternative error-handling mechanisms.
+    e.g. std::error_code, boost::outcome, std::expected, std::optional, etc.
+  - These alternative error-codes aren't universally usable in all places
+    e.g. constructors, overloaded operators
+  - Some don't force users to handle the errors - making their use error-prone.
+  - The splintering of different error-handling mechanisms means it is harder to
+    integrate components that use different error-handling techniques.
+  - The alternatives can incur runtime overhead
+    - The result is type-erased and requires branching to the code-path to handle each of the cases
+    - They inhibit copy-elision of returned results
+      - Results must be packed in a container (like ~std::expected~) and then unpacked by the caller.
+      - This can result in many extra copies/moves compared to returning the value itself and using
+	exceptions.
+    - They can require objects to have an invalid state.
+      e.g. a constructor with an error_code-out-parameter, or a subsequent query to
+      ask if the object construction succeeded.
+      This may require additional state to be stored in the object.
+
+- Exceptions have non-deterministic overhead which makes them unusable in
+  environments that need to provide real-time guarantees.
+  - There are some workarounds for this, but they are not widely used / have some limitations.
+    e.g. see Bjarne's paper on Chinese Remainder Theorem which assigns prime numbers to each
+    unique exception-type.
+    
+- Exceptions have hidden control-flow that makes it hard to know if you have handled
+  all possible error-cases.
+  - Adding a new exception that might be thrown from a function is potentially a breaking
+    change, but there is no guarantee that the code will stop  compiling - you may just
+    end up with a runtime error.
+
+- What if throwing exceptions was as fast as normal return-values?
+  - What if they could be used for common-case failures and didn't have to be reserved
+    for "exception" (i.e. rare) failure cases?
+  - How would this change the way that you design your APIs?
+  - Would you still return error-codes or return a std::expected?
+  - 
+- This paper explores language changes that would allow exceptions to be several
+  orders of magnitude faster (of the order of a normal return-value).
+  - Exceptions may be returned on the stack or in registers as part of the
+    calling convention.
+  - Exiting a function with an exception can directly return to the caller's
+    hander/unwind code-path. No need to lookup exception tables and dynamically
+    find the right handler.
+
 * Proposal
 
 ** Overview
@@ -79,6 +126,8 @@ function from its definition, which must be visible before use of the function.
 
 It proposes rules for statically checking at compile-time that the bodies of function
 definitions with ~throw()~ specifiers do not violate their exception specification.
+Failure to handle all such cases or declare that you forward on the exception are
+ill-formed.
 
 It proposes adding the ~declthrow(expr)~ syntax for querying what set of exception
 types might be thrown from a particular exception.
@@ -105,7 +154,7 @@ For example:
       throw(std::bad_alloc, std::system_error);
 #+end_src
 
-The throw-specification as originally designed had a number of issues that limited
+The throw-specification, as originally designed, had a number of issues that limited
 its usability and utility, and in time most people came to avoid the feature as its
 pitfalls outweighed the benefits of using it.
 
@@ -1814,42 +1863,81 @@ throw-specification as otherwise the program would be ill-formed), then the thro
 expression is considered a /static throw expression/. All other throw-expressions
 are /dynamic throw expressions/.
 
+In general, this means that all throw expressions in functions throw-specifier on the
+definition that have a static exception specifications will be /static throw expressions/
+and throw-expressions in a function with a dynamic exception specification will be
+dynamic throw expressions unless they are caught locally within the function.
 
-Here is a rather extreme example:
+For example: Both of the throw-expressions and the rethrow-expression are all
+/static throw expressions/.
 #+begin_src c++
-  void example() throw(X) {
+  void example1(bool cond) throw(X) {
+    try {
+      if (cond)
+        throw Y{}; // static throw-expression: doesn't escape the function - locally handled
+      else
+        throw X{}; // static throw-expression: can escape the function (with rethrow)
+    } catch (Y) {
+      // handled, not rethrown
+    } catch (X) {
+      // handled, rethrown
+      throw;
+    }
+  }
+
+#+end_src
+
+Another example: this time with some dynamic exception specifications
+#+begin_src c++
+  void example2(bool cond) throw(...) {
+    try {
+      if (cond)
+	throw X{}; // This is a static-throw-expression - handled locally
+      else
+	throw Y{}; // Dynamic throw expression - escapes function (via rethrow)
+    } catch (X) {
+      // handle it
+    } catch (Y) {
+      throw;
+    }
+  }
+#+end_src
+
+Here is a rather extreme example with a long chain of rethrows through
+different scopes. Ultimately, the rethrow may propagate out of the
+function, but the function is marked with a static exception specification
+so the throw-expression is still a static throw expression.
+#+begin_src c++
+  void example3() throw(X) {
     try {
       try {
-        throw X{}; // original throw expression
+	throw X{}; // original throw expression
       } catch (X) { // handler #1
-        if (cond1)
-          throw; // potential rethrow #1 - associated with handler #1
-        try {
-          throw; // potential rethrow #2 - associated with handler #1
-        } catch (X) { // handler #2 for potential rethrow #2
-          if (cond2)
-            throw; // potential rethrow #3 - associated with handler #2
-        }
+	if (cond1)
+	  throw; // potential rethrow #1 - associated with handler #1
+	try {
+	  throw; // potential rethrow #2 - associated with handler #1
+	} catch (X) { // handler #2 for potential rethrow #2
+	  if (cond2)
+	    throw; // potential rethrow #3 - associated with handler #2
+	}
       } // potential end-of-lifetime of exception object if cond2 was false
     } catch (X) { // handler #3 for potential rethrow #1 and #3
       try {
-        throw; // potential rethrow #4
+	throw; // potential rethrow #4
       } catch (X) { // handler #4 for potential rethrow #4
-        try {
-          if (cond3)
-            throw; // potential rethrow #5 - associated with handler #4
+	try {
+	  if (cond3)
+	    throw; // potential rethrow #5 - associated with handler #4
 
-          try {
-            throw; // potential rethrow #6
-          } catch (X) { // handler # 5 for potential rethrow #6
-            throw; // potential rethrow #7 - associated with handler #5
-          }
-        } catch (X) { // handler #6 for potential rethrow #5 and #7
-          try {
-            throw; // potential rethrow #8
-          } catch (Y) {
-          }
-        }
+	  try {
+	    throw; // potential rethrow #6
+	  } catch (X) { // handler # 5 for potential rethrow #6
+	    throw; // potential rethrow #7 - associated with handler #5
+	  }
+	} catch (X) { // handler #6 for potential rethrow #5 and #7
+	  throw; // potential rethrow #8
+	}
       }
     }
   }
@@ -1858,11 +1946,44 @@ Here is a rather extreme example:
 In this case, there is no handler within this function for potential rethrow #8
 and therefore the lifetime of the exception object escapes this function.
 
-The storage for the exception object of a /deterministic throw expression/ has automatic
+One interesting case is where there is a handler for a type, X, that handles both
+a static throw expression and a dynamic throw expression:
+#+begin_src c++
+  void might_throw_anything() throw(...);
+
+  void example4() throw(...) {
+    try {
+      might_throw_anything();
+      throw X{}; // static-exception: handled locally
+    } catch (X) {
+      // handled locally
+    }
+  }
+#+end_src
+
+
+NOTE: The ability to reason about which throw-expressions are handled locally and not
+rethrown hinges on the ability to restrict rethrowing of the same exception object
+to the lexical scope of the handler.
+
+TODO: Can we still allow dynamic rethrowing but do so in a way that requires that
+such rethrow exceptions, if rethrowing an exception object originally thrown by
+a static throw-expression, to move the exception object into a new dynamically-allocated
+exception object?
+
+TODO: Do we need an explicit annotation on the handler to say whether or not it
+requires the use of dynamic rethrow from nested function calls?
+e.g. like ~catch (X) static { /* body */ }~ that tells the compiler that the
+handler will not attempt to rethrow the exception other than inside the lexical
+scope of the handler's body, or vica versa - ~catch (X) dynamic { /* body */ }~.
+
+******* Storage duration of static throw expressions
+
+The storage for the exception object created by a /static throw expression/ has automatic
 storage duration. Note this means that allocation of the storage for the exception object
 is not performed dynamically and therefore cannot fail with a ~std::bad_alloc~ exception.
 
-
+******* Lifetime of exception objects created by static throw expressions
 
 According to [except.throw] p4
 #+begin_quote
@@ -1876,47 +1997,75 @@ Among all points of potential destruction for the exception object, there is an 
 where the exception object is destroyed. All other points /happen before/ the last one.
 #+end_quote
 
+For exception objects created by static throw expressions, we want to be able to deterministically
+compute their point of destruction as the end of some handler so that we know in what scope to
+allocate the automatic storage-duration storage for that exception object.
+
+This means that for such exception objects, attempting to extend the lifetime of the exception object
+by capturing it in a ~std::exception_ptr~ by calling ~std::current_exception()~, or by rethrowing it
+from a nested function call with a dynamic-rethrow expression will need to make a copy of the object
+in dynamically allocated memory.
+
+Note that capturing the exception in a ~std::exception_ptr~ by calling ~std::current_exception()~
+and ~std::rethrow_exception~ does not necessarily throw the same exception object. An implementation
+is allowed to copy the current exception object into storage referenced by the returned ~std::exception_ptr~.
+
 From this, we can deduce that, in the following snippet:
 #+begin_src c++
   try {
-  throw X{};
-} catch (X) {
-  try {
-    throw;
+    throw X{};
   } catch (X) {
-  } // #1
+    try {
+      throw;
+    } catch (X) {
+    } // #1
 
-  try {
-    throw;
-  } catch (X) {
-  } // #2
-} // #3
+    try {
+      throw;
+    } catch (X) {
+    } // #2
+  } // #3
 #+end_src
 
 That the exception object is destroyed at #3 since this is the later of all potential handlers
 of the thrown exception object - #1 and #2 are sequenced before #3 and so #3 is the last point
 at which the exception object may be destroyed.
 
-Note that capturing the exception in a ~std::exception_ptr~ by calling ~std::current_exception()~
-and ~std::rethrow_exception~ does not necessarily throw the same exception object. An implementation
-is allowed to copy the current exception object into storage referenced by the returned ~std::exception_ptr~.
+If we extend this case with a call to ~std::current_exception()~ or a nested function with
+a ~throw;~ statement then we can see more clearly at which points in the program the exception
+object gets copied.
+
+#+begin_src c++
+  bool log_error() {
+    try {
+      throw;  // dynamic throw expression - copies statically thrown object to dynamic memory
+    } catch (X x) {
+      print_error(x);
+    } catch (...) {
+      print_unknown_error();
+    }
+  }
+
+  void example() {
+    try {
+      throw X{};
+    } catch (X) {
+      auto e = std::current_exception(); // dynamically allocates storage for copy of exception object
+      log_error(); // calls function that dynamically rethrows
+    }
+  }
+#+end_src
 
 ******* Rules for throw expressions
 
 The set of potentially-thrown exception types of a throw expression is the union of
 - the set of potentially-thrown exception types of the operand expression
-- the type ~std::decay_t<decltype(<expr>)>~
+- the type of exception thrown. i.e. ~std::decay_t<decltype(<expr>)>~
 - the set of potentially-thrown exception type of copy-initialization of the exception-object
 
-Additionally, if the implementation fails to allocate storage for the exception
-
-Additionally, if the throw expression exists within a function with a static exception specification, then
-thrown exception objects are allocated in automatic-storage duration storage of either the
-current function, or a calling function
-
-If a throw expression exists within a function with a dynamic exception specification, then
-thrown 
-
+Additionally, if the throw-expression is a dynamic-throw-expression then the set of
+potentially-thrown exception types also includes ~std::bad_alloc~, which may be thrown
+if the implementation fails to allocate storage for the exception object.
 
 ****** ~throw~ (rethrowing the currently handled exception)
 
@@ -2408,7 +2557,7 @@ i.e. such that if I call it inside a try/catch block with handlers for ~catch (A
 
 ** Coroutines
 
-Can we extend ~promise.unhandled_exception()~ to allow passing the concrete error types that
+TODO: Can we extend ~promise.unhandled_exception()~ to allow passing the concrete error types that
 propagate out of the coroutine as arguments to allow them to process the error values
 more efficiently/store them in variants, etc.
 
@@ -2416,6 +2565,7 @@ more efficiently/store them in variants, etc.
 
 ** Code Evoluation
 
+TODO:
 - How do we evolve a function to add new exception types?
 - How do we evolve a function to remove exception types from throw-specification?
 - What about changing from dynamic to static?
@@ -2449,6 +2599,8 @@ that is called during unwind path destruction.
 
 ** Implementation Strategies
 
+TODO:
+
 *** Multiple return-paths/return-addresses
 
 *** Multiple return-value-slots
@@ -2458,39 +2610,6 @@ that is called during unwind path destruction.
 *** Interop between static-exception functions and dynamic-exception functions
 
 *** Virtual function calls
-
-
-* Abstract
-* Motivation
-
-- Performance
-  - runtime overhead of exceptions can be large (1000x in some cases)
-  - uses heap allocations to store exceptions
-  - exception_ptr uses ref-counting / atomic ops
-  - current_exception() / unhandled_exceptions() / throw; relies on thread-locals
-- Correctness
-  - Declaring a function noexcept can be dangerous
-    - Can lead to unexpected calls to std::terminate() if there is actually an unhandled exception.
-    - This can happen at runtime.
-    - The compiler often has no ability to help you identify when this is the case
-      - Many existing functions are not declared noexcept, yet do not throw exceptions.
-        Warning about calling a noexcept(false) function from a noexcept(true) function
-        would lead to too many false positives to be useful in practice.
-    - Unexpected calls to terminate() are usually undesirable, e.g. an application with a user-interface suddenly disappears,
-      and can even be unsafe, e.g. if you have a safety-critical embedded system controlling a car travelling at 100km/h.
-    - Exception paths are hidden - difficult to see from calling code whether there are expressions that might throw.
-
-
-- Workarounds
-  - Alternative error handling mechanisms
-    - Error-codes
-    - std::expected
-    - std::optional
-    - std::variant
-  - Optimising exceptions
-    - Gor's paper shows that exception-handling can be optimised in some cases,
-      but relies a lot on being able to inline all functions in-scope, and being
-      able to see throw/catch sites in same function.
 
 * Background
 
