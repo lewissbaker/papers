@@ -8,6 +8,35 @@ However, the dynamic exceptions we have today come with runtime overheads that
 cause many people to avoid using, or even completely disable exceptions in domains
 that are performance-sensitive.
 
+This paper proposes adding new language features for annotating functions with
+additional type information, in the form of static exception specifications,
+that should allow exception objects to be returned on the stack with performance
+similar to that of normal return-paths.
+
+These features include:
+- Adding the ability to add ~throw()~ specifiers to function declarations as a way of declaring
+  the complete set of exception types that the function may exit with.
+- Allow declaring a function as ~throw(auto)~ to deduce the set of exception types
+  that may be thrown based on the body of the function.
+- Add a new ~declthrow()~ syntax for querying the set of exceptions that an expression
+  may exit with.
+- Add a ~template catch~ syntax to allow writing exception handlers that are templates
+  which are instantiated based on the set of exceptions that may be thrown from the
+  associated try-block.
+- Enable static checking of exception specifications for function definitions with
+  a ~throw()~ specifier to ensure that they do not 
+
+The goal is to eliminate the performance-related reasons for not using exceptions
+in embedded and other performance critical code, and to also improve the ability
+to identify at compile-time, code that is failing to handle some exception-types.
+
+* Overview
+
+Exceptions are the C++ language's primary tool for communicating errors to callers.
+However, the dynamic exceptions we have today come with runtime overheads that
+cause many people to avoid using, or even completely disable exceptions in domains
+that are performance-sensitive.
+
 This leads to a variety of alternative error-signalling patterns being used in
 code-bases, including ~std::error_code~ out-parameters, or ~std::optional~,
 ~std::variant~ and ~std::expected~ return-types. These alternatives have their
@@ -19,7 +48,7 @@ Exceptions can also be problematic in embedded or safety-critical contexts, wher
 the use of ~noexcept~ in conjunction with exceptions can potentially insert hidden
 calls to ~std::terminate()~, which is banned by some coding guidelines for
 safety-critical systems, and that might only be discovered as reachable at runtime.
-
+~throw
 Both of these problems with exceptions can be somewhat traced back to the dynamic
 nature of C++ exceptions.
 
