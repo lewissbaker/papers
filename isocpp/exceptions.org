@@ -2411,10 +2411,21 @@ The final handler matches an unbounded set of types not derived from A.
 
 ***** /yield-expression/
 
+
+
 ***** ~dynamic_cast~
+
+TODO: Expand on this.
+
+Basically, any ~dynamic_cast~ expression to reference-type that could fail has
+a set of potentially thrown exception types equal to the set { ~std::bad_cast~ }.
+
+A ~dynamic_cast~ expression that is a cast to pointer-type or that would not fail
+(e.g. because it was a cast to an pointer to an unambiguous base-class of the operand).
 
 ***** ~typeid~
 
+TODO: Describe the kinds of typeid() expressions that might result in an exception.
 
 ***** Name expressions
 
@@ -2424,10 +2435,13 @@ These expressions include:
 - /id-expression/
 - ~this~
   
+These expressions have an empty set of potentially thrown exception types.
+
 ***** Lambda expressions
 
-
-
+The set of potentially-thrown exception types of a lambda expression are
+the union of the set of potentially thrown exception types of the initializers
+of the lambda captures.
 
 *** Ill-formedness of a function definition
 
@@ -2563,7 +2577,7 @@ more efficiently/store them in variants, etc.
 
 
 
-** Code Evoluation
+** Code Evolution
 
 TODO:
 - How do we evolve a function to add new exception types?
@@ -2599,17 +2613,387 @@ that is called during unwind path destruction.
 
 ** Implementation Strategies
 
-TODO:
+This section describes some potential implementation strategies that could be taken
+for implementing the semantics described above.
+
+Note that this is just a sketch that talks through some of the potential challenges and
+techniques that could be used. It has not yet been implemented in a compiler, so treat
+this section as speculative until implementation experience has been gained.
 
 *** Multiple return-paths/return-addresses
 
+One of the intents of the semantics described above for functions with static-exception specifications
+is to model them effectively as a function that can either return a value object for the success
+return-path or can return an error object of one of a set of possible exception-types listed in the
+exception specification.
+
+With a normal function call there is usually a single return-address that the callee must transfer
+control to when the callee completes.
+
+The return-address is usually passed from the caller to the callee on the stack. Many hardware
+architectures have dedicated hardware instructions for pushing the address of the next
+instruction onto the stack before then jumping to the entry-point of the callee. When returning
+there is also often hardware support for popping this return address from the stack and then
+jumping to the return address.
+
+If the callee is potentially throwing then there is, logically, a second potential return-address
+that the callee might transfer execution to when it exits - the exception unwind path. The unwind
+path is the path that, logically, exits scopes, destroying automatic-storage duration variables,
+until it reaches a matching handler and then transfers execution to that handler.
+
+To avoid overhead in having to pass multiple return-addresses to a function and take advantage of
+the dedicated hardware instructions for passing a single return-address and returning to that
+return-address upon completion, implementations often use auxiliary data-structures stored within
+the binary that allow looking up the exceptional return-address for the current function based
+on the return-address for the normal path.
+
+With functions with static exception specifications we have a function that has 1 normal return
+path and zero or more possible exceptional return-paths.
+
+If the caller knows what all of the possible exception types that might be thrown are, it can
+statically compute what the unwind path should be for each potential exception type thrown.
+e.g. whether it is handled locally within the function or is propagated through to its caller.
+
+If the caller could pass, somehow, a list of return-addresses to the callee, one for each
+possible return-path, then the callee can then return directly to the return-address corresponding
+to either the normal return-path or a particular exception-type return-path.
+
+However, we want to do so without increasing substantially the cost of making a normal call.
+For example, if we were to have to generate assembly code to push 5 separate return-addresses
+onto the stack for a function call to a function that could thrown 4 different exception types
+then this would increase the cost of making the function call and the stack-space used by
+the calling convention.
+
+Also, many CPUs optimise their branch predictor for call/ret instructions to maintain a
+stack of recent return-addresses pushed onto the stack so that it can predict the target
+that a ret instruction will jump to, assuming that for every call instruction there is
+eventually a corresponding ret instruction. Any scheme that doesn't maintain balanced
+call/ret instructions can result in a misaligned return-address branch predictor cache
+which can significantly increase the number of subsequent branch mispredictions.
+
+One approach to implementing this with a lower cost for a function call would be to provide
+a jump-table of possible return-addresses and to instead push a pointer to the jump-table
+as part of the call instruction.
+
+On x86/x86-64 architectures this can be done relatively cheaply in one of two ways without increasing the amount
+of stack-space and would only require one additional instruction to be executed on the
+normal return path compared to a normal function-call.
+
+The first option would be to immediately follow a ~call~ instruction with a series of
+5-byte ~jmp~ instructions that jump to the relevant block for handling the corresponding
+return-path. The first jmp instruction would jump to the code for the normal-return path,
+and subsequent jmp instructions for each exception path.
+
+This calling convention is backwards compatible with existing calling conventions.
+The caller issues a 'call' instruction as per normal and the callee when it returns a value
+just issues a 'ret' instruction to return, which transfers to the first jmp instruction
+which then unconditionally jumps to the code that handles this path.
+
+The additional unconditional jmp instruction should be reasonably be able to be predicted/pipelined
+by a CPU so shouldn't add much in the way of additional latency (NOTE: to be confirmed with data).
+
+For example, given the following code:
+#+begin_src c++
+int divide(int num, int den) throws(divide_by_zero, overflow) {
+  if (den == 0) throw divide_by_zero{};
+  if (den == -1 && num == INT_MIN) throw overflow{};
+  return num/den;
+}
+
+int x, y;
+
+int example() {
+  try {
+    int result = divide(x, y);
+    return 2 * result;
+  } catch (divide_by_zero e) {
+    return -1;   
+  } catch (overflow) {
+    return -2;
+  }
+}
+#+end_src
+
+The caller could be translated into assembly similar to the following:
+#+begin_src
+x:
+  .data 4
+  
+y:
+  .data 4
+  
+example:
+  mov edi, dword ptr [x]   # Load 'x' into register for param 1
+  mov esi, dword ptr [y]   # Load 'y' into register for param 2
+  call divide    # Jump to 'divide' and push address of .JUMP_TABLE onto stack
+.JUMP_TABLE:     # Each entry is a 'JMP rel32' encoded instruction which is 5 bytes
+  jmp .SUCCESS   # entry[0] - success path
+  jmp .ERR_0     # entry[1] - error path for divide_by_zero
+  jmp .ERR_1     # entry[2] - error path for overflow
+.SUCCESS:
+  # result is in eax
+  mul eax, 2
+  ret
+.ERR_0:
+  mov eax, -1
+  ret
+.ERR_1:
+  mov eax, -2
+  ret
+#+end_src
+
+Note that for simplicity, this is assuming that the divide_by_zero and overflow
+types are empty, trivially destructible types.
+
+The callee function could be translated into assembly similar to the following:
+
+#+begin_src
+divide:
+  # NOTE: [rsp] points to address of .JUMP_TABLE
+  test esi, esi
+  je .THROW1
+  cmp esi, -1
+  jne .LBL1:
+  cmp edi, 0x7fffffff
+  jne .THROW2
+.LBL1:
+  mov eax, edi
+  cdq
+  idiv esi
+  ret       # return to entry[0]
+.THROW1:
+  # [rsp] contains address of entry[0] instruction
+  # need to add '5' (size of JMP instruction) to this to get address of entry[1]
+  # do this in-place to avoid using an extra register to compute the address
+  add qword ptr [rsp], 5
+  ret       # return to entry[1]
+.THROW2:
+  # [rsp] contains address of entry[0] instruction
+  # need to add '10' (size of 2 * JMP instruction) to this to get address of entry[2]
+  # do this in-place to avoid using an extra register to compute the address
+  add qword ptr [rsp], 10
+  ret       # return to entry[2]
+#+end_src
+
+A few things are worth noting here.
+- The calling code still just passes arguments in registers, calls the
+  function with a call-instruction, which returns on the normal return-path
+  back to the instruction after the call-instruction.
+- The callee still executes a normal 'ret' instruction to return on the
+  normal code-path.
+- On the error return-path, the callee adjusts the return address by adding
+  a constant to the location on the stack where the return-address is stored.
+  On x86 this can be done with a single instruction and does not require any
+  additional registers.
+- After returning to the appropriate return-address, the caller then needs
+  to jump to the appropriate location to execute the logic for that code-path.
+- There is no need for additional exception-unwind-lookup tables or runtime-type-information.
+  All of the data/logic for handling the exceptions is local and inline within
+  the caller and callee.
+- There are no additional branches on the caller side here. Once the callee
+  has branched to the necessary code path that executes the 'throw' expression,
+  it jumps directly to the code-path in the caller that handles that case.
+  
+Of particular note is that overhead of returning via the exception code-path
+is one additional instruction.
+  
+A slight optimisation could be to inline the final code-path (in the above example,
+the code-path corresponding to the 'overflow' exception case) in lieu of having a
+jump instruction for the final block of code.
+
+For example:
+#+begin_src
+example:
+  mov edi, dword ptr [x]   # Load 'x' into register for param 1
+  mov esi, dword ptr [y]   # Load 'y' into register for param 2
+  call divide    # Jump to 'divide' and push address of .JUMP_TABLE onto stack
+.JUMP_TABLE:     # Each entry is a 'JMP rel32' encoded instruction which is 5 bytes
+  jmp .SUCCESS   # entry[0] - success path
+  jmp .ERR_0     # entry[1] - error path for divide_by_zero
+.ERR_1:
+  mov eax, -2.   # entry[2] - error path for overflow (inlined as last jump table entry)
+  ret
+.SUCCESS:
+  # result is in eax
+  mul eax, 2
+  ret
+.ERR_0:
+  mov eax, -1
+  ret
+#+end_src
+
+One concern with this approach is that the normal return-path is no longer inline
+immediately after the call instruction as there is now a number of jmp instructions
+interspersed between the call and the logic that handles the success case.
+
+This can potentially have a detrimental effect on instruction-cache miss rate,
+particularly if the number of possible exception types is large. e.g. if there
+were more than 12 possible exception types listed in the signature, each of which
+required their own jump table entry, then you're pretty much guaranteed that the
+call instruction will live in a different cache-line and so may be more likely to
+result in an instruction-cache miss. For cases with a small number of exception types,
+the overhead on the normal return-path is expected to be small, however.
+
+Implementation experience is required to evaluate the actual impact of this on
+the performance of the normal call-path.
+
+Another alternative approach of implementing the jump-table is to somehow embed
+a pointer/offset to an external jump-table in a location relative to the call
+instruction.
+
+NOTE: The following information is based on memory from a discussion with
+Ben Craig. Need to go back and verify this from the Intel reference manual.
+
+On x86/64 there are some 'nop' instruction encodings that have unused bytes
+within them and this can be used to encode some data in the instruction stream
+without that instruction having any effect on the state of the CPU registers
+(other than advancing the instruction pointer).
+
+You can place this instruction immediately following a call instruction and
+encode into the spare bits of the instruction, an offset to the jump table.
+As this instruction is a no-op, you can just immediately follow the instruction
+with the logic for handling the normal return-path. In this case, there is
+much less of a concern with instruction cache misses.
+
+So in the above case, the caller would be replaced with:
+#+begin_src
+example:
+  mov edi, dword ptr [x]   # Load 'x' into register for param 1
+  mov esi, dword ptr [y]   # Load 'y' into register for param 2
+  call divide    # Jump to 'divide' and push address of .JUMP_TABLE onto stack
+  nop (4-byte offset to .JUMP_TABLE)
+  mul eax, 2
+  ret
+  
+.JUMP_TABLE:     # Each entry is a pointer to entry
+  data qword .ERR_0     
+  data qword .ERR_1
+  
+.ERR_0:
+  mov eax, -1.  # entry[1] - error path for divide_by_zero
+  ret
+  
+.ERR_1:
+  mov eax, -2.  # entry[2] - error path for overflow (inlined as last jump table entry)
+  ret
+#+end_src
+
+Then the callee would be updated to look something like the following:
+
+#+begin_src
+divide:
+  # NOTE: [rsp] points to address of nop encoding offset to .JUMP_TABLE
+  test esi, esi
+  je .THROW1
+  cmp esi, -1
+  jne .LBL1:
+  cmp edi, 0x7fffffff
+  jne .THROW2
+.LBL1:
+  mov eax, edi
+  cdq
+  idiv esi
+  ret       # return to nop instruction (normal return)
+.THROW1:
+  # [rsp] contains address of nop instruction
+  # Need to load this offset and add it to the address of the nop instruction
+  # plus the necessary offset into the table.
+  mov qword rsi, [rsp]   # load the address of the nop instruction
+  mov dword edi, [rsi+1] # load the offset-to-jump-table part of the nop instruction (assuming 5 byte encoding, last 4 bytes is offset) 
+  add qword rsi, rdi     # add offset to nop-instruction address to get address of jump table
+  mov qword rdi, [rsi]   # load next instruction pointer
+  mov qword [rsp], rdi   # store it in stack return address position
+  ret                    # return to the address (this should help preserve some return-address branch prediction)      
+.THROW2:
+  mov qword rsi, [rsp]   # load the address of the nop instruction
+  mov dword edi, [rsi+1] # load the offset-to-jump-table part of the nop instruction (assuming 5 byte encoding, last 4 bytes is offset) 
+  add qword rsi, rdi     # add offset-to-jump-table to nop-instruction address to get address of jump table
+  add qword rsi, 8.      # add offset within jump table to get address of entry[1]
+  mov qword rdi, [rsi]   # load next instruction pointer
+  mov qword [rsp], rdi   # store it in stack return address position
+  ret
+
+#+end_src
+
+TODO: Check that the above logic is valid x86/64 assembly.
+
+Note that with this approach, while there are potentially gains on the caller side
+in terms of instruction cache coherency on the normal return-path, this comes at
+the cost of additional instructions for each of the exceptional return paths, and
+so may lead to overall larger code-size.
+
+It's unclear which calling-convention is going to end up being more efficient / smaller code-size
+overall. Both approaches will need to be tried on a variety of code-bases to 
+evalute effects on performance and code-size.
+
 *** Multiple return-value-slots
+
+The previous section focused mostly on how to implement multiple return-addresses
+for a given function in an efficient way. We also need to consider how to return
+the exception objects themselves.
+
+With the normal return path, there are a couple of common conventions for passing
+the return value back to the caller. If the return type is void there is nothing
+to do as the return-path does not need to pass a value back.
+
+If the return-type is trivially copyable and the return-value fits within a register
+then the return-value can sometimes be passed back in a designated register.
+e.g. on x86-64 this is often the eax/rax register
+
+Otherwise, in order to support guaranteed copy-elision, the return object will need
+to be constructed into storage provided by the caller. The caller usually provides
+the address of this storage by passing it in a register, which the callee then uses
+to construct the return object before returning.
+
+When returning an exception object from a function with a static exception specifcation
+we can use a lot of the same conventions for passing the excepton value back.
+
+If the exception object is trivially empty then we just return to the corresponding return-address.
+
+If the exception object is trivially copyable and fits within a register, then we can put
+the exception object in a register before returning to corresponding return-address. The
+caller can then just read the exception object value from the register.
+
+
+If the exception object needs to be placed in memory then, to get the same copy-elision
+behaviour as for normal return-values, the caller needs to provide the address of the
+storage for that particular exception type.
+
+This presents somewhat of a challenge, because now, instead of passing a single address
+for the return value, we potentially need to pass N addresses, one for the return object
+and one for each of the exception object types.
+
+While in some cases, the caller might reuse the same storage for the different exception
+types, in general the lifetimes of the exception objects may be different and so may need
+to have separate addresses.
+
+The naiive approach of passing each additional exception object address in a register
+would be very expensive as the registers are a very limited resources - they are also
+used for passing parameters and using them for passing additional return-addresses will
+increase register pressure and force additional spills of values to the stack.
+
+If we passed the return addresses on the stack then we would need N push instructions
+and possibly N or more additional instructions for computing the addresses of each of
+the return-objects. This would mean the overhead of a function call would scale linearly
+with the number of potential exception objects, which is not what we want. If you have
+a function with 40 potentially thrown exception types (not implausible) then you could
+easily end up with 100 instructions just for calling the function!
+
+Instead, what we want is something that has a constant overhead for a function call
+and only has 
+
+
+
+
+*** Unwinding through scopes with destructors
 
 *** Tail Calls
 
 *** Interop between static-exception functions and dynamic-exception functions
 
 *** Virtual function calls
+
+*** Interaction with std::uncaught_exceptions()
 
 * Background
 
