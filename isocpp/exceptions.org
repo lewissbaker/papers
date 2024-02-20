@@ -24,7 +24,8 @@ These features include:
   which are instantiated based on the set of exceptions that may be thrown from the
   associated try-block.
 - Enable static checking of exception specifications for function definitions with
-  a ~throw()~ specifier to ensure that they do not 
+  a ~throw()~ specifier to ensure that they can not exit with exceptions not listed
+  in their throw specification.
 
 The goal is to eliminate the performance-related reasons for not using exceptions
 in embedded and other performance critical code, and to also improve the ability
@@ -47,8 +48,9 @@ or add additional out-parameters.
 Exceptions can also be problematic in embedded or safety-critical contexts, where
 the use of ~noexcept~ in conjunction with exceptions can potentially insert hidden
 calls to ~std::terminate()~, which is banned by some coding guidelines for
-safety-critical systems, and that might only be discovered as reachable at runtime.
-~throw
+safety-critical systems. Such hidden calls to ~std::terminate()~ might only be
+discovered as reachable at runtime.
+
 Both of these problems with exceptions can be somewhat traced back to the dynamic
 nature of C++ exceptions.
 
@@ -69,7 +71,7 @@ can achieve efficiency of throwing exceptions close to that of normal return val
 with exception objects able to be returned on the stack or in registers using
 similar conventions to normal return-values.
 
-This design is less limiting than the design proposed in [[https://wg21.link/P0709R4][P0709R4 - Zero-overhead deterministic exceptions: Throwing values]]
+This design is more general than the design proposed in [[https://wg21.link/P0709R4][P0709R4 - Zero-overhead deterministic exceptions: Throwing values]]
 in that it does not require the introduction of a special ~std::error~ type and
 does not require falling back to heap-allocation for exception types that do not
 fit in the small-object optimisation built into ~std::error~.
@@ -115,7 +117,7 @@ Key points:
       ask if the object construction succeeded.
       This may require additional state to be stored in the object.
 
-- Exceptions have non-deterministic overhead which makes them unusable in
+- Exceptions usually have non-deterministic overhead which makes them unusable in
   environments that need to provide real-time guarantees.
   - There are some workarounds for this, but they are not widely used / have some limitations.
     e.g. see Bjarne's paper on Chinese Remainder Theorem which assigns prime numbers to each
@@ -129,10 +131,10 @@ Key points:
 
 - What if throwing exceptions was as fast as normal return-values?
   - What if they could be used for common-case failures and didn't have to be reserved
-    for "exception" (i.e. rare) failure cases?
+    for "exceptional" (i.e. rare) failure cases?
   - How would this change the way that you design your APIs?
   - Would you still return error-codes or return a std::expected?
-  - 
+
 - This paper explores language changes that would allow exceptions to be several
   orders of magnitude faster (of the order of a normal return-value).
   - Exceptions may be returned on the stack or in registers as part of the
@@ -234,7 +236,7 @@ i.e. throw-specifications are statically checked/enforced rather than dynamicall
 
 Similarly, ~void bar() throw(E1, E2)~ is ill-formed if any exception types other than ~E1~ or ~E2~
 can possibly escape the body of the function. The aim is to avoid the compiler inserting any hidden
-calls to ~std::terminate~ in the body of the coroutine.
+calls to ~std::terminate~ in the body of the function.
 
 It is permitted to declare a function with the specifier ~noexcept(true)~ and define it with
 the specifier ~throw()~, and vica versa. Doing so allows you to have the compiler statically
@@ -284,7 +286,7 @@ For example:
 
   void (*func)() throw(E1, E2) = &f;
   if (cond) {
-    func = &g; // It would be annonying if this was ill-formed because the throw-specification had a different order.
+    func = &g; // It would be annoying if this was ill-formed because the throw-specification had a different order.
   }
 #+end_src
 
@@ -416,7 +418,7 @@ For example:
   ph = i;  // ERROR - can't cast i() to function-pointer with narrower throw-specification
 
   void(*pi)() throw(...) = i; // OK
-  pi = f; // OK - ph points to f (same as casting noexcept(true) function to noexcept(false) one)
+  pi = f; // OK - ph points to f (same as casting noexcept(true) function ptr to a noexcept(false) one)
   pi = g; // OK - ph points to a thunk that calls g and translates static-exceptions into dynamic-exceptions
   pi = h; // OK - ph points to a thunk that calls g and translates static-exceptions into dynamic-exceptions
 
@@ -499,7 +501,7 @@ the function-body in the declaration - the expressions of the body still needed 
 in the return-type for SFINAE purposes - and therefore it was not good use of committee time
 to pursue a partial solution.
 
-Since this paper was written, we have gained support for concepts in C++20, which goes someway
+Since this paper was written, we have gained support for concepts in C++20, which goes some way
 to simplifying the code needed to write function-templates that eliminates overloads with SFINAE.
 However, this only applies when there are existing concepts defined that can be used to constrain
 the function. For many cases you still need to duplicate the expressions of the function body
@@ -567,7 +569,7 @@ Having to repeat the body in a different way in the ~noexcept~ or ~throw~ specif
 this is tedious and error-prone. It can be easy to miss an expression, or to later modify the
 body of the function and forget to update the throw-specification.
 
-Instead, if we add support for ~throw(auto)~, then the function definition simply becomes:
+Instead, if we use the proposed ~throw(auto)~ syntax, then the function definition simply becomes:
 #+begin_src c++
   template<std::ranges::range Range, typename Func>
   requires std::invocable<Func&, std::ranges::range_reference_t<Range>>
@@ -592,7 +594,7 @@ function-templates that are defined as "expression-equivalent to" some expressio
 The use of ~throw(auto)~ on a forward-declaration of the function requires that the definition
 of the function is visible before the use of the function, in the same way that a function
 declared with a deduced-return-type requires that the function definition is available before
-it's ODR-used.
+it's ODR-used. This is consistent with the behaviour of functions with deduced return-types.
 
 For example:
 #+begin_src c++
@@ -698,7 +700,7 @@ Including:
 There are also further challenges with defining mutually-recursive functions that both
 have deduced exception specifications.
 
-TODO: Add example here.
+TODO: Add example of mutually recursive functions here.
 
 While we may be able to eventually define rules that may allow a subset of recursive
 function use-cases to have deduced exception specifications, this seems like a relatively
@@ -706,8 +708,8 @@ niche case which can be left ill-formed for now.
 
 *** Delayed computation of deduced throw specifications
 
-The throw-specification of a function or function-template need only be computed when the
-function is selected by overload resolution, or is otherwise ODR-used.
+The throw-specification of a function or function-template with a deduced throw specification
+need only be computed when the function is selected by overload resolution, or is otherwise ODR-used.
 
 This allows the compiler to avoid instantiating function-templates that are part of an overload
 set but that are never selected for overload resolution.
@@ -817,7 +819,7 @@ For example:
 *** ~declthrow~ of a ~throw(...)~ expression
 
 If the expression may exit with a dynamic-exception (i.e. one of the sub-expressions has an exception specification of ~noexcept(false)~ or ~throw(...)~)
-then the result of this is an unspecified, compiler-generated type, much like ~decltype(nullptr)~.
+then the result of this is a compiler-generated type, much like ~decltype(nullptr)~.
 
 An alias for this type is made available as ~std::any_exception~ in the header ~<exception>~.
 
@@ -832,6 +834,14 @@ An alias for this type is made available as ~std::any_exception~ in the header ~
 The ~std::any_exception~ type is not constructible or usable as a value.
 It is only intended for use as a placeholder/marker for throw-specifications to indicate
 a dynamic exception specification.
+
+An alternative design worth considering is having the special type that indicates a
+dynamic exception specification to instead deduce to the type `std::exception_ptr`.
+
+This would be useful in cases where you want to store the exception results in a
+~std::variant~. However, it would mean that you could not have an exception specification
+that allowed throwing a ~std::exception_ptr~ object itself (instead of rethrowing the
+exception object contained within the ~std::exception_ptr~).
 
 *** Mixed dynamic and static exception specifications
 
