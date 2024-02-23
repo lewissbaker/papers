@@ -42,15 +42,20 @@ that are performance-sensitive.
 This leads to a variety of alternative error-signalling patterns being used in
 code-bases, including ~std::error_code~ out-parameters, or ~std::optional~,
 ~std::variant~ and ~std::expected~ return-types. These alternatives have their
-limitations, however. For example, they are difficult/impossible to apply to
-constructors or overloaded operators, where we cannot change the return-type,
-or add additional out-parameters.
+limitations, however. For example, they are difficult or, in some cases impossible,
+to apply to some kinds of functions, such as constructors or overloaded operators,
+where we either cannot change the return return-type, or cannot add additional
+out-parameters.
 
 Exceptions can also be problematic in embedded or safety-critical contexts, where
 the use of ~noexcept~ in conjunction with exceptions can potentially insert hidden
-calls to ~std::terminate()~, which is banned by some coding guidelines for
-safety-critical systems. Such hidden calls to ~std::terminate()~ might only be
-discovered as reachable at runtime.
+calls to ~std::terminate()~ if the program fails to handle an unexpected exception.
+Such hidden calls to ~std::terminate()~ might only be discovered as reachable
+at runtime, and can be difficult to audit in a code-base.
+
+Calls to ~std::terminate()~ are prohibited by some coding guidelines for
+safety-critical systems as the program generally needs to do something active to
+enter a safe-state before exiting or restarting.
 
 Both of these problems with exceptions can be somewhat traced back to the dynamic
 nature of C++ exceptions.
@@ -58,13 +63,14 @@ nature of C++ exceptions.
 This paper proposes introducing static exception specifications, repurposing the
 ~throw()~ specification syntax which was removed in C++17, to provide additional
 type-information about the closed-set of possible exception types that might be
-thrown from a function, while avoiding the shortcomings of the previous design of
-throw-specifications.
+thrown from a function, while trying to avoid the shortcomings of the previous
+design of throw-specifications.
 
 Function definitions with a ~throw()~ specification are statically checked by the
 compiler at compile-time to ensure that there are no code-paths that might allow
-exceptions to exit the function that would violate the declared throw-specification,
+an exception to exit the function that would violate the declared throw-specification,
 rather than dynamically check this at runtime and terminate.
+Functions that fail this static exception specification check are ill-formed.
 
 While we are yet to gain implementation experience for this proposal, the design
 for static exception specifications should permit implementation strategies that
@@ -75,7 +81,7 @@ similar conventions to normal return-values.
 This design is more general than the design proposed in [[https://wg21.link/P0709R4][P0709R4 - Zero-overhead deterministic exceptions: Throwing values]]
 in that it does not require the introduction of a special ~std::error~ type and
 does not require falling back to dynamic-allocation for exception types that do not
-fit in the small-object optimisation built into ~std::error~.
+fit in the small-object optimisation built into the proposed ~std::error~ type.
 
 This design does not change the semantics of existing C++20 code. It can be
 incrementally adopted throughout a code-base by annotating functions with
@@ -109,8 +115,8 @@ Key points:
   - The splintering of different error-handling mechanisms means it is harder to
     integrate components that use different error-handling techniques.
   - The alternatives can incur runtime overhead
-    - The result is type-erased and requires branching to the code-path to handle
-      each of the cases.
+    - The result is type-erased, e.g. in a variant-like type, and requires branching
+      to the code-path to handle each of the cases.
     - They inhibit copy-elision of returned results
       - Results must be packed in a container (like ~std::expected~) and then unpacked by
 	the caller.
@@ -146,7 +152,7 @@ Key points:
   - Exceptions may be returned on the stack or in registers as part of the
     calling convention.
   - Exiting a function with an exception can directly return to the caller's
-    hander/unwind code-path. No need to lookup exception tables and dynamically
+    handler/unwind code-path. No need to lookup exception tables and dynamically
     find the right handler.
 
 * Proposal
@@ -187,8 +193,8 @@ specifying the ~throw(E1, E2, E3)~ specifier after the function parameter list.
 
 For example:
 #+begin_src c++
-    void Example(const std::string_view& path)
-      throw(std::bad_alloc, std::system_error);
+  void Example(const std::string_view& path)
+       throw(std::bad_alloc, std::system_error);
 #+end_src
 
 The throw-specification, as originally designed, had a number of issues that limited
@@ -1413,7 +1419,7 @@ ensures that only exceptions of those types may exit the function.
 To assist with this, the compiler looks at the exception-specifications of all expressions
 within the body of the function and computes the set of possible exception types that could
 potentially exit the current function. If this set of possible exception types is not a
-subset of the set of exception types listed in the exception-specifications then the
+subset of the set of exception types listed in the exception-specification then the
 program is ill-formed.
 
 ** Computing the set of exception-types
@@ -1481,17 +1487,23 @@ The following statements are /interrupted-flow statements/:
     - the body /statement/ is an /interrupted-flow statement/; and
     - the body /statement/ has a ~default:~ label associated with the switch; and
     - there is no potentially-reachable ~break;~ statement associated with the switch.
+- A do-while /iteration-statement/ where both the following are true;
+  - the loop body /statement/ does not enclose any potentially-reachable ~break;~ statements associated with the loop; and
+  - either;
+    - both of the following are true;
+      - the loop body statement does not enclose any potentially-reachable ~continue;~ statements associated with the loop; and
+      - the loop body /statement/ is an /interrupted-flow statement/; or
+    - the loop /expression/ is an /interrupted-flow expression/
+- A for or while /iteration-statement/ where either;
+  - the /init-statement/, if present, is an /interrupted-flow-statement/; or
+  - the /condition/ expression is an /interrupted-flow expression/;
+- A range-based for /iteration-statement/ where either;
+  - the /init-statement/ is an /interrupted-flow statement/; or
+  - the /for-range-initializer/ expression is an /interrupted-flow expression/; or
+  - the /begin-expr/ is an /interrupted-flow expression/; or
+  - the /end-expr/ is an /interrupted-flow expression/.
 - An expression-statement where the expression is an /interrupted-flow expression/.
 - A declaration-statement that is an object declaration where the initializer expression is an /interrupted-flow expression/.
-
-TODO: Need to add a rule for handling do-while statement where the body is an /interrupted-flow-statement/ that
-is not a ~break;~ or ~continue;~.
-#+begin_src c++
-  do { throw X{}; } while(false);         // interrupted-flow statement
-  do { std::terminate(); } while (false); // interrupted-flow statement
-  do { break; } while(false);             // not an interrupted-flow-statement
-  do { continue; } while(false);          // not an interrupted-flow-statement
-#+end_src
 
 An /interrupted-flow-expression/ is a potentially evaluated expression that is one of the following:
 - A /throw-expression/
@@ -1563,6 +1575,7 @@ statement and so does not yet know whether ~retry:~ label is reachable.
 
 And even then, a more sophisticated approach should probably then consider the potential
 reachability of the ~goto~ statement targeting a label itself.
+
 There may be cycles of reachability of ~goto~ statements which are not themselves reachable
 from the function entry-point.
 
@@ -1594,12 +1607,13 @@ The rules could potentially be extended to consider a label as potentially reach
 only if there is a potentially reachable ~goto~ statement that targets the label.
 
 Computing the reachability in this case would basically require the compiler to hold
-the control-flow graph of the entire function in memory and then walking that graph,
+the control-flow graph of the entire function in memory and then walk that graph,
 marking statements as reachable or not.
 This may be incompatible with the architecture of some implementations.
 
 The proposed design chooses a more conservative algorithm that treats all labels as reachable
-in order to permit implementations that can compute reachability in a single pass.
+in order to permit implementations that can compute a more conservative concept of
+reachability in a single pass.
 
 **** Flowing off the end of a switch statement
 
@@ -1618,8 +1632,8 @@ For example: The current rules result in the following
     case true: throw X{};
     case false: throw Y{};
     }
+    // The following statement is considered potentially-reachable.
 
-    // Therefore considers the second switch as potentially reachable.
     // An interrupted-flow statement - has a default: case
     switch (x) {
     case true: throw A{};
@@ -1628,11 +1642,13 @@ For example: The current rules result in the following
 
     // Not potentially-reachable.
     // Prior statement is an interrupted-flow statement.
+    // Control cannot flow off the end of the function's compound-statement.
   }
 #+end_src
 
 The rationale here is that trying to determine whether every possible value for the
-switch expression is covered by a case label is non-trivial.
+switch expression is covered by a case label is non-trivial and/or probably doesn't
+do what you want.
 
 For example: Consider switching on an enum where all enum members have case labels.
 #+begin_src c++
@@ -2427,7 +2443,9 @@ Given the following exception object and function ~f()~ that might throw such an
     int value;
   };
 
-  void f() throw(X) { throw X{}; }
+  extern int some_int;
+
+  void f() throw(X) { throw X{some_int}; }
 #+end_src
 
 Consider the following case:
@@ -2524,14 +2542,30 @@ Consider the following case:
 #+end_src
 
 In this case:
-- TODO: Explain here
+- The handler in ~g3()~ conditionally either rethrows the current exception object
+  or throws a new exception object.
+- In the case that the handler throws a new object, we have a similar case to ~g2()~ where
+  there is overlap in lifetime between the exception object thrown by ~f()~ (whose lifetime
+  ends at the end of the current handler) and the new exception object created by the
+  ~throw X{0};~ statement.
+- This means that we cannot reuse the storage that ~h3()~ provided to ~g3()~ for returning
+  the exception as the storage that ~g3()~ provides to ~f()~ for returning its exception,
+  even though there is another code-path in ~g3()~'s handler that rethrows the current
+  exception to ~h3()~.
+- Instead, ~g3()~ will need to allocate its own local storage to provide to ~f()~, and then
+  in both of the throw and rethrow-expressions, construct a new exception object in the storage
+  provided by ~h3()~ to ~g3()~.
+- Note that in the rethrow-expression case, since the original exception object is about to
+  be destroyed, we may be able to move-construct the new exception object from the original
+  object instead of copy it as the ~throw;~ statement will exit the handler.
+  Note: This may not be the case for all rethrow expressions.
 
 Consider the following case:
 #+begin_src c++
   void g4() throw(X) {
     try { f(); }
-    catch (const X& x) { throw; }
-    throw X{42, true};
+    catch (const X& x) { if (x.value >= 0) throw; }
+    throw X{0};
   }
 
   void h4() {
@@ -2540,7 +2574,8 @@ Consider the following case:
 #+end_src
 
 In this case:
-- TODO: Explain here
+- It is similar to the above ~g3()~ example, except that this time, the new exception object
+  is thrown from outside of the handler.
 
 ****** Rules for throw expressions
 
