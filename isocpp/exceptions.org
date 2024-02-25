@@ -1,5 +1,15 @@
-#+title: Static Exception Specifications
-#+author: Lewis Baker <lewissbaker@gmail.com>
+# -*- mode: org; org-html-htmlize-output-type: css -*-
+#+title: D3166R0: Static Exception Specifications
+#+export_file_name: D3166R0
+#+author: Lewis Baker
+#+email: lewissbaker@gmail.com
+#+date: 2024-02-25
+#+options: html5-fancy
+
+| Document | *D3166R0*                             |
+| Date     | *2024-02-25*                          |
+| Reply To | *Lewis Baker <lewissbaker@gmail.com>* |
+| Audience | *EWG*, *SG21*                         |
 
 * Abstract
 
@@ -32,6 +42,10 @@ in embedded and other performance critical code, and to also improve the ability
 to identify at compile-time, code that is failing to handle some exception-types
 that might be thrown.
 
+This proposal is still in the early stages and is being published to solicit feedback
+on direction and also on potential interaction with other in-flight papers, such
+as contracts and discussions around ~noexcept~ policy.
+
 * Overview
 
 Exceptions are the C++ language's primary tool for communicating errors to callers.
@@ -48,8 +62,9 @@ where we either cannot change the return return-type, or cannot add additional
 out-parameters.
 
 Exceptions can also be problematic in embedded or safety-critical contexts, where
-the use of ~noexcept~ in conjunction with exceptions can potentially insert hidden
-calls to ~std::terminate()~ if the program fails to handle an unexpected exception.
+the use of ~noexcept~ in conjunction with exceptions can potentially result in the
+compiler inserting hidden calls to ~std::terminate()~ if the program fails to
+handle an exception that was not expected.
 Such hidden calls to ~std::terminate()~ might only be discovered as reachable
 at runtime, and can be difficult to audit in a code-base.
 
@@ -66,7 +81,7 @@ type-information about the closed-set of possible exception types that might be
 thrown from a function, while trying to avoid the shortcomings of the previous
 design of throw-specifications.
 
-Function definitions with a ~throw()~ specification are statically checked by the
+Function definitions with a ~throw()~ specification are checked by the
 compiler at compile-time to ensure that there are no code-paths that might allow
 an exception to exit the function that would violate the declared throw-specification,
 rather than dynamically check this at runtime and terminate.
@@ -78,12 +93,12 @@ can achieve efficiency of throwing exceptions close to that of normal return val
 with exception objects able to be returned on the stack or in registers using
 similar conventions to normal return-values.
 
-This design is more general than the design proposed in [[https://wg21.link/P0709R4][P0709R4 - Zero-overhead deterministic exceptions: Throwing values]]
+This design differs from the design proposed in [[https://wg21.link/P0709R4][P0709R4 - Zero-overhead deterministic exceptions: Throwing values]]
 in that it does not require the introduction of a special ~std::error~ type and
 does not require falling back to dynamic-allocation for exception types that do not
 fit in the small-object optimisation built into the proposed ~std::error~ type.
 
-This design does not change the semantics of existing C++20 code. It can be
+This design does not change the semantics of existing C++23 code. It can be
 incrementally adopted throughout a code-base by annotating functions with
 static exception specifications using the ~throw()~ syntax where appropriate
 in much the same way that code-bases could incrementally adopt ~noexcept~
@@ -94,14 +109,21 @@ environments which were traditionally unable to use exceptions. The ability to e
 compile-time checking that all exceptions are handled and that there are no hidden
 calls to ~std::terminate()~ inserted by the compiler due to unhandled exceptions
 also removes some barriers to C++ exceptions being used in embedded environments
-which cannot afford to terminate.
+which may not be allowed to terminate.
+
+This paper is structured into the following sections:
+- *Motivation* - motivation for addition of this feature
+- *Proposal* - describes the design of the features this paper is proposing
+- *Prior Work* - a comparison of this work to prior-art in this area
+- *Design Discussion* - further discussion of important design points, alternatives, future work, etc.
+- *Implementation strategies* - discusses potential strategies implementations could use to implement this design efficiently
 
 * Motivation
 
-The paper [[https://wg21.link/P0709][P0709]] by Herb Sutter contains some detailed motivation for improving exceptions,
-and does a better job than I could of covering the background. Much of the
-same philosophy went into the design of this paper, albeit taking a slightly
-different approach to the solution.
+The paper [[https://wg21.link/P0709][P0709]] by Herb Sutter contains detailed motivation for improving exceptions,
+and does a better job than I could of covering the background.
+Much of the same philosophy went into the design of this paper, albeit taking a
+slightly different approach to the solution.
 
 Key points:
 - Exceptions are expensive on many platforms for error-handling that is not rare.
@@ -141,19 +163,19 @@ Key points:
     change, but there is no guarantee that existing code calling this function will stop
     compiling - you may just end up with a runtime error that then goes unhandled.
 
-- What if throwing exceptions was as fast as normal return-values?
-  - What if they could be used for common-case failures and didn't have to be reserved
-    for "exceptional" (i.e. rare) failure cases?
-  - How would this change the way that you design your APIs?
-  - Would you still return error-codes or return a std::expected?
+What if throwing exceptions was as fast as normal return-values?
+- What if they could be used for common-case failures and didn't have to be reserved
+  for "exceptional" (i.e. rare) failure cases?
+- How would this change the way that you design your APIs?
+- Would you still return error-codes or return a std::expected?
 
-- This paper explores language changes that would allow exceptions to be several
-  orders of magnitude faster - performance of the order of that of a normal return-value.
-  - Exceptions may be returned on the stack or in registers as part of the
-    calling convention.
-  - Exiting a function with an exception can directly return to the caller's
-    handler/unwind code-path. No need to lookup exception tables and dynamically
-    find the right handler.
+This paper explores language changes that would allow exceptions to be several
+orders of magnitude faster when thrown - performance of the order of that of a normal return-value.
+- Exceptions may be returned on the stack or in registers as part of the
+  calling convention.
+- Exiting a function with an exception can directly return to the caller's
+  handler/unwind code-path. No need to lookup exception tables and dynamically
+  find the right handler.
 
 * Proposal
 
@@ -178,12 +200,6 @@ types might be thrown from a particular exception.
 It proposes adding the ~template catch~ syntax to allow catching static exceptions
 thrown from the associated try-block, allowing a way to use the same handler template
 to handle different types, without the need for type-erasing the exception.
-
-# It proposes limiting the scope of ~throw;~ statements within the dynamic scope
-# of the most-recently activated catch-block of a function definition that has a
-# throw-specification to the immediately lexical scope of the handler.
-# i.e. you can you only rethrow an exception from the body of the handler, not
-# from a from a function called by that handler.
 
 ** (Re)Adding ~throw()~ specifiers
 
@@ -393,7 +409,10 @@ This is no different to changing the return-type of a function.
 e.g. when adding a new entry to a ~std::variant~-returning function.
 
 This places some interesting constraints on the evolution of such functions, which are discussed
-in detail in a later section (TODO: Put link to other section).
+in detail in a later section.
+
+*************** TODO Put a link to the section where evolution of functions is discussed.
+*************** END
 
 *** Exception types may not be references, cv-qualified, or void
 
@@ -788,7 +807,8 @@ Including:
 There are also further challenges with defining mutually-recursive functions that both
 have deduced exception specifications.
 
-# TODO: Add example of mutually recursive functions here.
+*************** TODO Add example of mutually recursive functions with deduces throw specifications
+*************** END
 
 While we may be able to eventually define rules that may allow a subset of recursive
 function use-cases to have deduced exception specifications, this seems like a relatively
@@ -800,10 +820,10 @@ The throw-specification of a function or function-template with a deduced throw 
 need only be computed when the function is selected by overload resolution, or is otherwise ODR-used.
 
 This allows the compiler to avoid instantiating function-templates that are part of an overload
-set but that are never selected for overload resolution.
+set but that are never selected for overload resolution in order to compute the throw specification.
 
 Taking the address of a function with a deduced throw-specification will also force the compiler
-to compute the throw-specification.
+to compute the throw-specification so that the function-pointer type is known.
 
 *** Do we also need ~noexcept(auto)~?
 
@@ -932,7 +952,9 @@ that allowed throwing a ~std::exception_ptr~ object itself (instead of rethrowin
 exception object contained within the ~std::exception_ptr~).
 
 This is explored in more detail in the design discussion section.
-TODO: Insert link to design discussion.
+
+*************** TODO Insert link to design discussion section about using ~std::exception_ptr~ as ~any_exception~
+*************** END
 
 *** Mixed dynamic and static exception specifications
 
@@ -1411,28 +1433,62 @@ If we can specify the syntax of ~declthrow~ such that it reserves the right to b
 in some way such that this capability could be added later, then we can take a wait-and-see
 approach.
 
-** Checked Exceptions
+** Checking the throw-specification of a function
 
 A function declaration that includes a /static-exception-specification/ must have a definition that
 ensures that only exceptions of those types may exit the function.
 
-To assist with this, the compiler looks at the exception-specifications of all expressions
-within the body of the function and computes the set of possible exception types that could
-potentially exit the current function. If this set of possible exception types is not a
-subset of the set of exception types listed in the exception-specification then the
-program is ill-formed.
+To assist with this, the compiler looks at the body of the function to compute the set
+of potentially-thrown exception types that may exit the body of the function.
 
-** Computing the set of exception-types
+If this set of possible exception types is not a subset of the set of exception types listed
+in the exception-specification then the program is ill-formed.
+
+For example:
+#+begin_src c++
+  int other() throw(A);
+  
+  // OK: set of potentially-thrown exceptions is {A, B}, all of which are
+  // listed in the function's throw-specification.
+  void example1() throw(A, B) {
+    int x = other();
+    if (x < 0) throw B{};
+  }
+
+  // Ill-formed: call to other() can potentially throw exception A
+  // which is not listed in example2()'s throw-specification.
+  void example2() throw(B) {
+    int x = other();
+    if (x < 0) throw B{};
+  }
+#+end_src
+
+Note that for functions with a throw-specification of ~throw(auto)~ the check
+always passes as the compiler computes the throw-specification to be exactly the
+set of potentially-thrown exception types and thus every exception type is, by-definition,
+listed in the throw-specification.
+
+For functions with a throw-specification of ~throw(...)~ or ~noexcept(false)~, the
+function is permitted to throw an exception of any type and so this check is not
+required to be performed.
+
+** Computing the set of potentially-thrown exception types
+
+The ability to check the throw-specification of a function, compute the results of a ~declthrow~
+query, instantiate a template-handler with the appropriate types, or deduce the set of exception
+types that may be thrown from a function with a ~throw(auto)~ throw-specification all depend on
+the ability to compute the set of potentially-thrown exception types for expressions and statements.
 
 When computing the set of exception types that might exit an expression, statement or function,
-we idealy want a set of rules that can be reliably evaluated in a consistent way across all
+we ideally want a set of rules that can be reliably evaluated in a consistent way across all
 conforming implementations, and that is not dependent on inlining, or compiler optimisations.
 This is because the computation can be important for correctness and well-formedness of a program,
 and can also affect the ABI of functions with deduced throw specifications.
 
 Computing the set of potentially thrown exception types, therefore, needs to be computable locally
 for each function, from looking only at the function body and the signatures of any functions
-called from that function.
+called from that function, since we cannot assume that the definitions of called functions will
+be available.
 
 The following sections describe such a set of rules for computing the
 /set of potentially-thrown exception types/ for each grammar term that
@@ -1450,13 +1506,13 @@ as these can affect the set of exceptions that can potentially be thrown.
 For example:
 - If execution flows off the end of a coroutine, it implicitly evaluates ~co_return;~.
   This calls ~promise.return_void()~ which may have a non-empty throw specification.
-- If execution flows off the end of a handler of a /function-try-block/ then the
-  exception is implicitly rethrown as if there was a ~throw;~ statement inserted at
-  the end of the handler's /compound-statement/.
+- If execution flows off the end of a handler of a /function-try-block/ for a constructor
+  or destructor then the exception is implicitly rethrown as if there was a ~throw;~
+  statement inserted at the end of the handler's /compound-statement/.
 
 Therefore, we need to first define some rules around defining the reachability of certain
-statements. These rules will need to be somewhat conservative as doing an accurate computation
-of reachability is equivalent to solving the halting problem, and thus intractable.
+statements. These rules will need to be somewhat conservative as computing an accurate
+sense of reachability is equivalent to solving the halting problem, and thus intractable.
 
 The rules below carefully use the terminology /potentially reachable statement/ to
 indicate that the computation is conservative.
@@ -1465,13 +1521,15 @@ A /compound-statement/ evaluates a sequence of /statements/. There are some stat
 for which it is never possible to execute the next statement, however, as they unconditionally
 divert control-flow elsewhere.
 
+**** Interrupted-flow statements
+
 An /interrupted-flow statement/ is a statement for which execution cannot flow to the next statement
 from this statement.
 
 The following statements are /interrupted-flow statements/:
 - A /jump-statement/ - i.e. ~break;~, ~continue;~,  ~goto;~,  ~return expr-or-braced-init-list[opt];~ or /coroutine-return-statement/.
 - A /compound-statement/ where execution cannot flow off the end of the block (see below)
-- An if or if-else /selection/ statement where either;
+- An if or if-else /selection-statement/ where either;
   - the /init-statement/, if any, is an /interrupted-flow statement/; or
   - the /condition/ is an /interrupted-flow expression/.
 - An if-else /selection-statement/ where the first and second sub-statements are both /interrupted-flow statements/.
@@ -1505,15 +1563,25 @@ The following statements are /interrupted-flow statements/:
 - An expression-statement where the expression is an /interrupted-flow expression/.
 - A declaration-statement that is an object declaration where the initializer expression is an /interrupted-flow expression/.
 
+**** Interrupted-flow expressions
+
 An /interrupted-flow-expression/ is a potentially evaluated expression that is one of the following:
 - A /throw-expression/
 - A /postfix-expression/ that evaluates a call to a function marked ~[[noreturn]]~.
-- A /conditional-expression/ where either;
+- A /conditional-expression/ (ternary ~?:~ operator) where either;
   - the first sub-expression is an /interrupted-flow-expression/; or
-  - both the second and third sub-expressions are both /interrupted-flow-expressions/.
+  - the second and third sub-expressions are both /interrupted-flow-expressions/.
 - A built-in logical AND or logical OR expression where the first sub-expression is an /interrupted-flow expression/.
-- A prvalue expression of type whose destructor is marked ~[[noreturn]]~.
-- Or any other compound expression that has a sub-expression that is an /interrupted-flow-expression/.
+- A prvalue expression of class type whose destructor is marked ~[[noreturn]]~.
+- Any other compound expression that has a sub-expression that is an /interrupted-flow-expression/.
+
+**** Potentially-reachable statements
+
+A /potentially-reachable statement/ is a statement of a function that the compiler determines
+can potentially be executed based on a local analysis of the control-flow of the function.
+It does not consider the values of any expressions which are semantically computed at runtime.
+
+***** Reachability of compound-statements
 
 A sub-statement of a /compound-statement/ is a /potentially-reachable statement/ if:
 - it is the first sub-statement of the /compound-statement/ and the /compound-statement/ is reachable; or
@@ -1522,23 +1590,84 @@ A sub-statement of a /compound-statement/ is a /potentially-reachable statement/
   (Note: this does not include the implicit labels mentioned in the definition of a ~while~ statement)
 Otherwise a sub-statement of a /compound-statement/ is considered an /unreachable-statement/.
 
-A /compound-statement/ that is the top-level /compound-statement/ of a function body or lambda body is a /potentially reachable statement/
+A /compound-statement/ that is the top-level /compound-statement/ of a function body or lambda body is a /potentially reachable statement/.
 
-Execution may flow off the end of a /compound-statement/ if either;
-- the /compound-statement/ is a /potentially-reachable statement/ and has an empty sequence of sub-statements; or
-- both;
-  - the last sub-statement of the /compound-statement/ is reachable and is not an /interrupted-flow-statement/
-    (Note: This includes any null sub-statement implicitly inserted after a trailing label immediately before the closing brace);
-    and
-  - There are no object declarations declared in the scope of the /compound-statement/ that
-    have destructors that are marked ~[[noreturn]]~.
+***** Reachability of components of an if-statement
 
-TODO: Add lots of examples showing various cases here.
+In an if-statement of the form ~if ( /condition/ ) /statement/~ or ~if ( /init-statement/ /condition/ ) /statement/~ with or without the ~else /statement/~ then;
+- The /init-statement/, if present, is a potentially-reachable statement if the if-statement is a potentially-reachable statement.
+- The /condition/ expression is a potentially reachable statement if;
+  - The if-statement is potentially reachable; and
+  - The /init-statement/ is either not present, or if present, is not an /interrupted-flow statement/.
+- The first or second (if present) /statement/ is a potentially reachable statement if the /condition/ expression
+  is a potentially-reachable expression and the /condition/ expression is not an /interrupted-flow expression/.
 
-**** Reachability of labels
+In a constexpr if statement;
+- the first substatement is potentially reachable if and only if the if-statement is potentially reachable and the /condition/ evaluates to ~true~;
+- the second substatement, if present, is potentially reachable if and only if the if-statement is potentially reachable and the /condition/
+  evaluates to ~false~.
 
-These rules treat all labels as potentially-reachable and does not do any analysis to determine
-whether there is any jump-statement that could potentially jump to that label.
+***** Reachability of components of a switch statement
+
+In a switch-statement of the form ~switch ( /condition/ ) /statement/~:
+- the /condition/ expression is potentially reachable if the switch-statement is potentially reachable
+
+And, in a switch-statement of the form ~switch ( /init-statement/ /condition/ ) /statement/~:
+- the /init-statement/ is potentially reachable if the switch-statement is potentially reachable
+- the /condition/ expression is potentially reachable if the switch-statement is potentially reachable;
+  and the /init-statement/ was not an interrupted-flow statement.
+
+In both cases, the /statement/ is not potentially-reachable.
+Execution can only enter /statement/ via a jump to a label enclosed by /statement/.
+
+Any ~case~ and ~default~ labels associated with the switch statement are potentially
+reachable if and only if the /condition/ expression is potentially reachable and is
+not an /interrupted-flow expression/.
+
+For example:
+#+begin_src c++
+  void f(int x) {
+    switch (x) {
+      a; // not-reachable
+    case 0:
+      b; // reachable - appears after a label
+      break;
+      c; // not reachable - appears after a jump-statement
+    default:
+      d; // reachable - appears after a label
+    }
+  }
+#+end_src
+
+***** Reachability of components of an iteration-statement
+
+In an iteration-statement of the form ~while ( /condition/ ) /statement/~
+- The /condition/ is a potentially reachable expression if the while-statement is a potentially reachable statement
+- The /statement/ is a potentially reachable statement if the /condition/ expression is potentially
+  reachable and the /condition/ expression is not a /flow-interrupted expression/.
+
+In an iteration-statement of the form ~do /statement/ while ( /expression/ ) ;~
+- The /statement/ is potentially reachable statement if the do-statement is potentially reachable
+- The /expression/ is a potentially reachable expression if do-statement is potentially reachable
+  and either;
+  - the /statement/ is not a /flow-interrupted statement/; or
+  - the /statement/ encloses a potentially reachable ~continue;~ statement associated with the do-statement
+
+In an iteration-statement of the form ~for ( /init-statement/ /condition/ ; /expression/ ) /statement/~
+- The /init-statement/ is potentially-reachable if the for-statement is potentially-reachable
+- The /condition/ expression (if present) is potentially-reachable if the for-statement is potentially-reachable
+  and the /init-statement/ is not an /interrupted-flow statement/
+- The /statement/ is a potentially-reachable statement if the /init-statement/ is a potentially-reachable statement
+  and is not an /interrupted-flow statement/ and either the /condition/ expression is not present or the
+  /condition/ expression is not an /interrupted-flow expression/.
+- The /expression/ is a potentially-reachable statement if either;
+  - The /statement/ is a potentially-reachable statement and is not an /interrupted-flow statement/; or
+  - There is a potentially-reachable ~continue;~ statement enclosed by /statement/ that is associated with the for-loop.
+
+***** Reachability of identifier labels
+
+These rules treat all identifier labels as potentially-reachable and does not do any analysis to
+determine whether there is any jump-statement that could potentially jump to that label.
 
 For example, we could potentially look elsewhere in the function to determine whether there
 are any ~goto~ statements that target a particular label.
@@ -1573,7 +1702,7 @@ statement and so does not yet know whether ~retry:~ label is reachable.
   }
 #+end_src
 
-And even then, a more sophisticated approach should probably then consider the potential
+And even then, a more sophisticated approach would then need to consider the potential
 reachability of the ~goto~ statement targeting a label itself.
 
 There may be cycles of reachability of ~goto~ statements which are not themselves reachable
@@ -1584,19 +1713,24 @@ labels in this function, but none of those ~goto~ statements are themselves reac
 from the function entry-point.
 #+begin_src c++
   void foo(int x) {
-      return x;
-
-     foo:
-      if (x < 0)
-	throw negative_error{};
-      goto baz;
-
-     bar:
+    if constexpr (false) {
       goto foo;
-
-     baz:
-      goto bar;
     }
+
+    return x;
+
+   foo:
+    if (x < 0)
+      throw negative_error{};
+    goto baz;
+
+   bar:
+    --x;
+    goto foo;
+
+   baz:
+    goto bar;
+  }
 #+end_src
 
 It is not difficult to imagine such code occuring in practice in function templates where
@@ -1609,11 +1743,25 @@ only if there is a potentially reachable ~goto~ statement that targets the label
 Computing the reachability in this case would basically require the compiler to hold
 the control-flow graph of the entire function in memory and then walk that graph,
 marking statements as reachable or not.
-This may be incompatible with the architecture of some implementations.
+This may be incompatible with the architecture of some compiler implementations.
 
 The proposed design chooses a more conservative algorithm that treats all labels as reachable
 in order to permit implementations that can compute a more conservative concept of
 reachability in a single pass.
+
+It is not clear whether or not handling such cases in a more accurate way would be
+worth the additional complexity it would place on implementations.
+
+**** Flowing off the end of a compound-statement
+
+Execution may flow off the end of a /compound-statement/ if either;
+- the /compound-statement/ is a /potentially-reachable statement/ and has an empty sequence of sub-statements; or
+- both;
+  - the last sub-statement of the /compound-statement/ is potentially-reachable and is not an /interrupted-flow-statement/
+    (Note: This includes any null sub-statement implicitly inserted after a trailing label immediately before the closing brace);
+    and
+  - There are no object declarations declared in the scope of the /compound-statement/ that
+    have destructors that have the attribute ~[[noreturn]]~.
 
 **** Flowing off the end of a switch statement
 
@@ -1624,26 +1772,26 @@ This approach is somewhat conservative, as it may be possible that all of the po
 cases are already covered by ~case~ labels and that, therefore, it is not possible for
 the switch statement to jump over the statement body and flow onto the next statement.
 
-For example: The current rules result in the following
+For example: The rules above result in the following
 #+begin_src c++
-  void example(bool x) {
-    // Not an interrupted-flow statement - no default: case
-    switch (x) {
-    case true: throw X{};
-    case false: throw Y{};
-    }
-    // The following statement is considered potentially-reachable.
+    void example(bool x) {
+      // Not an interrupted-flow statement - no default: case
+      switch (x) {
+      case true: throw X{};
+      case false: throw Y{};
+      }
+      // The following statement is considered potentially-reachable.
 
-    // An interrupted-flow statement - has a default: case
-    switch (x) {
-    case true: throw A{};
-    default: throw B{};
-    }
+      // An interrupted-flow statement - has a default: case
+      switch (x) {
+      case true: throw X{};
+      default: throw Y{};
+      }
 
-    // Not potentially-reachable.
-    // Prior statement is an interrupted-flow statement.
-    // Control cannot flow off the end of the function's compound-statement.
-  }
+      // Not potentially-reachable.
+      // Prior statement is an interrupted-flow statement.
+      // Control cannot flow off the end of the function's compound-statement.
+    }
 #+end_src
 
 The rationale here is that trying to determine whether every possible value for the
@@ -1671,21 +1819,66 @@ For example: Consider switching on an enum where all enum members have case labe
 If, instead, we just look for a ~default:~ label then we know that every
 possible case is handled.
 
+If we are willing to define rules for determining whether all possible cases are
+listed as ~case~ labels then we could potentially relax the rule requiring the use
+of a ~default:~ label here.
+
+**** Use of ~[[noreturn]]~ for normative semantics
+
+The rules above treats calls to functions marked as ~[[noreturn]]~ as being interrupted-flow expressions
+and the interpretation as such can potentially affect the computation of the set of potentially-thrown
+exceptions, which in turn can affect the semantics and well-formedness of a program.
+
+The use of an attribute in this way is novel and would no longer have optional semantics,
+which would go against the intent of the following note in [dcl.attr.grammar] p6
+
+#+begin_quote
+[Note : The attributes specified in [dcl.attr] have optional semantics: given a well-formed program,
+        removing all instances of any one of those attributes results in a program whose set of
+	possible executions ([intro.abstract]) for a given input is a subset of those of the original
+	program for the same input, absent implementation-defined guarantees with respect to that attribute.
+— end note]
+#+end_quote
+
+The statement reachability computation dedpends on the ability to determine whether a function can
+return normally and flow to the next statement or not. For example, programs may insert calls to
+~std::terminate()~ or ~std::unreachable()~ before the end of a compound-statement to indicate that
+control should not flow off the end (e.g. after a loop that is never expected to exit except by
+~return~).
+
+If we do not wish to give the ~[[noreturn]]~ attribute normative semantics, then perhaps we
+should explore defining an alternative normative mechanism for annotating functions as never
+returning normally.
+
+*************** TODO Add examples of iterrupted-flow statements and expressions
+*************** END
+
 *** /function-body/ 
+
+The computation of the set of exception types of a /function-body/ is used for two main purposes:
+- checking that exception types that can potentially exit the function are listed in a function's /throw-specifier/.
+- deducing the throw-specification for a function with a ~throw(auto)~ specifier.
+
+The following steps are used to compute the set of potentially-thrown exception types for a function body.
 
 Let /A/ be the set of potentially-thrown exception types for the function body's
 /compound-statement/.
 
-Note: If the function is a coroutine and ~return_void~ is found in the scope of
+If the function is a coroutine and ~return_void~ is found in the scope of
 the coroutine's ~promise_type~ then flowing off the end of the coroutine is
 equivalent to evaluating ~co_return;~. If this implicit ~co_return;~ statement
-is potentially reachable, then the computation of /A/ will take into account
-any potentially-thrown exceptions that may result from the evaluation of the
-~co_return;~ statement.
+is potentially reachable (see above definition), then the computation of /A/
+takes into account any potentially-thrown exceptions that may result from the\
+evaluation of the ~co_return;~ statement.
 
-If the function is a constructor, then let /B/ be the set of potentially-thrown
-exception types of the function call expressions of the constructors of the base-classes
-and non-static data-members, otherwise let /B/ be the empty set.
+If the function is a constructor, then
+- Let /B/ be the set of potentially-thrown exception types of the function
+  call expressions of the constructors of the base-classes and non-static data-members.
+Otherwise, if the function is a destructor, then
+- Let /B/ be the set of potentially-thrown exception types of the function
+  call expressions of the destructors of the base-classes and non-static data-members.
+Otherwise,
+- Let /B/ be the empty set.
 
 Let /C/ be the union of the sets /A/ and /B/.
 
@@ -1705,10 +1898,33 @@ Otherwise, let /D/ and /E/ both be the empty set.
 Then the set of potentially-thrown exception types of the /function-body/ is the set
 of types described by (/C/ - /D/) ∪ /E/...
 
+*************** TODO Add examples of function-body potentially-thrown exception types
+*************** END
+
+*** /statement/
+
+A statement is one of the following cases:
+- /expression-statement/
+- /compound-statement/
+- /selection-statement/
+- /iteration-statement/
+- /jump-statement/
+- /declaration-statement/
+- /try-block/
+
+See the relevant section for a description of each.
+
+*** /expression-statement/
+
+An /expression-statement/ has a set of potentially-thrown exception types equal to
+the set of potentially-thrown exception types of the /expression/.
+
+See section on /expression/ handling below.
+
 *** /compound-statement/
 
 The set of potentially thrown exception types for a /compound-statement/ is the union of
-the set of potentially-thrown exception types for each of the /potentially-reachable statement/s in the
+the set of potentially-thrown exception types for each of the /potentially-reachable statements/ in the
 /statement-seq/ of the /compound-statement/.
 
 Note that this takes into account some basic control-flow analysis to eliminate potentially-thrown
@@ -1734,22 +1950,9 @@ The set of potentially-thrown-exceptions from the following compound-statement i
   }
 #+end_src
 
-*** /statement/
-
-A statement is one of the following cases:
-- /expression-statement/ - Has the same set of potentially-thrown exception types as the contained /expression/.
-- /compound-statement/ - Already handled above
-- /selection-statement/
-- /iteration-statement/
-- /jump-statement/
-- /declaration-statement/
-- /try-block/
-
-See the relevant section for a description of each.
-
 *** /selection-statement/
 
-Selection statements include both ~if~, ~if constexpr~, ~if consteval~ and ~switch~ statements.
+Selection statements include ~if~, ~if constexpr~, ~if consteval~ and ~switch~ statements.
 
 **** ~if~ statements
 
@@ -1776,15 +1979,19 @@ despite the condition being a constant
 If you want to force the branching decision to be performed at compile-time then
 use the ~if constexpr~ form of selection-statement (see below).
 
-There is also the question of whether we should consider the set of potentially-thrown
-exceptions of the true or false sub-statements if either the /init-statement/ is a
+***** Reachability of if-statement components
+
+With if-statements there is the question of whether we should consider the set of potentially-thrown
+exceptions of the first or second sub-statements if either the /init-statement/ is a
 /interrupted-flow statement/, or if the /condition/ is an /interrupted-flow expression/.
 
-For example: Should the following function deduce to a throw-specification of ~throw(X)~ or
+For example: Should the following function, ~f()~ deduce to a throw-specification of ~throw(X)~ or
 to ~throw(X, Y, Z)~?
 #+begin_src c++
-  void f(bool cond) throw(auto) {
-    if ( (throw X{}, cond) ) {
+  [[noreturn]] bool throws_something() throw(X);
+
+  void f() throw(auto) {
+    if (throws_something()) {
       throw Y{};
     } else {
       throw Z{};
@@ -1792,14 +1999,29 @@ to ~throw(X, Y, Z)~?
   }
 #+end_src
 
-The rules above do not try to compute the individual reachability of the branches and
-would result in a deduced exception specification of ~throw(X, Y, Z)~.
+The rules above do not try to compute the individual reachability of the substatements and
+applying the rules as written would result in a deduced exception specification for ~f()~
+of ~throw(X, Y, Z)~.
 
 While it would be relatively straight-forward to extend the rules to, instead, compute
 a deduced exception specification of ~throw(X)~, it is not clear that this would bring
 significant value, as this kind of code is expected to be relatively rare, and could
 be straight-forwardly rewritten in a form that separates the /interrupted-flow expression/
 into a separate statement.
+
+For example: The following code is equivalent but deduces the throw-specification to ~throw(X)~
+according to the above rules since the if-statement is not a reachable statement.
+#+begin_src c++
+  void f() throw(auto)  {
+    bool cond = throws_something();
+    // The if-statement is unreachable as prior statement was an interrupted-flow statement.
+    if (cond) {
+      throw Y{};
+    }  else {
+      throw Z{};
+    }
+  }
+#+end_src
 
 **** ~if constexpr~ statements
 
@@ -1824,6 +2046,16 @@ i.e. the body of the ~else~ /statement/.
 Otherwise, the set of potentially-thrown exception types of the /selection-statement/
 is /I/.
 
+For example: The following statement has a set of potentially-thrown exceptions
+equal to { ~X~ }.
+#+begin_src c++
+  if constexpr (true) {
+    throw X{};
+  } else {
+    throw Y{};
+  }
+#+end_src
+
 **** ~if consteval~
 
 An if-statement of the form ~if consteval /compound-statement/~ has a set of
@@ -1840,8 +2072,8 @@ not currently permitted to throw exceptions and so could potentially be consider
 as not contributing to the set of potentially-thrown exception types.
 
 However, it is possible that we may want to support the ability to throw exceptions
-during constant-evaluation in future - see [[https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2024/p3068r0.pdf][P3068R0]] "Allowing exception throwing in constant-evaluation"
-for such a proposal.
+during constant-evaluation in future.
+See [[https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2024/p3068r0.pdf][P3068R0]] "Allowing exception throwing in constant-evaluation" for such a proposal.
 
 If we were to initially treat code within the manifestly-constant-evaluated
 branch as non-throwing then later changing it to be potentially-throwing would be a
@@ -1854,22 +2086,8 @@ or ~switch ( /condition/ ) /statement/~
 has a set of potentially thrown exception-types equal to union of the sets of potentially
 thrown exception types of the following parts:
 - /init-statement/ (if present)
-- /condition/
+- /condition/ expression
 - /statement/
-
-*** /init-statement/
-
-An init-statement is either a:
-- /simple-declaration/ 
-- /expression-statement/ - Expression statements are already described above.
-- /alias-declaration/ - These do not contain any executable code and thus do not contribute to the set of potentially-thrown exception types.
-
-
-If the statement is a /simple-declaration/ that is an object declaration,
-the set of potentially-thrown exception types of that statement is the union
-of the sets of potentially-thrown exception types of the /initializer/ expression,
-the function call expression of the objects selected constructor and the
-function call expression of the object's destructor.
 
 *** /iteration-statement/
 
@@ -1892,10 +2110,6 @@ from each of the relevant subexpressions or substatements:
 Note that this includes exceptions that may be thrown from the body of the iteration statement,
 even if the statement's /condition/ is such that the body will never be executed.
 
-Q: For ~do~ statements, if the /statement/ is an /interrupted-flow statement/, and thus the
-/expression/ is an unreachable statement, should we still consider the set of potentially-thrown
-exception-types from the /expression/?
-
 *** /jump-statement/
 
 Jump statements include:
@@ -1906,7 +2120,7 @@ Jump statements include:
 - ~goto~ /identifier/ ~;~
 
 Only the ~return~ and ~co_return~ statements can potentially affect the set of potentially-thrown
-exception types here. The others are just pure control flow, and while they can potentially trigger
+exception types here. The others are pure control flow, and while they can potentially trigger
 exceptions to be thrown when exiting scopes via that control-flow (if destructors are potentially-throwing),
 those exceptions should be covered by the declaration statement for that variable.
 
@@ -2028,7 +2242,8 @@ Other than the first two cases, the rest of the declarations do not introduce an
 might throw exceptions.
 
 Note that, while the /static_assert-declaration/ has a child expression, this expression is evaluated
-as a manifestly constant expression, and therefore cannot exit with an exception.
+as a manifestly constant expression, and therefore the program is ill-formed if that expression exits
+with an exception.
 
 **** /simple-declaration/
 
@@ -2055,7 +2270,8 @@ implementation-defined or unspecified exception (in which case we would need to 
 in the set of exception types) or can we assume that the synchronization will always succeed?
 
 A declaration statement that declares a constant expression (i.e. is declared with the ~constexpr~
-specifier) has an empty set of potentially-thrown exception types.
+specifier) has an empty set of potentially-thrown exception types, assuming that the program is ill-formed
+if a constant-evaluation exits with an exception.
 
 **** /asm-declaration/
 
@@ -2134,6 +2350,20 @@ the closing brace of its /compound-statement/ for the purposes of computing its 
 potentially-thrown exception types.
 
 The set of potentially-thrown exception types of the /try-block/ is the resulting set, /E/.
+
+*** /init-statement/
+
+An init-statement is either a:
+- /simple-declaration/ 
+- /expression-statement/ - Expression statements are already described above.
+- /alias-declaration/ - These do not contain any executable code and thus do not contribute to the set of potentially-thrown exception types.
+
+
+If the statement is a /simple-declaration/ that is an object declaration,
+the set of potentially-thrown exception types of that statement is the union
+of the sets of potentially-thrown exception types of the /initializer/ expression,
+the function call expression of the objects selected constructor and the
+function call expression of the object's destructor.
 
 *** /expression/
 
@@ -2296,7 +2526,10 @@ thrown exception is unspecified. However, the behaviour for failure to allocate/
 an ~exception_ptr~ is well-defined and so I would expect most implementations to do something
 similar - i.e. throw ~std::bad_alloc~.
 
-TODO: Update this pending the output of mailing list thread: https://lists.isocpp.org/core/2023/10/15012.php
+This was discussed in the mailing list thread: https://lists.isocpp.org/core/2023/10/15012.php
+
+*************** TODO Update this section based on the outcome of the mailing list discussion
+*************** END
 
 This paper proposes defining some forms of throw expressions as not requiring dynamic memory
 allocation, but instead requiring that implementations allocate the exception objects as
@@ -2394,7 +2627,7 @@ where the exception object is destroyed. All other points /happen before/ the la
 #+end_quote
 
 For exception objects created by /static throw expressions/, we need to be able to deterministically
-compute their latest-possible point of destruction so that we know to allocate the automatic
+compute their latest-possible point of destruction so that we know where to allocate the automatic
 storage-duration storage for that exception object.
 
 To allow the compiler to compute this point, we need to eliminate the possibility of the exception object's
@@ -2422,7 +2655,7 @@ handler's /compound-statement/ and that is;
 - not inside the body of a lambda expression nested within this handler; and
 - not inside the body of a member function of a local class
 
-A ~throw;~ expression that is not a /lexically associated rethrow/ always throws an
+A ~throw;~ expression that is not a /lexically associated rethrow/ throws a
 /dynamic exception object/.
 If the current exception is a /static exception object/ then this will allocate a new
 /dynamic exception object/ copied from the current /static exception object/.
@@ -2431,10 +2664,30 @@ With those cases handled, we can now define that the lifetime of a /static excep
 ends deterministically upon exiting a handler for that exception through any means other
 that a /lexically associated rethrow/.
 
+Storage for a /static exception object/ is has automatic storage-duration.
 
-TODO: Come up with semantics that can handle the following cases:
+Generally, the storage for a /static exception object/ will be allocated in the scope of
+the function that has the outer-most dynamic scope for a handler that can match the
+exception object's type, taking into account possible chains of catch/rethrow of the
+exception object.
 
-Given the following exception object and function ~f()~ that might throw such an exception:
+However, there are some cases where rethrowing an exception object may result in copying a
+/static exception object/ from automatic storage duration storage allocated in an
+inner dynamic-scope to automatic storage duration allocated by an outer dynamic-scope.
+
+A caller of a function with a static throw specification will generally provide storage
+to the called function so that the called function can allocate the exception object in
+storage owned by the caller before it exits. If the caller is not the final handler of
+an exception (i.e. the lifetime of the exception object may escape the calling function),
+the caller may choose to reuse the storage provided to it by its caller as the storage
+it provides to the function it calls.
+
+******* Examples of static exception object lifetime and storage duration
+
+The following examples walk through some simple cases and describe how the
+exception object lifetime of static exception objects is intended to work.
+
+Given the following exception type, ~X~, and function ~f()~, which throws an instance of ~X~:
 #+begin_src c++
   struct X {
     explicit X(int) noexcept;
@@ -2448,7 +2701,7 @@ Given the following exception object and function ~f()~ that might throw such an
   void f() throw(X) { throw X{some_int}; }
 #+end_src
 
-Consider the following case:
+Example 0: Consider the following case:
 #+begin_src c++
   void g0() throw(X) {
     f();
@@ -2468,7 +2721,7 @@ In this case:
 - the exception object is destroyed and the lifetime of the storage for the
   exception ends when the handler in ~h0()~ exits.
 
-Consider the following case:
+Example 1: Consider the following case:
 #+begin_src c++
   void g1() throw(X) {
     try { f(); }
@@ -2496,7 +2749,7 @@ object provided by ~h1()~ to ~f()~ because there was no other exception object b
 thrown by ~g1()~ whose lifetime overlaps with the lifetime of the exception object thrown
 by ~f()~.
 
-Consider the following case:
+Example 2: Consider the following case:
 #+begin_src c++
   void g2() throw(X) {
     try { f(); }
@@ -2525,7 +2778,7 @@ In this case:
 - When the handler in ~h2()~ exits, the exception object thrown by ~g2()~ is destroyed
   and its storage lifetime ends.
   
-Consider the following case:  
+Example 3: Consider the following case:  
 #+begin_src c++
   void g3() throw(X){
     try { f(); }
@@ -2560,7 +2813,7 @@ In this case:
   object instead of copy it as the ~throw;~ statement will exit the handler.
   Note: This may not be the case for all rethrow expressions.
 
-Consider the following case:
+Example 4: Consider the following case:
 #+begin_src c++
   void g4() throw(X) {
     try { f(); }
@@ -2629,8 +2882,8 @@ For example:
 #+end_src
 
 If a rethrow expression is associated with a handler then we potentially have more static information about
-the set of possible exception types that might be thrown by that expression than an unassociated rethrow
-expression.
+the set of possible exception types that might be thrown by that expression than a rethrow expression that
+is unassociated with a handler.
 
 We can compute the set of exception types that might be thrown by such a rethrow exception
 based on the set of exception-types that may propagate out of the try-block and based on the exception
@@ -2650,8 +2903,10 @@ In this case, there is the question of what the set of potentially-thrown except
 a rethrow expression that is associated with such an unreachable handler.
 
 As the handler itself is statically determined to be unreachable, the body of the handler's compound-statement does
-not contribute to the overall set of potentially-thrown exception types of the try-block,  so we might say
-"it doesn't matter". However, if we consider the ability to query the set of potentially-thrown exception types
+not contribute to the overall set of potentially-thrown exception types of the try-block, so we might say
+"it doesn't matter".
+
+However, if we consider the ability to query the set of potentially-thrown exception types
 using ~declthrow()~ then a program might want to query within the context of the handler, what types might
 be thrown by a rethrow expression. i.e. ~declthrow(throw)...~.
 
@@ -2684,7 +2939,7 @@ For example:
 #+end_src
 
 Note that here we need to repeat the essential parts of the body of the try-block in a
-constexpr if condition noexcept clause to determine whether or not the catch(...) block
+constexpr if condition noexcept clause to determine whether or not the ~catch(...)~ block
 was reachable. And while, for this example, the body only has one such expression, it
 is relatively easy to conceive of try-block logic that could be much more involved.
 
@@ -2708,7 +2963,7 @@ For example:
       // any errors possible.
       //
       // declthrow(throw)... will produce the empty pack if the try-block body
-      // cannot emit an exception.
+      // is not potentially-throwing.
       if constexpr (sizeof...(declthrow(throw)...) != 0) {
         std::execution::set_error(this->get_receiver(), std::current_exception());
       }
@@ -2716,6 +2971,33 @@ For example:
   }
 #+end_src
 
+Another design direction that could be taken here is to allow writing the catch-all handler
+as a template catch that is instantiated with an exception declaration of ~std::exception_ptr~.
+This could build upon the alternative suggested earlier for using ~std::exception_ptr~ in place
+of ~std::any_exception~ for indicating the set of potenially-thrown exception types for a
+call to a function with a dynamic exception specification.
+
+If the body of the try-block had a set of potentially-thrown exception types that was empty
+then the ~template catch~ handler would not be instantiated.
+
+For example:
+#+begin_src c++
+  template<typename... Args>
+  void then_receiver::set_value(Args&&... args) noexcept {
+    try {
+      if constexpr (std::is_void_v<decltype(this->func(std::forward<Args>(args)...)>) {
+	this->func(std::forward<Args>(args)...);
+	std::execution::set_value(this->get_receiver());
+      } else {
+	std::execution::set_value(this->get_receiver(), this->func(std::forward<Args>(args)...));
+      }
+    } template catch (auto error) {
+      // Catch-block is only instantiated if there are any exceptions that might be thrown from code in the try-block.
+      // If an exception is thrown by a 'throw(...)' function then 'error' will have type 'std::exception_ptr'.
+      std::execution::set_error(this->get_receiver(), std::move(error));
+    }
+  }
+#+end_src
 
 ****** Rethrow expression rules
 
@@ -2870,11 +3152,12 @@ Example 9: template handler, single type
 
 Example 10: template handler, multiple types
 #+begin_src c++
-  try {
-    throws<A, B, C, D>();
-  } template catch (auto e) { // Instantiated for following types { D, B, C, A } - handlers for derived types before handlers for base types
-    throw; // declthrow -> { decltype(e) }
-  }
+   try {
+     throws<A, B, C, D>();
+   } template catch (auto e) { // Instantiated for following types { D, B, C, A }
+                               // handlers for derived types before handlers for base types
+     throw; // declthrow -> { decltype(e) }
+   }
 #+end_src
 
 Example 11: template handler + non-template handler
@@ -2930,23 +3213,69 @@ The handler for A matches A and D and potentially also an unbounded set of other
 
 The final handler matches an unbounded set of types not derived from A.
 
+**** /await-expression/
+
+An expression of the form ~co_await /expression/~ has a set of potentially-thrown exception
+types equal to union of the sets of potentially-thrown exception types of each of the
+sub-expressions that the /await-expression/ de-composes into.
+
+Including:
+- The operand /expression/
+- The call to ~p.await_transform(expr)~, if applicable.
+- The call to member or non-member ~operator co_await~, if applicable.
+- The calls to ~await_ready()~, ~await_suspend()~ and ~await_resume()~.
+- A call to the destructors of any temporary objects created as a result of one of the above sub-expressions
+
+Note that if one of the sub-expressions is an /interrupted-flow expression/ then we still consider the
+set of potentially-thrown exception types of subsequently evaluated sub-expressions even though they
+may be unreachable. If we want to consider ignoring unreachable sub-expressions then this should be
+applied more generally across all expression evaluation.
+
 **** /yield-expression/
 
-
+A ~co_yield /assignment-expression/~ or ~co_yield /braced-init-list/~ expression has a
+set of potentially-thrown exception types equal to the union of the sets of the potentially
+thrown exception types of the expression ~co_await promise.yield_value(expr)~, where
+~promise~ is an lvalue reference that refers to the current coroutine's promise object.
 
 **** ~dynamic_cast~
 
-TODO: Expand on this.
+Basically, any ~dynamic_cast~ expression to reference-type that could fail the runtime
+check has a set of potentially-thrown exception types equal to the set { ~std::bad_cast~ }.
 
-Basically, any ~dynamic_cast~ expression to reference-type that could fail has
-a set of potentially thrown exception types equal to the set { ~std::bad_cast~ }.
+A ~dynamic_cast~ expression that is a cast to pointer-type or that was a cast to a reference
+type that would not fail (e.g. because it was a cast to an unambiguous base-class of the operand's class type)
+has an empty set of potentially-throw exception types.
 
-A ~dynamic_cast~ expression that is a cast to pointer-type or that would not fail
-(e.g. because it was a cast to an pointer to an unambiguous base-class of the operand).
+Note that the wording of ~dynamic_cast~ currently permits implementations to throw some type
+that would match a handler of type ~std::bad_cast~. This change would require that the exception
+thrown was exactly the type ~std::bad_cast~.
 
 **** ~typeid~
 
-TODO: Describe the kinds of typeid() expressions that might result in an exception.
+A ~typeid(/type-id/)~ expression has an empty set of potentially-thrown exception types.
+
+A ~typeid(/expression/)~ expression has a set of potentially-thrown exception types equal
+to { ~std::bad_typeid~ }. This exception may be thrown if the operand of the ~typeid~
+expression is the result of dereferencing a null pointer of non-cv type.
+
+
+While this behaviour matches the current specification of ~typeid~ expressions, supporting
+the ability to ask for the type of a dereferenced null pointer seems to be of questionable
+value. The wording for the builtin unary ~*~ operator in [expr.unary.op] says that the behaviour
+of performing an indirection on a pointer that does not point to a function or object is
+undefined /except as specified in [expr.typeid]/.
+
+So, literally the only thing you can do with an lvalue produced by dereferencing a null pointer
+is pass it to a ~typeid~ expression.
+
+It may be worth exploring whether we can either deprecate/remove this behaviour from ~typeid~
+(which would be a breaking change) or whether we can add a new form of ~typeid(/expression/)~
+that has a precondition that the /expression/ does result in an glvalue that refers to an
+object or function. i.e. passing a dereferenced null pointer is undefined-behaviour.
+
+This would allow the set of potentially-thrown exception types for a ~typeid~ expression
+to be empty.
 
 **** Name expressions
 
@@ -2963,13 +3292,6 @@ These expressions have an empty set of potentially thrown exception types.
 The set of potentially-thrown exception types of a lambda expression are
 the union of the set of potentially thrown exception types of the initializers
 of the lambda captures.
-
-*** Ill-formedness of a function definition
-
-TODO: Talk about functions being ill-formed if any exception may escape the function that
-is not listed in the exception-specification.
-
-**** 
 
 ** Template catch blocks
 
@@ -3098,18 +3420,6 @@ more efficiently/store them in variants, etc.
 
 
 
-** Code Evolution
-
-TODO:
-- How do we evolve a function to add new exception types?
-- How do we evolve a function to remove exception types from throw-specification?
-- What about changing from dynamic to static?
-- Or from static to dynamic?
-
-
-** Interaction with Pattern Matching
-
-TODO: Look into what this might look like.
 
 ** Avoiding overhead implied by ~std::current_exception()~ and ~throw;~
 
@@ -3516,15 +3826,9 @@ and only has
 
 *** Interaction with std::uncaught_exceptions()
 
-* Background
+* Prior Work
 
-** Prior Work
-
-*** Midori
-
-TODO: Read up about Midori error-handling experiements.
-
-*** Throw specifications and noexcept
+** Throw specifications and noexcept
 
 - [[https://wg21.link/N2855][N2855]] - Rvalue References and Exception Safety (2009)
   - Discusses the problem with move-constructors and providing strong exception-safe guarantee,
@@ -3619,8 +3923,12 @@ TODO: Read up about Midori error-handling experiements.
 - P0003R5   Removing Deprecated Exception Specifications from C++17 (2016)
 
 
+** Midori
 
-*** Deducing exception specifications
+TODO: Read up about Midori error-handling experiements.
+
+
+** Deducing exception specifications
 :PROPERTIES:
 :ID:       02f589c7-b738-439d-a886-ed5ccdf08a72
 :END:
@@ -3771,7 +4079,7 @@ TODO: Read up about Midori error-handling experiements.
     for SFINAE cases.
     - Seems like there still would have been value in adding this.
 
-*** Faster Exceptions
+** Faster Exceptions
 
 - N4049 - 0-overhead-principle violations in exception handling (2014)
 - N4234 - 0-overhead-principle violations in exception handling - part 2 (2014)
@@ -3820,18 +4128,18 @@ TODO: Read up about Midori error-handling experiements.
     instead of ~std::error~.
 
 
-*** Freestanding
+** Freestanding
 
 
-*** Alternative Error-handling mechanisms
+** Alternative Error-handling mechanisms
 
-**** std::expected
+*** std::expected
 
 - N4015 - A proposal to add a utility class to represent expected monad (2014)
 - N4109 - A proposal to add a utility class to represent expected monad - Revision 1 (2014)
 
 
-**** std::variant
+*** std::variant
 
 - N4450 - Variant: a typesafe union (v2) 
 - N4542 - Variant: a type-safe union (v4) (2015)
@@ -3844,10 +4152,28 @@ TODO: Read up about Midori error-handling experiements.
 - P0088R2           Variant: a type-safe union for C++17 (v7) (2016)
 - P0095R0   The case for a language based variant
   
-**** std::optional
+*** std::optional
 
 
-** Paper notes
+* Design Discussion
+** Code Evolution
+
+TODO:
+- How do we evolve a function to add new exception types?
+- How do we evolve a function to remove exception types from throw-specification?
+- What about changing from dynamic to static?
+- Or from static to dynamic?
+
+
+** TODO Explore Interaction with Pattern Matching
+
+* Implementation Strategies
+
+* References
+
+TODO:
+
+* Paper notes
 
 
 - Previous papers relating to exceptions
