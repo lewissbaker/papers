@@ -3494,6 +3494,16 @@ Example 3
   };
 #+end_src
 
+It is worth noting here that virtual function overrides are only permitted to throw
+a subset of the set of types listed in the throw-specification of the base class declaration.
+They are not permitted to throw types not listed in the throw-specification that are derived
+from the types listed in the base class declaration.
+
+Virtual functions that want to allow overrides to throw types not listed in the
+base class function's throw-specification should declare the base-class virtual
+function with the ~noexcept(false)~ or ~throw(...)~ specifier to indicate that
+a dynamic exception type may be thrown.
+
 *** ABI of virtual functions with differing exception specifications
 
 While the language semantics described above are a natural extension of the current rules around
@@ -3570,24 +3580,120 @@ to a function-pointer with a different exception-specification, described in
 
 ** Concepts
 
-*************** TODO Describe extension of requires clauses to allow checking the throw-specification of an expression.
-*************** END
+A ~requires~ expression allows checking that certain expressions are ~noexcept~.
 
-For example, something like:
+For example:
 #+begin_src c++
-
-  template<typename T>
-  concept Foo = requires(const T& x) {
-    { x.foo() } throw(A, B) -> std::same_as<int>;
-  };
+  template<typename T, typename U>
+  concept nothrow_assignable_from =
+    requires(T t, U u) {
+      { static_cast<T&&>(t) = static_cast<U&&>(u) } noexcept;
+    };
 #+end_src
 
-In this case, the concept passes only if the ~declthrow(x.foo())...~ expression evaluates to
-a subset of the types listed in the throw specification.
+This concept checking that the assignment expression is valid and that the set
+of potentially thrown exceptions for the expression is the empty set.
 
-Q. Should the ~throw(A,B)~ detect that the exception specification is exactly one of ~throw()~, ~throw(A)~, ~throw(B)~ or ~throw(A,B)~?
-Or should it allow throwing exceptions that derive from ~A~ and ~B~.
-i.e. such that if I call it inside a try/catch block with handlers for ~catch (A)~ and ~catch (B)~ then that's ok?
+It is equivalent to the following, only without the repetition of expressions:
+#+begin_src c++
+  template<typename T, typename U>
+  concept nothrow_assignable_from =
+    requires(T t, U u) {
+      static_cast<T&&>(t) = static_cast<U&&>(u);
+    } &&
+    noexcept(std::declval<T&&>() = static_cast<U&&>(u));
+#+end_src
+
+If we are to introduce static exception specifications then it seems reasonable to
+also want to extend the requires-expression syntax with the ability to check that
+the set of potentially-thrown exceptions from an expression satisfies some requirement.
+
+For example, say we wanted to check that a given member-function-call could only throw ~std::bad_alloc~,
+we we could allow the user to write something like:
+#+begin_src c++
+  template<typename T>
+  concept foo_factory =
+    requires(T& obj) {
+      { obj.make_foo() } throw(std::bad_alloc) -> foo_concept;
+    };
+#+end_src
+
+However, from this syntax it's not clear exactly what the semantics of such a check should be.
+It could be:
+- Check that the set of potentially-thrown exceptions is a subset of the listed types.
+  e.g. because it needs to be callable from a function with a ~throw(std::bad_alloc)~ specifier.
+- Check that the set of potentially-thrown exceptions would be caught by a handler whose
+  exception-declaration is ~std::bad_alloc~.
+  e.g. because the expression needs to be callable from within a ~noexcept~ function but is
+  surrounded by a try/catch that catches and handles ~std::bad_alloc~.
+
+This confusion/ambiguity is similar to the one that was raised during the design of contracts
+for C++20 - is a ~{ expr } -> T;~ clause in a requires-expression checking that the expression
+results in exactly type ~T~, or is it checking that the expression is convertible to type ~T~?
+
+The approach taken to resolve this was to require that you specify a concept that the result of
+the expresion needs to match. This forces the user to be explicit about intent.
+i.e. either write ~std::same_as<T>~ or ~std::convertible_to<T>~.
+
+Thus this paper proposes taking a similar approach.
+i.e. to extend the /compound-requirement/ as follows:
+
+#+begin_src text
+  /compound-requirement/:
+     { /expression/ } /exception-requirement[opt]/ /return-type-requirement[opt]/ ;
+
+  /exception-requirement/:
+     noexcept
+     /throw-requirement/
+
+  /throw-requirement/:
+     throw ( /type-constraint/ )
+#+end_src
+
+The propsed semantics of providing a /throw-requirement/ as part of a /compound-requirement/ are as follows.
+
+The set of potentially-thrown exceptions is computed by applying ~declthrow()~ query to the expression.
+
+The requirement is satisfied if, for each type produced in the expanded pack produced by the ~declthrow()~
+query, the type satisfies the specified /type-constraint/.
+
+i.e. If the /throw-requirement/ was ~throw(C)~, then the requirement is satisfied if ~(C<declthrow(expr)> && ...)~ is ~true~.
+
+If we wanted the above example to mean "Any exceptions caught by a handler for type ~std::bad_alloc~"
+then we could write the concept as follows:
+#+begin_src c++
+  template<typename T>
+  concept foo_factory = 
+    requires(T& obj) {
+      { obj.make_foo() } throw(std::derived_from<std::bad_alloc>) -> foo_concept;
+#+end_src
+
+Or, if you want to check that the only exception thrown (if any) is exactly ~std::bad_alloc~ then
+replace the use of ~std::derived_from~ with ~std::same_as~.
+
+To handle the case where you want the expression to be one of a set of types,
+e.g. because the expression is called from a function that is only allowed to
+emit those exception types, you can use the ~one_of~ concept helper.
+#+begin_src c++
+  template<typename T, typename... Ts>
+  concept one_of = (std::same_as<T, Ts> || ...);
+
+  template<typename T>
+  concept foo_factory =
+    requires(T& obj) {
+      { obj.make_foo() } throw(std::one_of<A, B, C>) -> foo_concept;
+    };
+
+  void usage(foo_factory auto& factory) throw(A, B, C) {
+    auto foo = factory.make_foo();
+    // ...
+  }
+#+end_src
+
+It is expected this should cover most scenarios that users will want to write.
+
+For other scenarios, expressions involving direct use of ~declthrow()~ queries can be used
+to form more complicated type-constraints.
 
 ** Coroutines
 
