@@ -3693,14 +3693,201 @@ emit those exception types, you can use the ~one_of~ concept helper.
 It is expected this should cover most scenarios that users will want to write.
 
 For other scenarios, expressions involving direct use of ~declthrow()~ queries can be used
-to form more complicated type-constraints.
+to for more complicated type-constraints.
 
 ** Coroutines
 
-*************** TODO Specify how to extend unhandled_exception() to handle static exception types
-Can we extend ~promise.unhandled_exception()~ to allow passing the concrete error types that
-propagate out of the coroutine as arguments to allow them to process the error values
-more efficiently/store them in variants, etc.
+Coroutines have several areas that require updates to support static exception specifications:
+- Extensions to ~unhandled_exception()~ function of a coroutine's promise-type to allow handling
+  static exception objects.
+- Rules for computing the exception specification of a coroutine with a deduced throw specificiation
+
+The rules for computing the set of potentially thrown exceptions for ~co_return~ statements and
+~co_await~ and ~co_yield~ expressions are already described above.
+
+*** Coroutine promise object handling for static exception objects
+
+The current behaviour of a coroutine with a given /function-body/ is specified to be as if the /function-body/ were replaced by:
+#+begin_src c++
+  {
+    /promise-type/ promise /promise-constructor-arguments/ ;
+    try {
+      co_await promise.initial_suspend();
+      /function-body/
+    } catch (...) {
+      if (!initial-await-resume-called)
+	throw;
+      promise.unhandled_exception();
+    }
+  final_suspend:
+    co_await promise.final_suspend();
+  }
+#+end_src
+
+The only way that the ~promise.unhandled_exception()~ object can observe the current exception object
+is by either performing a dynamic rethrow expression, ~throw;~, or by calling ~std::current_exception()~.
+This would force any static exception object to be copied to a dynamic exception object, which negates
+the benefit of static exceptions.
+
+Also, we may want to define a coroutine promise type such that the coroutine body itself cannot throw
+types other than a specified set of potentially-thrown exception types.
+
+To support these use-cases, we can modify the above translation as follows:
+#+begin_src c++
+  {
+    /promise-type/ promise /promise-constructor-arguments/ ;
+    try {
+      co_await promise.initial_suspend();
+      /function-body/
+    } template catch (auto& ex) {
+      // Static exception objects caught here
+      if (!initial-await-resume-called)
+	throw;
+
+      if constexpr (can_handle_exception</promise-type/, decltype(ex)>) {
+	promise.unhandled_exception(ex);
+      } else if (can_handle_exception</promise-type/, std::exception_ptr>) {
+	promise.unhandled_exception(std::make_exception_ptr(std::move(ex)));
+      } else {
+	promise.unhandled_exception();
+      }
+    } catch (...) {
+      // Dynamic exception objects caught here
+      if (!initial-await-resume-called)
+	throw;
+
+      constexpr bool is_handler_reachable = sizeof...(declthrow(throw)) > 0;
+      if constexpr (is_handler_reachable) {
+	if constexpr (can_handle_exception</promise-type/, std::exception_ptr>) {
+	  promise.unhandled_exception(std::current_exception());
+	} else {
+	  promise.unhandled_exception();
+	}
+      }
+    }
+  final_suspend:
+    co_await promise.final_suspend();
+  }
+#+end_src
+
+Where the following exposition-only concept is defined:
+#+begin_src c++
+  template<typename P, typename E>
+  concept can_handle_exception =
+    requires(P& promise, E& ex) {
+      p.unhandled_exception(ex);
+    };
+#+end_src
+
+
+If a thrown static exception object, ~ex~, escapes the body of the coroutine then the exception is caught
+and one of the following expressions is evaluated, tried in-order;
+  - Call ~promise.unhandled_exception(ex)~, if that expression is valid; otherwise
+  - Call ~promise.unhandled_exception(std::current_exception())~, if that expression is valid; otherwise
+  - Call ~promise.unhandled_exception()~ if that expression is valid; otherwise
+  - The program is ill-formed
+If a thrown dynamic exception object escapes the body of the coroutine then the exception is caught
+and one of the following expressions is evaluated, tried in-order;
+  - Call ~promise.unhandled_exception(std::current_exception())~, if that expression is valid; otherwise
+  - Call ~promise.unhandled_exception()~, if that expression is valid; otherwise
+  - The program is ill-formed
+
+Some key points to note here:
+- The ~unhandled_exception()~ method can now optionally take a parameter that accepts an
+  lvalue-reference to the static exception object
+  - It is a non-const reference to allow the implementation to move/mutate the exception object
+    if desired.
+- The ~unhandled_exception()~ method can also optionally take a parameter of type ~std::exception_ptr~
+  to refer to the current exception.
+  - This can be potentially more efficient on some platforms than having the ~unhandled_exception()~
+    method call ~std::current_exception()~ since, in the case of a static exception object being thrown,
+    it has a reference to the exception object already and so doesn't necessarily have to access the
+    thread-local values inside ~std::current_exception()~.
+  - It also allows some freestanding implementations that do not support thread-locals and thus do not
+    support ~std::current_exception()~ to still allow type-erasing exception objects in a ~std::exception_ptr~.
+- We only try to form a call to ~promise.unhandled_exception()~ if the handler is potentially-reachable.
+  i.e. if either the ~await_resume()~ method on the initial-suspend awaiter object is potentially-throwing
+  or if the /function-body/ of the coroutine is potentially-throwing.
+  - This differs from C++20 which always requires that a promise type has an ~unhandled_exception()~ object.
+  - This also means that a coroutine promise-type that does not define any ~unhandled_exception()~
+    member function can still be used as long as the set of potentially-thrown exceptions from the function-body
+    is the empty set.
+
+Together, these changes will allow a coroutine promise type to store and/or inspect an exception object without
+having to first dynamically rethrow the exception, or if [[https://wg21.link/P2927][P2927]] is adopted, have to allocate a dynamic exception
+object and call ~try_cast<T>()~ to check if it has type
+
+For example, say we wanted to write a coroutine type that only permitted exceptions of type ~A~ and ~B~
+to exit the coroutine body, we could define it to have a promise-type that had the following
+~unhandled_exception()~ member-function.
+
+#+begin_src c++
+  struct my_promise_type {
+
+    // ... rest of promise type omitted for brevity
+
+    void unhandled_exception(one_of<A, B> auto& ex) throw() {
+      constexpr std::size_t index = std::same_as<decltype(ex), A&> ? 2 : 3;
+      result.emplace<index>(std::move(ex));
+    }
+
+    std::variant<std::monostate, value_type, A, B> result;
+  };
+#+end_src
+
+If any other exception than ~A~ or ~B~ escapes the function body then the compiler will fail to
+find a suitable overload for a call to ~promise.unhandled_exception()~ and will be considered ill-formed.
+This allows the author of a coroutine type to mimic the equivalent throw-specification checking that
+normal functions with a ~throw(A, B)~ specfication does.
+
+This will allow async coroutines to efficiently propagate static-exception objects through chains of
+coroutines without needing to invoke any of the dynamic exception machinery of the C++ runtime.
+
+*** Computing the exception specification of a coroutine with a deduced throw specification
+
+When a coroutine is invoked, the call to the coroutine does not necessarily invoke the entire body
+of the coroutine. The coroutine may suspend at the initial-suspend point and then return immediately.
+
+Also, once the execution of the coroutine reaches a certain point during the execution of the initial-suspend
+expression, any exceptions that exit the coroutine body from that point are caught and directed to the
+promise object's ~unhandled_exception()~ member-function, as described in the previous section.
+
+This means that the set of potentially-thrown exceptions of the initial call to the coroutine is
+different from the set of potentially-thrown exceptions of the coroutine function-body that the
+user writes.
+
+This section defines the steps for computing the deduced throw specification of a coroutine
+that accurately matches the set of potentially-thrown exception types of the initial invocation
+of a coroutine.
+
+The steps involved in the initial call to a coroutine are:
+- allocating the coroutine frame, calling ~promise_type::operator new()~ if present and viable, otherwise
+  calls global ~operator new~.
+- copying/moving parameters of the function to the coroutine-frame
+- constructing the promise object, optionally passing lvalues of the parameter copies to the promise constructor
+- calling ~promise.get_return_object()~
+- calling ~promise.initial_suspend()~
+- calling ~operator co_await()~ on the returned object, if one is defined
+- calling ~await_ready()~ on the awaiter
+- calling ~await_suspend()~ on the awaiter
+
+
+*************** TODO Finish describing how to compute the set of potentially-thrown exceptions for a coroutine with deduced throw specification
+*************** END
+
+** Freestanding
+
+*************** TODO Describe which aspects of exceptions could be used in freestanding.
+Allowed:
+- static throw expression
+- static rethrow expression
+- template catch
+Disallowed:
+- dynamic throw expression
+- dynamic rethrow expression
+- exception_ptr
+- uncaught_exceptions()
+- current_exception()
 *************** END
 
 * Prior Work
@@ -4138,6 +4325,7 @@ It does not involve or require any reasoning about whether or not conditions are
 
 There are a couple of decisions that were made in the design described in this paper which should
 be considered 
+
 
 
 ** Avoid dependencies on thread-locals
