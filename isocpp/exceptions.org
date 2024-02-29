@@ -31,53 +31,166 @@ These features include:
 - Add a new ~declthrow()~ syntax for querying the set of exceptions that an expression
   may exit with.
 - Add a ~template catch~ syntax to allow writing exception handlers that are templates
-  which are instantiated based on the set of exceptions that may be thrown from the
+  which are instantiated based on the set of exception types that may be thrown from the
   associated try-block.
 - Enable static checking of exception specifications for function definitions with
   a static ~throw()~ specifier to ensure that they can not exit with exceptions not listed
-  in their throw specification. Functions definitions with ~throw(auto)~, ~throw(...)~
-  or a noexcept specifier are not checked, even if they call functions with static
+  in their throw specification. Functions definitions with a ~throw(auto)~, ~throw(...)~
+  or ~noexcept~ specifier are not checked, even if they call functions with static
   exception specifications.
 
-The goal is to eliminate the performance-related reasons for not using exceptions
-in embedded and other performance critical code, and also to make it possible to
-identify at compile-time, code that is failing to handle some exception-types
-that might be thrown.
+This paper has the following main goals:
+1. Eliminate the performance-related reasons for not using exceptions
+   in embedded and other performance critical code.
+2. Enable the use of exception-based error handling in freestanding environments
+   by enabling 
+3. Eliminate classes of bugs Make it possible to identify at compile-time, code that is failing to
+   handle some exception-types that might be thrown.
 
 This proposal is still in the early stages and is being published to solicit feedback
 on direction and also on potential interaction with other in-flight papers, such
-as contracts and discussions around ~noexcept~ policy.
+as contracts and discussions around ~noexcept~ policy in the standard library.
+
+* Synopsis
+
+Example 1: Explicit throw specifications
+#+begin_src c++
+void f() throw();     // empty static exception specification - equivalent to noexcept
+void g() throw(A, B); // static exception specification
+void h() throw(...);  // dynamic exception specification - equivalent to noexcept(false)
+#+end_src
+
+Example 2: Deduced throw specifications
+#+begin_src c++
+template<std::ranges::range R,
+        std::invocable<std::ranges::range_reference_t<R>> F>
+void for_each(R rng, F func) throw(auto) {
+  for (auto&& x : rng) {
+    func(static_cast<decltype(x)>(x);
+  }
+}
+#+end_src
+
+Example 3: Querying the potentially-thrown exception types + template catch
+#+begin_src c++f
+std::variant<std::monostate, declthrow(g())...> err; // variant<monostate, A, B>
+try {
+  g(); // might throw A or B
+} template catch (auto e) { // instantiated for each static exception type
+  err.template emplace<decltype(e)>(std::move(e));
+}
+#+end_src
+
+Example 4: Checked exception specifications - ~throw()~
+#+begin_src c++
+void nothrow_caller() throw() {
+  f(); // OK
+  g(); // Error: A and B not handled locally and not listed in throw specification
+  
+  try {
+    g(); // Error: B not handled locally and not listed in throw specification
+  } catch (A) {}
+  
+  try {
+    g(); // OK: all potentially-thrown exceptions are handled locally
+  } catch (A) {
+  } catch (B) {
+  }
+  
+  h(); // Error: dynamic exception not handled locally
+  
+  try {
+    h(); // OK
+  } catch(...) {
+  }
+}
+#+end_src
+
+Example 5: Checked exception specifications - ~throw(Ts...)~
+#+begin_src c++
+void caller() throw(A) {
+  f(); // OK
+  g(); // Error: B not handled locally and not listed in throw specification
+  
+  try {
+    g(); // OK
+  } catch (B) {
+  }
+  
+  h(); // Error: dynamic exception not handled locally
+  
+  try {
+    h(); // OK
+  } catch(const A&) {
+    throw; // Error: Might rethrow type derived from A (unless A is final)
+  } catch(...) {
+  }
+  
+  try {
+    h(); // OK
+  } catch(const A& a) {
+    throw A{a}; // OK - only throws A - slices types derived from A
+  } catch(...) {
+  }
+}
+#+end_src
+
+Example 6: Simplifies std::expected/std::variant code
+#+begin_src c++
+std::expected<X, E1> foo() noexcept;
+std::expected<Y, E2> bar() noexcept;
+
+std::expected<Z, std::variant<E1, E2>> baz() noexcept {
+  auto x = foo();
+  if (!x) return {std::unexpect, std::move(x).error() };
+  
+  auto y = bar();
+  if (!x) return {std::unexpect, std::move(y).error() };
+  
+  return {std::in_place, std::move(x).value(), std::move(y).value());
+}
+
+// or with ?? error-propagation operator from P2561
+std::expected<Z, std::variant<E1, E2>> baz_p2561() {
+  return {std::in_place, x??, y??};
+}
+
+void consumer() noexcept {
+  auto result = baz();
+  if (!result) {
+    std::visit(overload(
+      [&](E1& e) { /* handle E1 */ },
+      [&](E2& e) { /* handle E2 */ }),
+      result.error());
+    return;
+  }
+  
+  Z& z = result.value();
+  // use z
+}
+#+end_src
+can instead be written using exceptions, with equivalent or better performance:
+#+begin_src
+X foo() throw(E1);
+Y bar() throw(E2);
+
+Z baz() throw(E1, E2) {
+  return Z{foo(), bar()}; // aggregate initialization
+}
+
+void consumer() throw() {
+  try {
+    Z z = baz();
+    // use z
+  }
+  catch (E1& e) { /* handle E1 */ }
+  catch (E2& e) { /* handle E2 */ }
+}
+#+end_src
 
 * Overview
 
-Exceptions are the C++ language's primary tool for communicating errors to callers.
-However, the dynamic exceptions we have today come with runtime overheads that
-cause many people to avoid using, or even completely disable exceptions in domains
-that are performance-sensitive.
-
-This leads to a variety of alternative error-signalling patterns being used in
-code-bases, including ~std::error_code~ out-parameters, or ~std::optional~,
-~std::variant~ and ~std::expected~ return-types. These alternatives have their
-limitations, however. For example, they are difficult or, in some cases impossible,
-to apply to some kinds of functions, such as constructors or overloaded operators,
-where we either cannot change the return return-type, or cannot add additional
-out-parameters.
-
-Exceptions can also be problematic in embedded or safety-critical contexts, where
-the use of ~noexcept~ in conjunction with exceptions can potentially result in the
-compiler inserting hidden calls to ~std::terminate()~ if the program fails to
-handle an exception that was not expected.
-Such hidden calls to ~std::terminate()~ might only be discovered as reachable
-at runtime, and can be difficult to audit in a code-base.
-
-Calls to ~std::terminate()~ are prohibited by some coding guidelines for
-safety-critical systems as the program generally needs to do something active to
-enter a safe-state before exiting or restarting.
-
-Both of these problems with exceptions can be somewhat traced back to the dynamic
-nature of C++ exceptions.
-
-This paper proposes introducing static exception specifications, repurposing the
+This paper proposes introducing /static exception specifications/, repurposing the
 ~throw()~ specification syntax which was removed in C++17, to provide additional
 type-information about the closed-set of possible exception types that might be
 thrown from a function, while trying to avoid the shortcomings of the previous
@@ -107,7 +220,9 @@ in much the same way that code-bases could incrementally adopt ~noexcept~
 specifiers in their code-base when they were introduced.
 
 This proposal aims to enable use of static exception specifications in freestanding
-environments which were traditionally unable to use exceptions. The ability to enable
+environments which were traditionally unable to use exceptions.
+
+The ability to enable
 compile-time checking that all exceptions are handled and that there are no hidden
 calls to ~std::terminate()~ inserted by the compiler due to unhandled exceptions
 also removes some barriers to C++ exceptions being used in embedded environments
