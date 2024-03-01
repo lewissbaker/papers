@@ -295,8 +295,6 @@ This paper is structured into the following sections:
   - Real-time systems such as games
 - Enables ability to check that all exceptions thrown are handled and that
   there are no unhandled exceptions 
-    
-- 
 *************** END
 
 The paper [[https://wg21.link/P0709][P0709]] by Herb Sutter contains detailed motivation for improving exceptions,
@@ -3478,14 +3476,19 @@ The set of potentially-thrown exception types of a lambda expression are
 the union of the set of potentially thrown exception types of the initializers
 of the lambda captures.
 
-** Template catch blocks
+** Template handlers
 
-Add ~template catch (auto e)~ syntax to allow deducing the static type of an exception.
-The catch-block is instantiated for every statically-known set of possible exception types
-not already caught by preceding catch-blocks.
+Template handlers are the static-exception equivalent of a ~catch(...)~.
 
-TODO: Describe this in more detail.
+They allow a generic handler to be written that can be instantiated to handle any
+number of exception types statically. The compiler instantiates the handler based
+on the set of potentially-thrown exception types computed for the body of the
+corresponding ~try~ block which were not caught by any preceding handlers.
 
+The short-hand syntax allows the user to prefix the ~catch~ keyword with the
+~template~ keyword and then use a /placeholder-type-specifier/ as the /exception-declaration/.
+
+For example:
 #+begin_src c++
   void do_something() throw(A, B, C);
 
@@ -3497,31 +3500,68 @@ TODO: Describe this in more detail.
   }
 #+end_src
 
-or the more general syntax
+The ~template~ keyword is technically redundant in this case as we could deduce that the handler
+is a template from the use of a /placeholder-type-specifier/. However, the use of the keyword
+~template~ here can also serve as an indication in code that something a bit different is going
+on.
 
+The requirement for the ~template~ keyword could potentially be dropped in this case if desired
+to match consistency with the syntax for function declarations.
+
+The short-hand syntax also allows a trailing /requires-clause/ to be added after the /exception-declaration/
+to allow introducing type-constraints on the instantiation of the template handler.
+
+For example:
 #+begin_src c++
-    try {
-      do_something();
-     }
-     template<typename T>
-     catch (T e) {
-       //... do something with 'e'
-     }
+  void do_something() throw(A, B, C);
 
-    template<typename Inner>
-    struct MyException : std::exception {
-      Inner inner;
-    };
-
-    try {
-      do_something();
-    }
-    template<std::derived_from<std::exception> Inner>
-    catch (MyException<T> err) {
-      LOG("Failed with MyException because: {}", err.inner.what());
-    }
+  try {
+    do_something();
+  } template catch (auto e) requires std::derived_from<decltype(e), std::exception> {
+    // catch block only instantiated for types that inherit from ~std::exception~.
+    LOG("error: %s", ex.what());
+  } template catch (auto e) {
+    // handle types not inherited from std::exception
+  }
 #+end_src
 
+The more general syntax for a template catch-block allows the use of a /template-head/ before the
+~catch~ keyword and then refer to to a dependent type that allows any template parameters declared
+in the /template-head/ to be deduced from the type of the exception.
+
+For example: Alternative to ~template catch (auto e)~ using the /template-head/ syntax
+#+begin_src c++
+  try {
+    do_something();
+   }
+   template<typename T>
+   catch (T e) {
+     //... do something with 'e'
+  }
+#+end_src
+
+For example: Using constraints and deduced template arguments for a class template
+#+begin_src c++
+  template<typename Inner>
+  struct MyException : std::exception {
+    const char* what() noexcept override { return "MyException"; }
+    Inner inner;
+  };
+
+  try {
+    do_something();
+  }
+  template<std::derived_from<std::exception> Inner>
+  requires (!std::derived_from<Inner, std::runtime_exception>)
+  catch (MyException<Inner> err) {
+    LOG("Failed with MyException because: {}", err.inner.what());
+  }
+#+end_src
+
+Template handlers can also then be used with ~if constexpr~ to handle
+a given exception based on static properties of the exception type.
+
+For example:
 #+begin_src c++
   template<typename T, typename Inner>
   struct NestedException : public T {
@@ -3534,39 +3574,90 @@ or the more general syntax
   constexpr bool is_nested_v<NestedException<T, Inner>> = true;
 
   void foo() throw(FooError,
-                   NestedException<FooError, std::bad_alloc>,
-                   NestedException<FooError, std::system_error>);
+		   NestedException<FooError, std::bad_alloc>,
+		   NestedException<FooError, std::system_error>);
 
   try {
     foo();
   } template catch (std::derived_from<FooError> auto err) {
     // generic FooError handling
     if constexpr (is_nested_v<decltype(err)>) {
-      if (err
+      std::print("error: Failed with FooError because {}", err.inner);
+    } else {
+      std::print("error: Failed with FooError");
     }
   }
 #+end_src
 
+*** Template argument deduction
 
-- Edge-cases to consider
-  - Deduced return-types - order of instantiation of catch-block templates
-    may affect the return-type-deduction, which is specified to deduce to
-    based on the lexically first ~return~ statement in the function body.
-    But what if we have:
-    #+begin_src c++
-      decltype(auto) foo() throw(int, long);
+When the compiler is trying to determine which handler, if any, will match
+a static exception object thrown from the body of a /try-block/, it proceeds
+to try each handler in order. If a handler matches the exception type then
+the compiler stops searching and does not look at any subsequent handlers.
 
-      decltype(auto) bar() {
-        try {
-          foo();
-        }
-        template catch (auto err) {
-          return err;
-        }
-      }
-    #+end_src
+If, during the search for a matching handler, the compiler encounters a template
+handler, then the compiler performs the following to determine whether the
+handler is a match:
+- Attempts to deduce template arguments of the template handler by treating
+  the handler as if it were a function template with a single argument and
+  then forming a call to that function-template, passing a single argument
+  which is a non-const lvalue reference to the static exception object.
+  However, this is done with the restriction that the only conversions allowed
+  are implicit conversion to an unambiguous base-class.
+- If template argument deduction fails then the handler is not a match.
+- Otherwise, if template argument deduction succeeds, then any constraints
+  are evaluated using those deduced template arguments.
+- If those constraints are not satisfied then the handler is not a match.
+- Otherwise, the handler is a match and the body of the handler is instantiated
+  with the deduced template arguments, substituting those template arguments
+  into the body of the handler. The resulting handler instantiation becomes
+  the handler for static exception objects of that type.
 
-    What is the return-type of this function?
+If a handler template is never instantiated (i.e. because it did not match
+any thrown static exception object types) then the /compound-statement/ of
+that handler does not contribute any statements to the body of the enclosing
+function.
+
+This can potentially affect the return-type of a function with a deduced return-type.
+
+For example:
+#+begin_src c++
+  auto example(auto f) throw(X) {
+    try {
+      f();
+    }
+    template catch (auto err) {
+      return err;
+    }
+
+    throw X{};
+  }
+
+  example([] throw() {}); // deduces return type to be 'void' as return statement never instantiated
+  example([] throw(int) {}); // deduces return type to be 'int' - single return statement
+  example([] throw(int, long) {}); // ill-formed: multiple return statements with different deduced return types
+#+end_src
+
+*** Matching dynamic exception objects
+
+The proposed design is such that a template handler does not match a thrown
+dynamic exception object, so if the body contains any ~throw(...)~ expressions
+then the handler sequence will still require a ~catch(...)~ handler as the
+last handler to handle those.
+
+However, one design direction being explored is to allow a dynamic-exception-object
+to match template and non-template handlers as if the exception object had type
+~std::exception_ptr~. In this case, a ~template catch (auto e)~ would be
+instantiated with ~decltype(e)~ deduced to ~std::exception_ptr~.
+
+*** Ordering of instantiated handlers 
+
+For the purposes of determining which handler is a match, instantiations of a given
+handler template are unordered. If multiple instantiations would potentially match a
+given handler when written out then which one is chosen is determined by deducing
+template arguments and choosing that instantiation rather than looking at which one
+appears earlier in a list of instantiations.
 
 ** Virtual Functions
 
@@ -4730,7 +4821,7 @@ exit path or during exception unwind. These classes capture the number of uncaug
 in their constructor and then compare that number to the number of uncaught exceptions in
 their destructor decide whether to execute the logic based on the result of that comparison.
 
-For example: A 
+For example: A scope_failure can be used to roll back a transaction if something fails
 #+begin_src c++
   {
     scope_failure cancel_on_fail{[&] { transaction.RollBack(); }};
@@ -4793,6 +4884,9 @@ that indicates the disposition in which the destructor is being called.
       func();
     }
   };
+
+  template<std::invocable F>
+  scope_failure(F) -> scope_failure<F>;
 #+end_src
 
 The compiler already knows in what contexts it is calling the destructors - the calls
@@ -5425,8 +5519,23 @@ and only has
 
 ** Virtual function calls
 
+
 ** Interaction with ~std::uncaught_exceptions()~
 
+
+** Static exceptions and the Itanium C++ ABI
+
+See https://godbolt.org/z/8578rKh6j for an proof-of-concept of how a local throw/catch within a function,
+which under this proposal would be required to be a static exception object, would interact with
+the Itanium C++ ABI and facilities such as ~std::uncaught_exceptions()~, ~std::current_exception()~
+and ~throw;~.
+
+Support for static exception objects is likely to require some changes to the implementations of
+the ~__cxa_*~ functions that form the ABI, and thus would require relining with the ABI libraries
+(either statically or dynamically) but should otherwise be able to link against code previously
+compiled against the existing ABI.
+
+Additional work is required here to validate this approach.
 
 * Acknowledgements
 
