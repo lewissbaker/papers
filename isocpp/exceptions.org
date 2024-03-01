@@ -1,16 +1,17 @@
 # -*- mode: org; org-html-htmlize-output-type: css -*-
-#+title: D3166R0: Static Exception Specifications
-#+export_file_name: D3166R0
-#+export_exclude_tags: noexport
-#+author: Lewis Baker
-#+email: lewissbaker@gmail.com
-#+date: 2024-02-25
-#+options: html5-fancy
+#+TITLE: D3166R0: Static Exception Specifications
+#+AUTHOR: Lewis Baker
+#+EMAIL: lewissbaker@gmail.com
+#+DATE: 2024-03-01
+#+OPTIONS: html5-fancy
+#+OPTIONS: tasks:nil
+#+EXPORT_FILE_NAME: D3166R0
+#+EXPORT_EXCLUDE_TAGS: noexport,todo
 
 | Document | *D3166R0*                             |
-| Date     | *2024-02-25*                          |
+| Date     | *2024-03-01*                          |
 | Reply To | *Lewis Baker <lewissbaker@gmail.com>* |
-| Audience | *EWG*, *SG21*                         |
+| Audience | *EWG*, *SG21*, *SG14*                 |
 
 * Abstract
 
@@ -48,7 +49,7 @@ This paper has the following main goals:
    runtime components or dynamic allocation.
 3. Eliminate classes of bugs relating to unhandled exceptions and error code-paths
    by making it possible to identify at compile-time code that is failing to
-   handle some exception-types that might be thrown.
+   handle some exception-types that might be thrown and make it ill-formed.
 
 This proposal is still in the early stages and is being published to solicit feedback
 on direction and also on potential interaction with other in-flight papers, such
@@ -58,51 +59,54 @@ as contracts and discussions around ~noexcept~ policy in the standard library.
 
 Example 1: Explicit throw specifications
 #+begin_src c++
-void throws_nothing() throw();     // empty static exception specification - equivalent to noexcept
+void throws_nothing() throw(); // empty static exception specification - equivalent to noexcept
 void throws_a_b() throw(A, B); // static exception specification
 void throws_any() throw(...);  // dynamic exception specification - equivalent to noexcept(false)
 #+end_src
 
 Example 2: Deduced throw specifications
 #+begin_src c++
-template<std::ranges::range R,
-        std::invocable<std::ranges::range_reference_t<R>> F>
-void for_each(R rng, F func) throw(auto) {
-  for (auto&& x : rng) {
-    func(static_cast<decltype(x)>(x));
+  template<std::ranges::range R, typename F>
+  requires std::invocable<F&, std::ranges::range_reference_t<R>>
+  void for_each(R rng, F func) throw(auto) {
+    for (auto&& x : rng) {
+      func(static_cast<decltype(x)>(x));
+    }
   }
-}
 #+end_src
 
 Example 3: Querying the potentially-thrown exception types + use of template handlers
 #+begin_src c++
-std::variant<std::monostate, declthrow(g())...> err; // variant<monostate, A, B>
+std::variant<std::monostate, declthrow(throws_a_b())...> err; // variant<monostate, A, B>
 try {
   throws_a_b();
-} template catch (auto e) { // instantiated for each static exception type { A , B }
-  err.template emplace<decltype(e)>(std::move(e));
+} template catch (auto& e) { // instantiated for each static exception type { A , B }
+  err.template emplace<decltype(auto(e))>(std::move(e));
 }
 #+end_src
 
-Example 4: Checked exception specifications - ~throw()~
+Example 4: Checked exception specifications - Calling ~throw(A,B)~ function from ~throw()~ function
 #+begin_src c++
   void nothrow_caller() throw() {
-    throws_nothing(); // OK
-
-    throws_a_b(); // Error: A and B not handled locally and not listed in throw specification
+    throws_a_b(); // Ill-formed: A and B not handled locally and not listed in throw specification
 
     try {
-      throws_a_b(); // Error: B not handled locally and not listed in throw specification
+      throws_a_b(); // Ill-formed: A not handled locally and not listed in throw specification
     }
-    catch (A) {}
+    catch (B) {}
 
     try {
       throws_a_b(); // OK: all potentially-thrown exceptions are handled locally
     }
     catch (A) {}
     catch (B) {}
+  }
+#+end_src
 
-    throws_any(); // Error: dynamic exception not handled locally
+Example 5: Checked exception specifications - Calling ~throw(...)~ function from ~throw()~ function
+#+begin_src c++
+  void nothrow_caller() throw() {
+    throws_any(); // Ill-formed: dynamic exception not handled locally
 
     try {
       throws_any(); // OK
@@ -111,30 +115,41 @@ Example 4: Checked exception specifications - ~throw()~
   }
 #+end_src
 
-Example 5: Checked exception specifications - ~throw(Ts...)~
+Example 6: Checked exception specifications - Calling ~throw(A,B)~ function from ~throw(A)~ function
 #+begin_src c++
   void caller() throw(A) {
-    throws_nothing(); // OK
-
-    throws_a_b(); // Error: B not handled locally and not listed in throw specification
+    throws_a_b(); // Ill-formed: B not handled locally and not listed in throw specification
 
     try {
       throws_a_b(); // OK
     }
     catch (B) {}
 
-    throws_any(); // Error: dynamic exception not handled locally
+    try {
+      throws_a_b(); // OK
+    }
+    catch (A a) {
+      if (!can_handle(a)) throw; // OK: rethrows A, which is allowed
+    }
+    catch (B) {}
+  }
+#+end_src
+
+Example 7: Checked exception specifications - Calling ~throw(...)~ function from ~throw(A)~ function
+#+begin_src c++
+  void caller() throw(A) {
+    throws_any(); // Ill-formed: dynamic exception not handled locally
 
     try {
-      throws_any(); // OK
+      throws_any(); // OK - all exceptions handled
     }
     catch (const A&) {
-      throw; // Error: Might rethrow type derived from A (unless A is final)
+      throw; // Ill-formed: Might rethrow type derived from A (unless A is final)
     }
     catch(...) {}
 
     try {
-      h(); // OK
+      throws_any(); // OK - exceptions handled
     }
     catch(const A& a) {
       throw a; // OK - only throws A - slices types derived from A
@@ -143,7 +158,7 @@ Example 5: Checked exception specifications - ~throw(Ts...)~
   }
 #+end_src
 
-Example 6: Simpler alternative to ~std::expected~ / ~std::variant~ code
+Example 8: Simpler alternative to ~std::expected~ / ~std::variant~ code
 #+begin_src c++
 std::expected<X, E1> get_x() noexcept;
 std::expected<Y, E2> get_y() noexcept;
@@ -158,17 +173,16 @@ std::expected<Z, std::variant<E1, E2>> make_z() noexcept {
   return {std::in_place, std::move(x).value(), std::move(y).value());
 }
 
-// or with ?? error-propagation operator from P2561
 std::expected<Z, std::variant<E1, E2>> make_z_p2561() {
-  return {std::in_place, x??, y??};
+  return {std::in_place, x??, y??}; // ?? error-propagation operator from P2561
 }
 
 void consumer() noexcept {
   auto result = make_z();
   if (!result) {
     std::visit(overload(
-      [&](E1& e) { /* handle E1 */ },
-      [&](E2& e) { /* handle E2 */ }),
+      [&](E1& e) noexcept { /* handle E1 */ },
+      [&](E2& e) noexcept { /* handle E2 */ }),
       result.error());
     return;
   }
@@ -179,26 +193,28 @@ void consumer() noexcept {
 #+end_src
 can instead be written using static exceptions, with equivalent or better performance:
 #+begin_src c++
-X get_x() throw(E1);
-Y get_y() throw(E2);
+  X get_x() throw(E1);
+  Y get_y() throw(E2);
 
-Z make_z() throw(E1, E2) {
-  return Z{get_x(), get_y()}; // allows aggregate initialization
-}
-
-void consumer() throw() {
-  try {
-    Z z = make_z();
-    // use z
+  Z make_z() throw(E1, E2) {
+    return Z{get_x(), get_y()}; // allows aggregate initialization
   }
-  catch (E1& e) { /* handle E1 */ }
-  catch (E2& e) { /* handle E2 */ }
-}
+
+  void consumer() throw() {
+    try {
+      Z z = make_z();
+      // use z
+    }
+    // Note: Mutable reference is safe since static exception objects are not shared.
+    catch (E1& e) { /* handle E1 */ }
+    catch (E2& e) { /* handle E2 */ }
+  }
 #+end_src
 
-Example 7: Guarantees deterministic local throw/catch
+Example 9: Guarantees deterministic local throw/catch
 #+begin_src c++
   void example(std::vector<std::vector<std::string>> vec) {
+    struct InvalidString {};
     try {
       for (auto& strings : vec) {
 	for (auto& string : strings) {
@@ -235,11 +251,25 @@ can achieve efficiency of throwing exceptions close to that of normal return val
 with exception objects able to be returned on the stack or in registers using
 similar conventions to normal return-values.
 
-This design differs from the design proposed in [[https://wg21.link/P0709R4][P0709R4 - Zero-overhead deterministic exceptions: Throwing values]]
-in that it does not require the introduction of a special ~std::error~ type and
-does not require falling back to dynamic-allocation when propoagating exception
-types that do not fit in the small-object optimisation built into the proposed
-~std::error~ type.
+The proposed design is also similar in many ways to the design proposed in
+[[https://wg21.link/P0709R4][P0709R4 - Zero-overhead deterministic exceptions: Throwing values]].
+However, it differs in a number of key areas:
+- It allows users to specify a list of multiple exception types they might throw
+  in the ~throw()~ specifier rather than limiting them to throwing only ~std::error~ or,
+  in the proposed extension, a single error type.
+- It does not require the introduction of a special ~std::error~ type
+  that must be used to wrap all exceptions-as-values. Such a type could
+  potentially be used in conjunction with this proposal via ~throw(std::error)~,
+  but would require explicit conversion between exception types at function boundaries.
+- It does not require falling back to dynamic-allocation when propagating
+  exception types that do not fit in the small-object optimisation built into P0709's proposed
+  ~std::error~ type. All static exception objects are passed in automatic storage duration
+  storage so can be as large or as small as you like. Throwing an empty exception object
+  does not need to consume a register, throwing a large object does not require dynamic
+  allocation.
+- It provides the ~template catch~ facility to allow generically handling multiple
+  static exception types - something P0709 does not provide as it expects you to
+  just be propagating a single static exception type, ~std::error~.
 
 This design does not change the semantics of existing C++23 code. It can be
 incrementally adopted throughout a code-base by annotating functions with
@@ -251,11 +281,13 @@ This proposal aims to enable use of static exception specifications in freestand
 environments which were traditionally unable to use exceptions. Static exception-specifications
 provide enough type-information to the compiler to allow exceptions to be thrown, propagated,
 caught and rethrown with minimal runtime machinery - without need for dynamic-allocation,
-runtime type information, or dynamic_cast. If you can avoid using facilities that require
-dynamic exceptions, such as ~std::current_exception()~ and ~throw;~ expressions that appear
-outside of the lexical scope of handlers, then the only dependency on thread-local storage
-is ~std::uncaught_exceptions()~, which is not required in a lot of projects and could
-potentially be omitted from freestanding environments.
+runtime type information, or dynamic_cast.
+
+If you can avoid using facilities that require dynamic exceptions, such as
+~std::current_exception()~ and ~throw;~ expressions that appear outside of the lexical
+scope of handlers, then the only dependency on thread-local storage is ~std::uncaught_exceptions()~,
+which is not required in a lot of projects and could potentially be omitted from freestanding environments.
+See the section on [[id:58f857b8-ec19-4dd5-ac5d-2efa62ebac55][Avoiding dependencies on thread-locals]] for more details.
 
 The ability to enable compile-time checking that all exceptions are handled and that
 there are no hidden calls to ~std::terminate()~ inserted by the compiler due to unhandled
@@ -297,14 +329,18 @@ This paper is structured into the following sections:
   there are no unhandled exceptions 
 *************** END
 
-The paper [[https://wg21.link/P0709][P0709]] by Herb Sutter contains detailed motivation for improving exceptions,
-and does a better job than I could of covering the background.
-Much of the same philosophy went into the design of this paper, however this paper
-takes a slightly different approach to solving the issues raised.
+The paper [[https://wg21.link/P0709][P0709]] "Deterministic exceptions: throwing values" by Herb Sutter
+contains detailed motivation for improving exceptions, and covers the background
+and history of exceptions in C++ better than I could do here.
+
+I agree with much of the philosophy and motivations expressed in P0709 and have
+used them as inspiration for the design for this paper. However, this paper takes
+a different approach to solving the issues raised - hopefully one that is more
+closely aligned with the goals and principles of C++.
 
 Key points:
 - Exceptions are expensive on many platforms for error-handling that is not rare.
-  - In some cases, taking the exceptional path is 1000x slower than the normal
+  - In some cases, taking the exceptional path is 100-1000x slower than the normal
     return-path.
   - This leads to people using alternative error-handling mechanisms.
     e.g. ~std::error_code~, ~boost::outcome~, ~std::expected~, ~std::optional~, etc.
@@ -340,20 +376,16 @@ Key points:
     change, but there is no guarantee that existing code calling this function will stop
     compiling - you may just end up with a runtime error that then goes unhandled.
 
-
-
-
 This paper explores language changes that should allow exceptions to be several
 orders of magnitude faster on error-paths than major existing implementations -
-performance of the order of that of a normal return-value.
+performance of the order of that of a normal return-value, without overly penalising
+execution cost of the success path.
 - Exceptions may be returned on the stack or in registers as part of the
   calling convention.
 - Exiting a function with an exception can directly return to the caller's
-  handler/unwind code-path instead of to  . No need to lookup exception tables and dynamically
-  find the right handler.
-- Static exception objects are exceptions by name but are really just a form of
-  multiple-return types
-
+  handler/unwind code-path instead of to a switch. There is no need to lookup
+  exception tables and dynamically find the right handler.
+  
 * Proposal
 :PROPERTIES:
 :ID:       200309b8-49c7-4497-a071-bee17689dd2d
@@ -4644,7 +4676,10 @@ be considered
 
 
 
-** Avoid dependencies on thread-locals
+** Avoiding dependencies on thread-locals
+:PROPERTIES:
+:ID:       58f857b8-ec19-4dd5-ac5d-2efa62ebac55
+:END:
 
 The design proposed by this paper allows eliminating some of the overhead of dynamic exceptions;
 in particular the dynamic allocation, reference-counting and run-time type-information needed to
@@ -4953,7 +4988,7 @@ can be ~reinterpret_cast~ to an equivalent function-pointer annotated with ~noex
 call through that function-pointer. While non-portable, this will work on most platforms and
 gives better codegen (without code for handlers).
 
-For example: Given the following helpers[fn:hana]
+For example: Given the following helpers
 #+begin_src c++
   template<typename T> struct noexcept_cast_helper;
   template<typename R, typename... As>
@@ -4981,19 +5016,15 @@ you can write the following (which is now well-formed):
   }
 #+end_src
 
-
-Another alternative suggested by Ben Craig was we could explore would be to add something similar to the ~extern "C"~ block to allow
+Another direction suggested by Ben Craig was to add something similar to the ~extern "C"~ block to allow
 declaring that all functions in a given block are ~noexcept~.
 
-For example: 
+For example: The following would
 #+begin_src c++
   extern "C" { noexcept {
   #include "the_c_api.h"
   } }
 #+end_src
-
-
-[fn:hana] Thanks to Hana Dusikova for this workaround example
 
 
 ** Standard Library Impacts
@@ -5150,7 +5181,7 @@ this section as speculative until implementation experience has been gained.
 
 One of the intents of the semantics described above for functions with static-exception specifications
 is to model them effectively as a function that can either return a value object for the success
-return-path or can return an error object of one of a set of possible exception-types listed in the
+return-path or can return an error object for each of a set of possible exception-types listed in the
 exception specification.
 
 With a normal function call there is usually a single return-address that the callee must transfer
@@ -5167,7 +5198,7 @@ that the callee might transfer execution to when it exits - the exception unwind
 path is the path that, logically, exits scopes, destroying automatic-storage duration variables,
 until it reaches a matching handler and then transfers execution to that handler.
 
-To avoid overhead in having to pass multiple return-addresses to a function and take advantage of
+To avoid overhead in having to pass multiple return-addresses to a function and to take advantage of
 the dedicated hardware instructions for passing a single return-address and returning to that
 return-address upon completion, implementations often use auxiliary data-structures stored within
 the binary that allow looking up the exceptional return-address for the current function based
@@ -5201,9 +5232,11 @@ One approach to implementing this with a lower cost for a function call would be
 a jump-table of possible return-addresses and to instead push a pointer to the jump-table
 as part of the call instruction.
 
-On x86/x86-64 architectures this can be done relatively cheaply in one of two ways without increasing the amount
-of stack-space and would only require one additional instruction to be executed on the
-normal return path compared to a normal function-call.
+On x86/x86-64 architectures this can be done relatively cheaply in one of two ways
+without increasing the amount of stack-space and would only require one additional
+instruction to be executed on the normal return path compared to a normal function-call.
+
+*** Inline Jump Tables
 
 The first option would be to immediately follow a ~call~ instruction with a series of
 5-byte ~jmp~ instructions that jump to the relevant block for handling the corresponding
@@ -5211,16 +5244,16 @@ return-path. The first jmp instruction would jump to the code for the normal-ret
 and subsequent jmp instructions for each exception path.
 
 This calling convention is backwards compatible with existing calling conventions.
-The caller issues a 'call' instruction as per normal and the callee when it returns a value
-just issues a 'ret' instruction to return, which transfers to the first jmp instruction
+The caller issues a ~call~ instruction as per normal and the callee when it returns a value
+just issues a ~ret~ instruction to return, which transfers to the first ~jmp~ instruction
 which then unconditionally jumps to the code that handles this path.
 
-The additional unconditional jmp instruction should be reasonably be able to be predicted/pipelined
+The additional direct ~jmp~ instruction should be reasonably able to be predicted/pipelined
 by a CPU so shouldn't add much in the way of additional latency (NOTE: to be confirmed with data).
 
 For example, given the following code:
 #+begin_src c++
-int divide(int num, int den) throws(divide_by_zero, overflow) {
+int divide(int num, int den) throw(divide_by_zero, overflow) {
   if (den == 0) throw divide_by_zero{};
   if (den == -1 && num == INT_MIN) throw overflow{};
   return num/den;
@@ -5241,7 +5274,7 @@ int example() {
 #+end_src
 
 The caller could be translated into assembly similar to the following:
-#+begin_src
+#+begin_src asm
 x:
   .data 4
   
@@ -5249,13 +5282,13 @@ y:
   .data 4
   
 example:
-  mov edi, dword ptr [x]   # Load 'x' into register for param 1
-  mov esi, dword ptr [y]   # Load 'y' into register for param 2
-  call divide    # Jump to 'divide' and push address of .JUMP_TABLE onto stack
-.JUMP_TABLE:     # Each entry is a 'JMP rel32' encoded instruction which is 5 bytes
-  jmp .SUCCESS   # entry[0] - success path
-  jmp .ERR_0     # entry[1] - error path for divide_by_zero
-  jmp .ERR_1     # entry[2] - error path for overflow
+  mov edi, dword ptr [x]   ; Load 'x' into register for param 1
+  mov esi, dword ptr [y]   ; Load 'y' into register for param 2
+  call divide    ; Jump to 'divide' and push address of .JUMP_TABLE onto stack
+.JUMP_TABLE:     ; Each entry is a 'JMP rel32' encoded instruction which is 5 bytes
+  jmp .SUCCESS   ; entry[0] - success path
+  jmp .ERR_0     ; entry[1] - error path for divide_by_zero
+  jmp .ERR_1     ; entry[2] - error path for overflow
 .SUCCESS:
   # result is in eax
   mul eax, 2
@@ -5273,9 +5306,9 @@ types are empty, trivially destructible types.
 
 The callee function could be translated into assembly similar to the following:
 
-#+begin_src
+#+begin_src asm
 divide:
-  # NOTE: [rsp] points to address of .JUMP_TABLE
+  ;# NOTE: [rsp] points to address of .JUMP_TABLE
   test esi, esi
   je .THROW1
   cmp esi, -1
@@ -5286,19 +5319,19 @@ divide:
   mov eax, edi
   cdq
   idiv esi
-  ret       # return to entry[0]
+  ret       ; return to entry[0]
 .THROW1:
-  # [rsp] contains address of entry[0] instruction
-  # need to add '5' (size of JMP instruction) to this to get address of entry[1]
-  # do this in-place to avoid using an extra register to compute the address
+  ; [rsp] contains address of entry[0] instruction
+  ; need to add '5' (size of JMP instruction) to this to get address of entry[1]
+  ; do this in-place to avoid using an extra register to compute the address
   add qword ptr [rsp], 5
-  ret       # return to entry[1]
+  ret       ; return to entry[1]
 .THROW2:
-  # [rsp] contains address of entry[0] instruction
-  # need to add '10' (size of 2 * JMP instruction) to this to get address of entry[2]
-  # do this in-place to avoid using an extra register to compute the address
+  ; [rsp] contains address of entry[0] instruction
+  ; need to add '10' (size of 2 * JMP instruction) to this to get address of entry[2]
+  ; do this in-place to avoid using an extra register to compute the address
   add qword ptr [rsp], 10
-  ret       # return to entry[2]
+  ret       ; return to entry[2]
 #+end_src
 
 A few things are worth noting here.
@@ -5313,34 +5346,38 @@ A few things are worth noting here.
   additional registers.
 - After returning to the appropriate return-address, the caller then needs
   to jump to the appropriate location to execute the logic for that code-path.
+  - For the success case, this is the one extra instruction that needs to be
+    executed compared to traditional table-based exception-throwing calling
+    conventions.
 - There is no need for additional exception-unwind-lookup tables or runtime-type-information.
   All of the data/logic for handling the exceptions is local and inline within
   the caller and callee.
-- There are no additional branches on the caller side here. Once the callee
-  has branched to the necessary code path that executes the 'throw' expression,
-  it jumps directly to the code-path in the caller that handles that case.
+- There are no additional branches to execute on the caller side here.
+  Once the callee has branched to the necessary code path that executes the
+  ~throw~ expression, it returns directly to the code-path in the caller that
+  handles that case.
   
 Of particular note is that overhead of returning via the exception code-path
 is one additional instruction.
   
-A slight optimisation could be to inline the final code-path (in the above example,
+A slight space-optimisation could be to inline the final code-path (in the above example,
 the code-path corresponding to the 'overflow' exception case) in lieu of having a
 jump instruction for the final block of code.
 
-For example:
-#+begin_src
+For example: Inlining the last case into the jump table
+#+begin_src asm
 example:
-  mov edi, dword ptr [x]   # Load 'x' into register for param 1
-  mov esi, dword ptr [y]   # Load 'y' into register for param 2
-  call divide    # Jump to 'divide' and push address of .JUMP_TABLE onto stack
-.JUMP_TABLE:     # Each entry is a 'JMP rel32' encoded instruction which is 5 bytes
-  jmp .SUCCESS   # entry[0] - success path
-  jmp .ERR_0     # entry[1] - error path for divide_by_zero
+  mov edi, dword ptr [x]   ; Load 'x' into register for param 1
+  mov esi, dword ptr [y]   ; Load 'y' into register for param 2
+  call divide    ; Jump to 'divide' and push address of .JUMP_TABLE onto stack
+.JUMP_TABLE:     ; Each entry is a 'JMP rel32' encoded instruction which is 5 bytes
+  jmp .SUCCESS   ; entry[0] - success path
+  jmp .ERR_0     ; entry[1] - error path for divide_by_zero
 .ERR_1:
-  mov eax, -2.   # entry[2] - error path for overflow (inlined as last jump table entry)
+  mov eax, -2.   ; entry[2] - error path for overflow (inlined as last jump table entry)
   ret
 .SUCCESS:
-  # result is in eax
+  ; result is in eax
   mul eax, 2
   ret
 .ERR_0:
@@ -5363,6 +5400,8 @@ the overhead on the normal return-path is expected to be small, however.
 Implementation experience is required to evaluate the actual impact of this on
 the performance of the normal call-path.
 
+*** "NOP Stuffing" Jump Tables
+
 Another alternative approach of implementing the jump-table is to somehow embed
 a pointer/offset to an external jump-table in a location relative to the call
 instruction.
@@ -5370,7 +5409,7 @@ instruction.
 NOTE: The following information is based on memory from a discussion with
 Ben Craig. Need to go back and verify this from the Intel reference manual.
 
-On x86/64 there are some 'nop' instruction encodings that have unused bytes
+On x86/64 there are some ~nop~ instruction encodings that have unused bytes
 within them and this can be used to encode some data in the instruction stream
 without that instruction having any effect on the state of the CPU registers
 (other than advancing the instruction pointer).
@@ -5382,75 +5421,71 @@ with the logic for handling the normal return-path. In this case, there is
 much less of a concern with instruction cache misses.
 
 So in the above case, the caller would be replaced with:
-#+begin_src
-example:
-  mov edi, dword ptr [x]   # Load 'x' into register for param 1
-  mov esi, dword ptr [y]   # Load 'y' into register for param 2
-  call divide    # Jump to 'divide' and push address of .JUMP_TABLE onto stack
-  nop (4-byte offset to .JUMP_TABLE)
-  mul eax, 2
-  ret
-  
-.JUMP_TABLE:     # Each entry is a pointer to entry
-  data qword .ERR_0     
-  data qword .ERR_1
-  
-.ERR_0:
-  mov eax, -1.  # entry[1] - error path for divide_by_zero
-  ret
-  
-.ERR_1:
-  mov eax, -2.  # entry[2] - error path for overflow (inlined as last jump table entry)
-  ret
+#+begin_src asm
+  example:
+    mov edi, dword ptr [x]   ; Load 'x' into register for param 1
+    mov esi, dword ptr [y]   ; Load 'y' into register for param 2
+    call divide    ; Jump to 'divide' and push address of .JUMP_TABLE onto stack
+  .DATA_NOP
+    nop DWORD (.JUMP_TABLE - .DATA_NOP) ; 3-byte prefix + 4-bytes jump table offset
+    mul eax, 2
+    ret
+
+  .JUMP_TABLE:     ; Each entry of table is a pointer to return-address
+    data DWORD (.ERR_0 - .DATA_NOP)     
+    data DWORD (.ERR_1 - .DATA_NOP)
+
+  .ERR_0:
+    mov eax, -1.  ; entry[1] - error path for divide_by_zero
+    ret
+
+  .ERR_1:
+    mov eax, -2.  ; entry[2] - error path for overflow
+    ret
 #+end_src
 
 Then the callee would be updated to look something like the following:
-
-#+begin_src
-divide:
-  # NOTE: [rsp] points to address of nop encoding offset to .JUMP_TABLE
-  test esi, esi
-  je .THROW1
-  cmp esi, -1
-  jne .LBL1:
-  cmp edi, 0x7fffffff
-  jne .THROW2
-.LBL1:
-  mov eax, edi
-  cdq
-  idiv esi
-  ret       # return to nop instruction (normal return)
-.THROW1:
-  # [rsp] contains address of nop instruction
-  # Need to load this offset and add it to the address of the nop instruction
-  # plus the necessary offset into the table.
-  mov qword rsi, [rsp]   # load the address of the nop instruction
-  mov dword edi, [rsi+1] # load the offset-to-jump-table part of the nop instruction (assuming 5 byte encoding, last 4 bytes is offset) 
-  add qword rsi, rdi     # add offset to nop-instruction address to get address of jump table
-  mov qword rdi, [rsi]   # load next instruction pointer
-  mov qword [rsp], rdi   # store it in stack return address position
-  ret                    # return to the address (this should help preserve some return-address branch prediction)      
-.THROW2:
-  mov qword rsi, [rsp]   # load the address of the nop instruction
-  mov dword edi, [rsi+1] # load the offset-to-jump-table part of the nop instruction (assuming 5 byte encoding, last 4 bytes is offset) 
-  add qword rsi, rdi     # add offset-to-jump-table to nop-instruction address to get address of jump table
-  add qword rsi, 8.      # add offset within jump table to get address of entry[1]
-  mov qword rdi, [rsi]   # load next instruction pointer
-  mov qword [rsp], rdi   # store it in stack return address position
-  ret
-
+#+begin_src asm
+  divide:
+    ; NOTE: [rsp] points to address of nop encoding offset to .JUMP_TABLE
+    test esi, esi
+    je .THROW1
+    cmp esi, -1
+    jne .LBL1:
+    cmp edi, 0x7fffffff
+    jne .THROW2
+  .LBL1:
+    mov eax, edi
+    cdq
+    idiv esi
+    ret       ; return to nop instruction (normal return)
+  .THROW1:
+    ; [rsp] contains address of nop instruction (i.e. return address)
+    mov rax, QWORD PTR [rsp]       ; load the address of the nop instruction
+    mov edx, DWORD PTR [rax+3]     ; load the offset-to-jump-table part of the nop instruction (assuming 7 byte encoding, last 4 bytes is offset) 
+    mov edx, DWORD PTR [rax+rdx]   ; load the offset in entry[0] of table
+    add QWORD PTR [rsp], rdx       ; add offset to return-address
+    ret                            ; return to unwind path for 'divide_by_zero'
+  .THROW2:
+    mov rax, QWORD PTR [rsp]       ; load the address of the nop instruction
+    mov edx, DWORD PTR [rax+3]     ; load the offset-to-jump-table part of the nop instruction (assuming 7 byte encoding, last 4 bytes is offset) 
+    mov edx, DWORD PTR [rax+rdx+4] ; load the offset in entry[1] of table
+    add QWORD PTR [rsp], rdx       ; add offset to return-address
+    ret                            ; return to unwind path for 'overflow'
 #+end_src
 
-TODO: Check that the above logic is valid x86/64 assembly.
-
 Note that with this approach, while there are potentially gains on the caller side
-in terms of instruction cache coherency on the normal return-path, this comes at
-the cost of additional instructions for each of the exceptional return paths, and
-so may lead to overall larger code-size.
+in terms of instruction cache coherency on the normal return-path as there is no
+~jmp~ instruction immediately on return. However, this comes at the cost of
+additional instructions for each of the exceptional return paths, which also
+involves additional indirect memory loads.
 
-It's unclear which calling-convention is going to end up being more efficient / smaller code-size
-overall. Both approaches will need to be tried on a variety of code-bases to 
-evalute effects on performance and code-size.
+It's unclear which calling-convention would end up being more efficient / smaller code-size overall.
+Both approaches will need to be tried on a variety of code-bases to evalute effects on performance and code-size.
+
+Other architectures may have alternative approaches that are possible or may have additional
+constraints - these will all need to be investigated to find the most appropriate calling
+convention to support multiple return-addresses.
 
 ** Multiple return-value-slots
 
@@ -5463,7 +5498,7 @@ the return value back to the caller. If the return type is void there is nothing
 to do as the return-path does not need to pass a value back.
 
 If the return-type is trivially copyable and the return-value fits within a register
-then the return-value can sometimes be passed back in a designated register.
+or two then the return-value can sometimes be passed back in designated register(s).
 e.g. on x86-64 this is often the eax/rax register
 
 Otherwise, in order to support guaranteed copy-elision, the return object will need
@@ -5481,8 +5516,8 @@ the exception object in a register before returning to corresponding return-addr
 caller can then just read the exception object value from the register.
 
 
-If the exception object needs to be placed in memory then, to get the same copy-elision
-behaviour as for normal return-values, the caller needs to provide the address of the
+If the exception object needs to be placed in memory then to get the same copy-elision
+behaviour as for normal return-values the caller needs to provide the address of the
 storage for that particular exception type.
 
 This presents somewhat of a challenge, because now, instead of passing a single address
@@ -5539,16 +5574,18 @@ Additional work is required here to validate this approach.
 
 * Acknowledgements
 
-Special thanks to Hana Dusikova, Ben Craig and Corentin Jabot for providing feedback on drafts of
+Special thanks to Ben Craig and Corentin Jabot for providing feedback on drafts of
 this paper.
 
 * References
 
-- "Fast dynamic casting" (Gibbs, Stroustrup)
+- "Fast dynamic casting" (Gibbs, Stroustrup)\\
   https://www.stroustrup.com/fast_dynamic_casting.pdf
-- [P0709R4] "Zero-overhead deterministic exceptions: Throwing values" (Sutter)
+  
+- [P0709R4] "Zero-overhead deterministic exceptions: Throwing values" (Sutter)\\
   https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/p0709r4.pdf
-- [P2268R0] "Freestanding Roadmap" (Craig)
+  
+- [P2268R0] "Freestanding Roadmap" (Craig)\\
   https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/p2268r0.html
 
 * Paper notes                                                      :noexport:
