@@ -59,7 +59,7 @@ as contracts and discussions around ~noexcept~ policy in the standard library.
 
 Example 1: Explicit throw specifications
 #+begin_src c++
-void throws_nothing() throw(); // empty static exception specification - equivalent to noexcept
+void throws_nothing() throw(); // empty static exception specification - equivalent to noexcept(true)
 void throws_a_b() throw(A, B); // static exception specification
 void throws_any() throw(...);  // dynamic exception specification - equivalent to noexcept(false)
 #+end_src
@@ -159,18 +159,20 @@ Example 7: Checked exception specifications - Calling ~throw(...)~ function from
 #+end_src
 
 Example 8: Simpler alternative to ~std::expected~ / ~std::variant~ code
+
+Currently, you might write an API as follows, avoiding using exceptions:
 #+begin_src c++
 std::expected<X, E1> get_x() noexcept;
 std::expected<Y, E2> get_y() noexcept;
 
 std::expected<Z, std::variant<E1, E2>> make_z() noexcept {
   auto x = get_x();
-  if (!x) return {std::unexpect, std::move(x).error() };
+  if (!x) return {std::unexpect, std::move(x).error()};
 
   auto y = get_y();
-  if (!x) return {std::unexpect, std::move(y).error() };
+  if (!x) return {std::unexpect, std::move(y).error()};
 
-  return {std::in_place, std::move(x).value(), std::move(y).value());
+  return {std::in_place, std::move(x).value(), std::move(y).value()};
 }
 
 std::expected<Z, std::variant<E1, E2>> make_z_p2561() {
@@ -181,8 +183,8 @@ void consumer() noexcept {
   auto result = make_z();
   if (!result) {
     std::visit(overload(
-      [&](E1& e) noexcept { /* handle E1 */ },
-      [&](E2& e) noexcept { /* handle E2 */ }),
+      [&](const E1& e) noexcept { /* handle E1 */ },
+      [&](const E2& e) noexcept { /* handle E2 */ }),
       result.error());
     return;
   }
@@ -191,7 +193,7 @@ void consumer() noexcept {
   // use z
 }
 #+end_src
-can instead be written using static exceptions, with equivalent or better performance:
+which can instead be written using static exceptions, with equivalent or better performance:
 #+begin_src c++
   X get_x() throw(E1);
   Y get_y() throw(E2);
@@ -205,9 +207,8 @@ can instead be written using static exceptions, with equivalent or better perfor
       Z z = make_z();
       // use z
     }
-    // Note: Mutable reference is safe since static exception objects are not shared.
-    catch (E1& e) { /* handle E1 */ }
-    catch (E2& e) { /* handle E2 */ }
+    catch (const E1& e) { /* handle E1 */ }
+    catch (const E2& e) { /* handle E2 */ }
   }
 #+end_src
 
@@ -4674,8 +4675,6 @@ It does not involve or require any reasoning about whether or not conditions are
 There are a couple of decisions that were made in the design described in this paper which should
 be considered
 
-
-
 ** Avoiding dependencies on thread-locals
 :PROPERTIES:
 :ID:       58f857b8-ec19-4dd5-ac5d-2efa62ebac55
@@ -5029,6 +5028,139 @@ For example: The following would
 
 ** Standard Library Impacts
 
+*** Whether implementations add ~noexcept~ to "Throws: Nothing" functions can now affect well-formedness of a program
+
+A function in the standard library specified as "Throws: Nothing" but for which there is a pre-condition
+are often specified as being ~noexcept(false)~ functions. The main rationale here is to allow for the
+possibility that an implementation might want to throw an exception if the pre-condition is violated,
+since violating a pre-condition is undefined-behaviour the implementation is technically free to do
+anything, including throw an exception.
+
+However, implementations that do not throw exceptions on pre-condition violations and instead
+choose to terminate/abort are currently free to add ~noexcept~ to function declarations wherever they
+feel is appropriate.
+
+This permission is granted to them by [[[https://eel.is/c++draft/res.on.exception.handling#5][res.on.exception.handling]]] p5 which says
+#+begin_quote
+An implementation may strengthen the exception specification for a non-virtual function
+by adding a non-throwing exception specification.
+#+end_quote
+
+For example MS-STL, libc++ and libstdc++ all declare ~std::vector::operator[]~ as ~noexcept~ despite it
+having a pre-condition that the index is less-than ~size()~. It is worth noting, however, the same
+standard library implementations do not mark ~std::vector<bool>::operator[]~ with ~noexcept~.
+
+With this paper and the ability to either decare a function as having a deduced throw-specification
+or to call these functions from a context where the the exception-specification is checked, the
+implementation differences on ~noexcept~ qualification of these member functions can potentially
+affect the well-formedness of the program.
+
+For example: The following function would be well-formed on current major standard library implementations
+which mark ~std::vector::operator[]~ as ~noexcept~, but might be ill-formed on other conforming implementations
+that do not mark ~std::vector::operator[]~ as ~noexcept~, and thus would not be portable C++ code.
+#+begin_src c++
+  void example(const std::vector<int>& v) throw() {
+    int sum = 0;
+    for (size_t i = 0; i < v.size(); ++i) {
+      sum += v[i];
+    }
+    return sum;
+  }
+#+end_src
+
+A portable implementation would either need to declare this function as ~noexcept~ and allow
+the possibility of a runtime ~std::terminate()~ call if the implementation of ~example()~
+happens to contain a bug that violates a pre-condition and the implementation of ~vector::operator[]~
+handles this by throwing an exception.
+
+Or you would need to surround the body in a /function-try-block/ that calls either ~std::terminate()~
+or, if you are confident in the correctness of the code, calls ~std::unreachable()~ in the handler.
+For example:
+#+begin_src c++
+  void example2(const std::vector<int>& v) throw() try {
+    int sum = 0;
+    for (size_t i = 0; i < v.size(); ++i) {
+      sum += v[i];
+    }
+    return sum;
+  } catch (...) { std::terminate(); }
+#+end_src
+
+Of course, this is just semantically equivalent to declaring the function ~noexcept~.
+
+Ideally we'd be able to declare that this handler was unreachable by calling ~std::unreachable()~
+instead, however ~std::unreachable()~ is not specified as ~noexcept~ and so might again throw
+an exception which would violate the ~throw()~ specifier checking.
+
+The ~std::terminate()~ function, on the other hand, is specified to be ~noexcept~,
+and so can be called in this case to portably indicate that the function does not exit
+with an exception.
+
+Alternatively, the user can define a new ~nothrow_unreachable()~ function as follows and call
+that instead of ~std::terminate()~:
+#+begin_src c++
+  [[noreturn]] void nothrow_unreachable() noexcept {
+    std::unreachable();
+  }
+#+end_src
+
+*** Should implementations be allowed to strengthen "Throws: something" exception specification to a static exception specification?
+
+Similar to the case where a function that is specified as "Throws: Nothing", there are also functions that are
+specified as "Throws: <some-concrete-list-of-types>".
+
+For example:
+- ~std::vector::at(size_t n)~ is specified to throw ~std::out_of_range~ if ~n >= size()~.
+- ~std::optional::value()~ is specified to throw ~std::bad_optional_access~ if the optional does not contain a value.
+- ~std::function::operator()~ is specified to throw either ~std::bad_function_call~ or any exception thrown by the target object.
+
+There are also many other cases where a function is specified to throw whatever some other expression throws.
+
+In the same vein as the "Throws: Nothing" rule, should we also grant standard library implementations
+permission to declare functions that can throw exceptions to have a narrower exception specification
+than ~noexcept(false)~. i.e. to have a static-exception-specification.
+
+For example, should we allow conforming implementations to declare ~std::vector::at()~ with a
+~throw(std::out_of_range)~ exception specifier?
+
+This would greatly assist with calling such functions from a function with a checked exception specification,
+which would otherwise require surrounding such calls in ~try/catch(...)~, and would also allow those functions
+to have deterministic performance for the exceptional code-paths.
+
+For example: A portable implementation would need to write an extra ~catch(...)~ to handle any exceptions that are not specified
+#+begin_src c++
+  std::uint32_t walk_graph(const std::vector<std::optional<std::uint32_t>>& v, std::uint32_t start_at) throw() {
+    std::uint32_t current = start_at;
+    try {
+      while (true) {
+	current = v.at(current).value();
+      }
+    }
+    catch (std::out_of_range) {}
+    catch (std::bad_optional_access) [}
+    catch (...) { [] noexcept { std::unreachable(); }(); } // This line would be unnecessary with static exception specifications
+    return current;
+  }
+#+end_src
+
+Having a static exception specification for functions like ~std::vector::at()~ and ~std::optional::value()~
+would actually make them more useful as their performance could now be guaranteed to be on the order of
+normal control flow you could write yourself with extra if-checks, rather than possibly many thousands
+of cycles.
+
+
+
+However, user code written assuming such narrow exception declarations were placed on the standard library functions
+would, again, be non-portable, because other implementations might not put the tighter exception declarations
+on their implementations.
+
+Note that specifying that these functions must have have a static exception specification
+would likely be an ABI break for many implemenations, so we are unlikely to be able to require
+implementations to do that.
+
+
+*** Usage of the standard library in functions with static throw-specifications will be painful without more noexcept
+
 *** Function-wrapper types
 
 **** ~std::function~
@@ -5058,111 +5190,36 @@ These types are parameterised on a function-type that inclues the exception-spec
 
 - ~std::reference_wrapper~
 
-These types
+**** Function objects
 
 The following types could be extended to have call operators annotated with ~throw(auto)~
 to have them deduce the exception specification based on the exception specification of
 the underlying operator implementation.
 
 Arithmetic function objects
-- std::plus
-- std::minus
-- std::multiplies
-- std::divides
-- std::modulus
-- std::negate
+- ~std::plus~
+- ~std::minus~
+- ~std::multiplies~
+- ~std::divides~
+- ~std::modulus~
+- ~std::negate~
 Comparison function object
-- std::less
-- std::greater
-- std::less_equal
-- std::greater_equal
-- std::equal_to
-- std::not_equal_to
-- std::compare_three_way
+- ~std::less~
+- ~std::greater~
+- ~std::less_equal~
+- ~std::greater_equal~
+- ~std::equal_to~
+- ~std::not_equal_to~
+- ~std::compare_three_way~
 Logical Operations
-- std::logical_and
-- std::logical_or
-- std::logical_not
+- ~std::logical_and~
+- ~std::logical_or~
+- ~std::logical_not~
 Bitwise Operations
-- std::bit_and
-- std::bit_or
-- std::bit_xor
-- std::bit_not
-
-
-*** Implementations adding ~noexcept~ to "Throws: Nothing" functions can affect well-formedness
-
-A function in the standard library specified as "Throws: Nothing" but for which there is a pre-condition
-are often specified as being ~noexcept(false)~ functions. The main rationale here is to allow for the
-possibility that an implementation might want to throw an exception if the pre-condition is violated,
-since violating a pre-condition is undefined-behaviour the implementation is technically free to do
-anything, including throw an exception.
-
-However, implementations that do not throw exceptions on pre-condition violations and instead
-choose to terminate/abort are currently free to add ~noexcept~ to function declarations wherever they
-feel is appropriate.
-
-This permission is granted to them by [res.on.exception.handling] p5 which says
-#+begin_quote
-An implementation may strengthen the exception specification for a non-virtual function
-by adding a non-throwing exception specification.
-#+end_quote
-
-For example MS-STL, libc++ and libstdc++ all declare ~std::vector::operator[]~ as ~noexcept~ despite it
-having a pre-condition that the index is less-than ~size()~. It is worth noting, however, the same
-standard library implementations do not mark ~std::vector<bool>::operator[]~ with ~noexcept~.
-
-With this paper and the ability to either decare a function as having a deduced throw-specification
-or to call these functions from a context where the the exception-specification is checked, the
-implementation differences on ~noexcept~ qualification of these member functions can potentially
-affect the well-formedness of the program.
-
-For example: The following function would be well-formed on current major standard library implementations
-which mark ~std::vector::operator[]~ as ~noexcept~, but might be ill-formed on other conforming implementations
-that do not mark ~std::vector::operator[]~ as ~noexcept~, and thus would not be portable C++ code.
-#+begin_src c++
-  void example(const std::vector<int>& v) throw() {
-    int sum = 0;
-    for (size_t i = 0; i < v.size(); ++i) {
-      sum += v[i];
-    }
-    return sum;
-  }
-#+end_src
-
-A portable implementation would either need to use ~noexcept~ and allow the possibility
-of a runtime ~std::terminate()~ call if the implementation of ~example()~ happens to
-contain a bug that violates a pre-condition and the implementation of ~vector::operator[]~
-handles this by throwing an exception.
-
-Or you would need to surround the body in a /function-try-block/ that calls either ~std::terminate()~
-or, if you are confident in the correctness of the code, calls ~std::terminate()~ in the handler.
-For example:
-#+begin_src c++
-  void example2(const std::vector<int>& v) throw() try {
-    int sum = 0;
-    for (size_t i = 0; i < v.size(); ++i) {
-      sum += v[i];
-    }
-    return sum;
-  } catch (...) { std::terminate(); }
-#+end_src
-
-Note that ideally we'd be able to declare that this handler was unreachable by calling ~std::unreachable()~
-instead, however ~std::unreachable()~ is not specified as ~noexcept~ and so might again throw an exception
-which would violate the ~throw()~ specifier checking.
-
-The ~std::terminate()~ function, on the other hand, is specified to be ~noexcept~, and so can be called in
-this case to portably indicate that the function does not exit with an exception.
-
-Alternatively, the user can define a new ~nothrow_unreachable()~ function as follows and call that instead
-of ~std::terminate()~:
-#+begin_src c++
-  [[noreturn]] void nothrow_unreachable() noexcept {
-    std::unreachable();
-  }
-#+end_src
-
+- ~std::bit_and~
+- ~std::bit_or~
+- ~std::bit_xor~
+- ~std::bit_not~
 
 
 * Implementation Strategies
