@@ -5393,21 +5393,31 @@ This can potentially have a detrimental effect on instruction-cache miss rate,
 particularly if the number of possible exception types is large. e.g. if there
 were more than 12 possible exception types listed in the signature, each of which
 required their own jump table entry, then you're pretty much guaranteed that the
-call instruction will live in a different cache-line and so may be more likely to
-result in an instruction-cache miss. For cases with a small number of exception types,
-the overhead on the normal return-path is expected to be small, however.
+call instruction will live in a different cache-line to the normal return-path
+and so may be more likely to result in an instruction-cache miss.
+For cases with a small number of exception types, the overhead on the normal
+return-path is expected to be small, however.
 
-Implementation experience is required to evaluate the actual impact of this on
-the performance of the normal call-path.
+The other (minor) concern is that returning with a ~ret~ instruction with a modified
+return-address is basically always going to mis-predict the return-address on CPUs
+that use a return-address cache to predict the target of ~ret~ addresses.
+
+While a branch mis-predict would still be much faster than table-based, dynamic
+exception throwing, there may be use-cases for which this is significant.
+If it becomes an important enough performance problem, future CPU designs could
+potentially solve the mis-prediction by introducing a dedicated ~retn~ instruction
+that encodes the index of the jump table in an immediate value, which would allow
+the branch predictor to correctly predict the alternative return-paths.
+
+Implementation experience is required to evaluate the actual impact of these issues
+on the performance of the normal call-path and on the performance of the error
+path.
 
 *** "NOP Stuffing" Jump Tables
 
 Another alternative approach of implementing the jump-table is to somehow embed
 a pointer/offset to an external jump-table in a location relative to the call
 instruction.
-
-NOTE: The following information is based on memory from a discussion with
-Ben Craig. Need to go back and verify this from the Intel reference manual.
 
 On x86/64 there are some ~nop~ instruction encodings that have unused bytes
 within them and this can be used to encode some data in the instruction stream
@@ -5474,18 +5484,21 @@ Then the callee would be updated to look something like the following:
     ret                            ; return to unwind path for 'overflow'
 #+end_src
 
-Note that with this approach, while there are potentially gains on the caller side
-in terms of instruction cache coherency on the normal return-path as there is no
-~jmp~ instruction immediately on return. However, this comes at the cost of
-additional instructions for each of the exceptional return paths, which also
-involves additional indirect memory loads.
+Note that with this approach, the success return path can now place the
+rest of the code inline after the ~NOP~ instruction, and so is more likely to
+be in-cache.
 
-It's unclear which calling-convention would end up being more efficient / smaller code-size overall.
-Both approaches will need to be tried on a variety of code-bases to evalute effects on performance and code-size.
+However, this comes at the cost of additional instructions for each of the
+exceptional return paths, including one additional memory load to load the
+jump table entry's offset.
+
+It's unclear whether the "inline jump table" or "nop stuffing jump table"
+approach would be more efficient or smaller code-size overall.
+Both approaches will need to be tried on a variety of code-bases to evaluate
+effects on performance and code-size.
 
 Other architectures may have alternative approaches that are possible or may have additional
-constraints - these will all need to be investigated to find the most appropriate calling
-convention to support multiple return-addresses.
+constraints - these will all need to be investigated.
 
 ** Multiple return-value-slots
 
@@ -5497,24 +5510,26 @@ With the normal return path, there are a couple of common conventions for passin
 the return value back to the caller. If the return type is void there is nothing
 to do as the return-path does not need to pass a value back.
 
-If the return-type is trivially copyable and the return-value fits within a register
-or two then the return-value can sometimes be passed back in designated register(s).
+If the return-type is trivially copyable or trivially movable and the return-value
+fits within a register or two then the return-value can sometimes be passed back
+in designated register(s).
 e.g. on x86-64 this is often the eax/rax register
 
 Otherwise, in order to support guaranteed copy-elision, the return object will need
-to be constructed into storage provided by the caller. The caller usually provides
-the address of this storage by passing it in a register, which the callee then uses
+to be constructed into storage provided by the caller. For normal return-values
+the caller usually provides the address of this storage by passing it as an additional
+(hidden) parameter to the function, usually in a register, which the callee then uses
 to construct the return object before returning.
 
 When returning an exception object from a function with a static exception specifcation
 we can use a lot of the same conventions for passing the excepton value back.
 
-If the exception object is trivially empty then we just return to the corresponding return-address.
+If the exception object is trivially copyable/movable and empty then we just return to
+the corresponding return-address without consuming a register.
 
-If the exception object is trivially copyable and fits within a register, then we can put
-the exception object in a register before returning to corresponding return-address. The
-caller can then just read the exception object value from the register.
-
+If the exception object is trivially copyable/movable and fits within a register or two,
+then we can put the exception object in a register before returning to corresponding
+return-address. The caller can then just read the exception object value from the register(s).
 
 If the exception object needs to be placed in memory then to get the same copy-elision
 behaviour as for normal return-values the caller needs to provide the address of the
@@ -5524,39 +5539,564 @@ This presents somewhat of a challenge, because now, instead of passing a single 
 for the return value, we potentially need to pass N addresses, one for the return object
 and one for each of the exception object types.
 
-While in some cases, the caller might reuse the same storage for the different exception
-types, in general the lifetimes of the exception objects may be different and so may need
-to have separate addresses.
+It is also worth noting here that if the called function accepts a return-value-slot
+parameter then the storage for the exception object must be distinct from the storage
+for the return-value. This is because an exception might be thrown while constructing
+the return-value - the exception-object might need to be constructed while the return-value
+is still partially initialized.
 
-The naiive approach of passing each additional exception object address in a register
-would be very expensive as the registers are a very limited resources - they are also
-used for passing parameters and using them for passing additional return-addresses will
-increase register pressure and force additional spills of values to the stack.
+This paper describes two possible approaches to passing the storage address for
+exception objects. Other approaches are certainly possible, this paper does not seek
+to provide an exhaustive list of them, but rather to show that efficient implementations
+exist and also to discuss some of the tradeoffs.
 
-If we passed the return addresses on the stack then we would need N push instructions
-and possibly N or more additional instructions for computing the addresses of each of
-the return-objects. This would mean the overhead of a function call would scale linearly
-with the number of potential exception objects, which is not what we want. If you have
-a function with 40 potentially thrown exception types (not implausible) then you could
-easily end up with 100 instructions just for calling the function!
+** Passing an exception-value-slot parameter
 
-Instead, what we want is something that has a constant overhead for a function call
-and only has 
+The first approach described is similar to the approach described in [Renwick].
 
+If any of the potentially-thrown exception types of the function being called are
+non-trivial and thus unable to be returned in registers, the caller passes the
+address of storage for any non-trivial exception objects as an additional (hidden)
+parameter to the function call. This paramter is referred to has the exception-value-slot.
+This is in addition to any return-value-slot parameter.
 
+The address must point to storage that is suitably sized and aligned to hold /any/
+of the non-trivial exception types listed in that call's throw specification.
 
+If the caller handles all potentially-thrown exceptions locally, and does not
+rethrow any of the exceptions to its caller, then the caller can allocate storage
+for the exception object within its stack-frame (or coroutine-frame) and then pass
+the address of that storage as the exception-value-slot parameter.
+
+If the caller does not locally handle all of the exceptions and the caller has
+a dynamic exception specification, then this is handled as-if the function had
+a ~try { /function-body/ } template catch (auto& e) { throw std::move(e); }~
+wrapped around the function body. This then rethrows any static exception objects
+that escape the function as dynamic exception objects - initializing the dynamic
+exception object by move-constructing it from the static exception object.
+
+If the caller itself has a static exception specification and does not locally
+handle any of the potentially thrown exceptions then the caller can just pass
+through the address passed to it in its exception-value-slot parameter.
+
+In this situation, as all of the exception-types are propagated through to the
+caller's caller then this implies that the caller's throw-specification is a
+super-set of the exception types listed in the callee's throw specification,
+otherwise the function would be ill-formed.
+Therefore, the storage provided by the caller's caller should already be guaranteed
+to be sized and aligned sufficiently to handle any of the thrown exceptions.
+
+This leaves the more interesting situation where the caller handles some of the
+exceptions and propagates some exceptions to its caller.
+
+For example: Assuming ~A~, ~B~ and ~C~ are non-trivial exception types
+#+begin_src c++
+  void callee() throw(A, B, C);
+
+  void caller() throw(C) {
+    try {
+      callee();
+    }
+    catch (const A& a) { print(a); }
+    catch (const B& b) { print(b); }
+  }
+
+  void parent_caller() throw() {
+    try {
+      caller();
+    }
+    catch (const C& c) { print(c); }
+  }
+#+end_src
+
+In this example, if the size and alignment of the storage provided by ~parent_caller()~
+to ~caller()~ for the exception object ~C~ is also sufficient for storing an object of
+either type ~A~ or ~B~, then ~caller()~ can still pass along the that storage to ~callee()~,
+it just needs to make sure that if an ~A~ or ~B~ is thrown then the exception object is
+destroyed before control returns to ~parent_caller()~.
+
+For example, it could be lowered to something (roughly) equivalent to the following example.
+Note that below, functions with multiple return-addresses are returning an ~int~
+to indicate which return-address it should return to. When lowered to assembly,
+assume this would instead use one of the approaches described above for returning
+to the corresponding return address.
+
+#+begin_src c++
+  int callee(void* __exception_value_slot);
+
+  int caller(void* __exception_value_slot) {
+    switch (callee(__exception_value_slot)) {
+    case 0: goto normal_return;
+    case 1: goto throw_a;
+    case 2: goto throw_b;
+    case 3: goto throw_c;
+    }
+
+   throw_a:
+    const auto& a = *reinterpret_cast<A*>(__exception_value_slot);
+    print(a);
+    a.~A();
+    goto normal_return;
+
+   throw_b:
+    const auto& b = *reinterpret_cast<B*>(__exception_value_slot);
+    print(b);
+    b.~B();
+    goto normal_return;
+
+   throw_c:
+    // Propagate C exception to caller.
+    return 1;
+
+   normal_return:
+    return 0;
+  }
+
+  void parent_caller() {
+    alignof(C) unsigned char __exception_storage[sizeof(C)];
+
+    switch(caller(&__exception_storage[0])) {
+    case 0: goto normal_return;
+    case 1: goto throw_c;
+    }
+
+    throw_c:
+      const auto& c = *reinterpret_cast<C*>(&__exception_storage[0]);
+      print(c);
+      c.~C();
+      goto normal_return;
+
+    normal_return:
+      return;
+  }
+#+end_src
+
+However, if, say, the ~B~ object was larger than the ~C~ object, then the ~caller()~
+function cannot just pass the storage passed to its exception-value-slot onto ~callee()~
+as this storage is only guaranteed to be able to fit a ~C~.
+
+So in this case, the ~caller()~ function needs to allocate its own local storage, sufficiently
+sized for storing either an ~A~, ~B~ or ~C~, and then pass that to ~callee()~.
+
+However, this means then that in the casethat ~callee()~ throws a ~C~, which we want to propagate
+to ~parent_caller()~, then we need to move-construct the ~C~ object from ~caller()~'s local storage
+to its exception-value-slot.
+
+The ~caller()~ function from above would need to change to:
+#+begin_src c++
+  int caller(void* __exception_value_slot) {
+    alignas(A) alignas(B) alignas(C)
+    unsigned char __exception_storage[std::max(sizeof(A), std::max(sizeof(B), sizeof(C)))];
+
+    switch (callee(&__exception_storage)) {
+    case 0: goto normal_return;
+    case 1: goto throw_a;
+    case 2: goto throw_b;
+    case 3: goto throw_c;
+    }
+
+   throw_a:
+    const auto& a = *reinterpret_cast<A*>(__exception_value_slot);
+    print(a);
+    a.~A();
+    goto normal_return;
+
+   throw_b:
+    const auto& b = *reinterpret_cast<B*>(__exception_value_slot);
+    print(b);
+    b.~B();
+    goto normal_return;
+
+   throw_c:
+    // Move exception object to storage for caller.
+    C& __exception_object = *reinterpret_cast<C*>(&__exception_storage[0]);
+    ::new(__exception_value_slot) C(std::move(__exception_object));
+    __exception_object.~C();
+    return 1;
+
+   normal_return:
+    return 0;
+  }
+#+end_src
+
+This need to allocate local storage and then move a resulting exception object
+into the exception-value-slot storage is also required in the situation where
+an exception is caught and then, inside the handler, a new exception object is
+thrown and this new exception escapes the function.
+
+This is because, at the point of construction of the new exception object
+(which will need to be constructed into storage passed in exception-value-slot)
+the existing exception object which has been caught is still alive and so
+its storage must be distinct from the exception-value slot storage.
+
+Using this approach is expected to be highly efficient for cases where all
+exceptions are propagated, with the main cost being the need to pass an extra
+pointer to the function, using an extra register, possibly causing more spills
+of registers to the stack.
+
+However, there will also be cases where an exception object must be moved multiple
+times from local storage to caller's storage as the exception propagates up the
+stack, which has the potential to be a performance issue for large exception objects.
+
+** Walking stack to find storage
+
+If we want to avoid needing to move/copy exception objects as they propagate up the
+stack then we need to be able to construct the object in its final location.
+However, different exception object types are potentially going to be caught in different
+callers up the stack.
+
+For example: If ~foo()~ throws ~C~, the final storage is in ~bar()~, if it throws ~B~,
+the final storage is in ~baz()~, and if it throws ~A~, the final storage is in ~main()~.
+#+begin_src c++
+  void foo() throw(A, B, C);
+
+  void bar() throw(A, B) {
+    try { foo(); } catch(const C&) {}
+  }
+
+  void baz() throw(A) {
+    try { bar(); } catch(const B&) {}
+  }
+
+  int main() throw() {
+    try { baz(); } catch(const A&) {}
+  }
+#+end_src
+
+Since each of these locations is likely going to have different addresses, this means we
+effectively need to pass N exception-object addresses to a call that can potentially throw
+N non-trivial exception types.
+
+The naiive approach of adding N additional parameters to the function may work for a handful
+of exception-types, but the overhead of making a function call increases linearly with the
+number of addresses that need to be passed as each call needs to either push onto the stack
+or load into registers N different pointers.
+
+Instead, we ideally want a solution that has minimal to no overhead on the success path
+and runtime overhead on the error path that does not increase with the number of thrown
+exception types.
+
+To do this, we can leverage either of the jump-table approaches described above and add
+an additional entry to the jump-table for each non-trivial exception type.
+
+The callee can then call this jump-table entry, passing the address of the parent
+stack-frame, to compute the address of the exception object.
+
+If the immediate caller handles the exception locally then this returns an address that
+is some offset into the stack-frame address. Otherwise, it loads the address of its
+caller's stack-frame and then tail-calls the corresponding jump-table entry for the exception-type
+from its return-address.
+
+For example, given the C++ code above, we might expect the ~bar()~ function to be
+compiled to something like the following:
+#+begin_src asm
+  bar:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 8    ; allocate storage for C exception
+
+    ; Call foo() with inline jump-table convention
+    call foo
+    jmp .SUCCESS
+    jmp .THROW_A
+    jmp .GET_A
+    jmp .THROW_B
+    jmp .GET_B
+    jmp .THROW_C
+    jmp .GET_C
+
+  .SUCCESS:
+  .RETURN:
+    add rsp, 8
+    pop rbp
+    ret
+
+  .THROW_A:
+    add QWORD PTR [rbp+8], 5  ; adjust return-address to entry[1]
+    jmp .RETURN
+
+  .THROW_B:
+    add QWORD PTR [rbp+8], 15 ; adjust return-address to entry[3]
+    jmp .RETURN
+
+  .THROW_C:
+    ; C handled locally
+    ; Address of exception object in rax
+    mov rdi, rax
+    call C::~C()
+    jmp .SUCCESS
+
+  .GET_A:
+    ; Query for address of A exception will call here.
+    ; Forward query to caller
+    ; Current stack frame in rdi
+    mov rax, QWORD PTR [rdi+8]  ; load return-address
+    mov rdi, QWORD PTR [rdi]    ; load parent frame-ptr
+    add rax, 10                 ; compute address of entry[2]
+    jmp rax                     ; tail-call to entry[2]
+
+  .GET_B:
+    ; Query for address of B exception will call here.
+    ; Forward query to caller
+    mov rax, QWORD PTR [rdi+8]  ; load return-address
+    mov rdi, QWORD PTR [rdi]    ; load parent frame-ptr
+    add rax, 20                 ; compute address of entry[4]
+    jmp rax                     ; tail-call to entry[4]
+
+  .GET_C:
+    ; Query for address of C exception, handle locally
+    ; Current stack frame in rdi
+    lea rax, [rdi-8]  ; compute address of storage for C on stack
+    ret               ; return to function that is about to throw
+#+end_src
+
+In the above code, if the call to ~foo()~ completes normally then execution
+returns to the ~jmp .SUCCESS~ and this goes on to return from the function.
+The overhead here should be negligible - the direct ~jmp~ instruction is the
+only additional instruction to be executed on the success path.
+
+Otherwise, if the call to ~foo()~ throws an exception then first there will
+be a call to one of the "GET" jump targets to obtain the address to construct
+the exception object in. Then the ~foo()~ function will construct the exception
+object at that address, perform any local unwinding and then return to the
+corresponding "THROW" jump target.
+
+In the above example, the GET_A and GET_B targets forward through to the corresponding
+queries on ~bar()~'s caller's jump table, while GET_C is able to compute the value
+locally. In the case of GET_A, ~bar()~'s implementation would then forward on to its
+caller - ~main()~ in the example above.
+
+This is effectively doing a stack-walk to find the caller that is willing to provide storage.
+Only instead of having a generic stack-walking algorithm in a loop it is performing a series
+of tail-jumps to code in each of the callers corresponding to that exception type.
+
+The walk is terminated by a GET entry that knows how to compute the address of the object
+within its stack-frame.
+
+For example: In ~foo()~, code that throws an ~A~ exception might look like the following:
+#+begin_src asm
+  foo:
+    ; ... snip
+
+    ;;;;
+    ; throw A{}
+    ;;;;
+
+    ; first get the address for the exception object
+    mov rax, QWORD PTR [rbp+8] ; load return-address / jump-table-address
+    mov rdi, QWORD PTR [rbp]   ; load parent frame address
+    add rax, 10                ; adjust address to entry[2]
+    call rax                   ; call the address query
+    ; when this returns, the address to use will be in rax
+    ; construct the A() object
+    mov rdi, rax
+    call A::A()
+    ; ... any local unwind goes here
+    ; now return to entry[1]
+    add QWORD PTR [rbp+8], 5 ; adjust return-address
+    add rsp, 24
+    pop rbp
+    ret
+
+    ; ... snip	  
+#+end_src
+
+Walking the stack like this to obtain the storage location allows constructing the
+object in its final place and minimizes the number of moves of the exception object
+as it propagates, even if it is caught and rethrown.
+
+Once the exception object is constructed, then any local objects in scope are
+destroyed and then the function returns to the corresponding entry in the
+jump table.
+
+Each entry returned to during unwind that is not a handler will just execute
+a sequence of calls to destructors before then returning to the corresponding
+for that type in its parent's jump-table.
+This continues until control returns to some entry that enters a handler for the exception.
+
+Some benefits of this appraoch:
+- No need for external exception tables to be consulted during exception unwinding.
+- No need for run-time type information.
+- Less copying/moving of exception objects as it propagates up the stack.
+
+There are a couple of potential down-sides to this approach, which will need to
+be quantified once an implementation is available.
+- The stack walk can potentially incur a number of cache misses during the walk,
+  depending on how many frames need to be walked.
+- The stack walk may also incur some branch mis-predictions as it jumps to
+  different entries up the call-stack.
+- There is more code-generation required compared to the exception-value-slot
+  approach. The size of code grows with the number of exception types that might
+  be thrown from the call.
+- Worst case overhead of stack walking is where the immediate caller typically handles
+  buy rarel) conditionally rethrows the exception which then propagates up to a handler
+  many levels up the call-stack. The stack walk needs to walk all of these frames
+  to find storage, but rarely benefits from placing the storage at this final handler.
+
+Whether this approach ends up being more or less efficient than the exception-value-slot
+may depend on the context and types involved.
 
 ** Unwinding through scopes with destructors
 
-** Tail Calls
+When unwinding due to an exception thrown from a function with a static exception specification,
+execution will return to an address that handles that particular exception being thrown.
+
+The function will then need to call destructors for any in-scope variables, before then either
+entering a handler, or propagating the exception to its caller by returning to its 
+
+In the case that there are multiple exception types that propagate through a function, all of the
+code-paths for each exception type will need to call the same set of destructors. Also, there will
+be overlap in the set of destructors to call depending on which scope the exception was thrown at.
+
+For example: Given the following function, ~f()~.
+#+begin_src c++
+  struct X { X() throw(); ~X(); int data; };
+  struct Y { Y() throw(); ~Y(); int data; };
+  void f(X&) throw(A, B);
+  void g(Y&) throw(A, B);
+
+  void caller(bool cond) throw(A, B) {
+    X x;
+    f(x);
+
+    Y y;
+    g(y);
+  }
+#+end_src
+
+If the call to ~f()~ throws an ~A~ then it needs to call ~X::~X()~ and then return to entry[1].
+If the call to ~f()~ throw a ~B~ then it neesd to call ~X::~X()~ and then return to entry[3].
+If the call to ~g()~ throws an ~A~ then it needs to call ~Y::~Y()~ and ~X::~X()~ and then return to entry[1].
+If the call to ~g()~ throws a ~B~ then it needs to call ~Y::~Y()~ and ~X::~X()~ and then return to entry[3].
+
+There is a lot of overlap in these unwind paths which can be merged to avoid bloating the commonality
+in these unwind paths that can be merged.
+
+Might be compiled to the following assembly:
+#+begin_src asm
+  caller:
+	  push rbp
+	  mov rbp, rsp
+	  sub rsp, 8   ; reserve storage for X and Y
+	  lea rdi, [rsp+4]
+	  call X::X()
+	  lea rdi, [rsp+4]
+	  call f(X&)
+	  jmp .F_SUCCESS
+	  jmp .F_THROW_A
+	  jmp .GET_A
+	  jmp .F_THROW_B
+	  jmp .GET_B
+
+  .F_SUCCESS:
+	  mov rdi, rsp
+	  call Y::Y()
+	  mov rdi, rsp
+	  call g(Y&)
+	  jmp .G_SUCCESS
+	  jmp .G_THROW_A
+	  jmp .GET_A
+	  jmp .G_THROW_B
+	  jmp .GET_B
+
+  .G_SUCCESS:
+	  mov rdi, rsp
+	  call Y::~Y()
+	  lea rdi, [rsp+4]
+	  call X::~X()
+  .RETURN:
+	  add rsp, 8
+	  pop rbp
+	  ret
+
+  .F_THROW_A:
+	  add QWORD PTR [rbp+8], 5    ; adjust return-address to entry[1] (type A)
+	  jmp .UNWIND1
+  .F_THROW_B:
+	  add QWORD PTR [rbp+8], 15   ; adjust return-address to entry[3] (type B)
+  .UNWIND1:
+	  push rax                    ; save address of exception-object
+	  jmp .LBL1
+
+  .G_THROW_A:
+	  add QWORD PTR [rbp+8], 5    ; adjust return-address to entry[1] (type A)
+	  jmp .UNWIND2
+  .G_THROW_B:
+	  add QWORD PTR [rbp+8], 15   ; adjust return-address to entry[3] (type B)
+  .UNWIND2:
+	  push rax                    ; save address of exception-object
+	  lea rdi, [rsp+8]            ; address of 'y'
+	  call Y::~Y()
+  .LBL1:
+	  lea rdi, [rsp+12]           ; address of 'x'
+	  call X::~X()
+	  pop rax                     ; restore address of exception-object
+	  jmp .RETURN
+  .GET_A:
+	  mov rax, QWORD PTR [rdi+8]  ; load return address
+	  mov rdi, QWORD PTR [rdi]    ; load parent frame ptr
+	  add rax, 10                 ; adjust to entry[2]
+	  jmp rax                     ; tail-call
+  .GET_B:
+	  mov rax, QWORD PTR [rdi+8]  ; load return address
+	  mov rdi, QWORD PTR [rdi]    ; load parent frame ptr
+	  add rax, 20                 ; adjust to entry[4]
+	  jmp rax                     ; tail-call
+#+end_src
+
+Notice here how the calls to the destructors during unwind can be rolled together so that
+we only need code for calling the destructor of each local object once. We can do this by
+first adjusting the return-address and then jumping to the common unwind path which all
+end up having the same function epilogue instructions - ending in ~ret~, which will return
+to the adjusted return-address.
 
 ** Interop between static-exception functions and dynamic-exception functions
 
+*************** TODO Write about interop with existing exception ABIs
+*************** END
+
 ** Virtual function calls
 
+*************** TODO Write about virtual function calls, thunks, etc.
+*************** END
 
 ** Interaction with ~std::uncaught_exceptions()~
 
+During exception unwind due to a thrown static exception object, we will still want the
+~std::uncaught_exceptions()~ function to return a value that indicates a new uncaught exception
+is in-flight.
+
+This means that, after constructing the exception object, but before starting the unwind process,
+the function needs to ensure that the thread-local count of uncaught exceptions is incremented.
+Then upon entering a handler, after initializing the object in the exception-declartion of the
+handler, it needs to decrement the count of uncaught exceptions.
+
+For example, on platforms that use the Itanium C++ ABI, the thread-local exception state is
+obtained through the following API:
+#+begin_src c
+  struct __cxa_exception { /* fields that describe an exception object */ };
+
+  struct __cxa_eh_globals {
+    __cxa_exception* caughtExceptions; // linked list of caught exceptions - most recent first
+    unsigned int uncaughtExceptions; // count of thrown but not yet caught exceptions
+  };
+
+  __cxa_eh_globals* __cxa_get_globals(void); // get pointer to thread-local exception state (initializing on first call)
+  __cxa_eh_globals* __cxa_get_globals_fast(void); // get pointer to thread-local exception state (no-initialization)
+#+end_src
+
+To modify the uncaught exceptions, the progrm needs to call ~__cxa_get_globals()~ and then
+increment/decrement the ~uncaughtExceptions~ member of the object pointed to by the return value.
+
+If we annotate the ~__cxa_eh_globals()~ function with appropriate attributes which let the
+compiler assume that it always returns the same value and has no side-effects, then the compiler
+can cache the result. If the throwing function is inlined into the handling function and the
+compiler can see both throw-site and handler at the same time and can see that there are no
+opaque calls or references to the ~uncaughtExceptions~ member during unwind, then it can even
+optimize out the thread-local access and increment/decrement.
+
+It should be relative straight-forward to ensure that an implementation of static exceptions
+gives the specified behaviour of ~std::uncaught_exceptions()~.
 
 ** Static exceptions and the Itanium C++ ABI
 
@@ -5566,7 +6106,7 @@ the Itanium C++ ABI and facilities such as ~std::uncaught_exceptions()~, ~std::c
 and ~throw;~.
 
 Support for static exception objects is likely to require some changes to the implementations of
-the ~__cxa_*~ functions that form the ABI, and thus would require relining with the ABI libraries
+the ~__cxa_*~ functions that form the ABI, and thus would require relinking with the ABI libraries
 (either statically or dynamically) but should otherwise be able to link against code previously
 compiled against the existing ABI.
 
@@ -5587,6 +6127,9 @@ this paper.
   
 - [P2268R0] "Freestanding Roadmap" (Craig)\\
   https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/p2268r0.html
+
+- [Renwick] "Low-cost deterministic C++ exceptions for embedded systems" (Renwick, Spink, Franke)\\
+  https://dl.acm.org/doi/10.1145/3302516.3307346
 
 * Paper notes                                                      :noexport:
 
