@@ -339,8 +339,7 @@ and history of exceptions in C++ better than I could do here.
 
 I agree with much of the philosophy and motivations expressed in P0709 and have
 used them as inspiration for the design for this paper. However, this paper takes
-a different approach to solving the issues raised - hopefully one that is more
-closely aligned with the general design principles of C++.
+a different approach to solving the issues raised.
 
 The paper [P1947R0] "C++ exceptions and alternatives" by Bjarne Stroustrup argues that
 adding yet-another-error-handling mechanism is likely to further fracture the community
@@ -379,7 +378,7 @@ Many of these error-signalling mechanisms don't force users to handle the errors
 meaning users can mask problems by accidentally ignoring errors, making their use "error"-prone.
 
 The growing number of error-handling mechanisms in use means it is harder to
-integrate components that use different error-handling techniques - often requiring
+compose components that use different error-handling techniques - often requiring
 explicit conversion/adaptation between components that use different error-signalling
 mechanisms.
 
@@ -428,10 +427,10 @@ Exceptions are expensive on many platforms for an error-handling that is not rar
 In some cases, taking the exceptional path can be 100-1000x slower than the normal
 return-path.
 
-This can be doubly bad for services that use exceptions for error-handling which
+This can be especially problematic for services that use exceptions for error-handling which
 triggers during service-overload situations. If a system is overloaded and starts
 throwing errors but this results in taking code-paths that are significantly more
-expensive then this can easily lead to a snow-balling effect where a few small
+expensive then this can easily result in a snow-balling effect where a few small
 errors quickly leads to much larger system failures.
 
 The dynamic nature of exceptions as they are today, which relies on dynamic allocation,
@@ -439,17 +438,22 @@ run-time type information and dynamic type-matching of handlers during unwind, m
 it very difficult reason about the performance of code in exceptional situations.
 
 Dynamic allocation can potentially make system-calls to acquire memory from the operating
-system, or block acquring locks on shared data-structures, leading to unpredictable
-execution times.
+system, or block acquring locks on shared data-structures, leading to unpredictable,
+non-deterministic execution times.
 
 The cost of dynamic type-matching when searching for a handler can depend on what DLLs
-happen to be loaded into the process.
+happen to be loaded into the process - something that is very difficult to reason about
+locally.
 
 While there have been efforts to reduce the cost of the dynamic exceptions, such as
 [FastCasting] and [Renwick], they do not solve the whole problem. For example,
-even with the stack-allocation techniques described in [FastCasting], dynamic allocation
+even with the stack-allocation techniques described in [Renwick], dynamic allocation
 is still required to transport exceptions across threads - something that will be
 increasingly common with the upcoming ~std::excecution~ facilities proposed in [P2300].
+
+The cost of exceptions in production implementations have remained roughly the same
+over the past few decades as improvements, to the extent they would be possible, would
+result in extremely disruptive ABI breaks.
 
 All of these performance issues with exceptions are well-known and are one of the
 primary reasons why people avoid using exceptions, or restrict their use to genuinely
@@ -539,7 +543,8 @@ Prior to C++17, there was the ability to declare constraints on the set of excep
 types a function could throw, by providing a ~throw()~ specifier. Though, even with
 this capability, you could not tell the exact set of types that may be thrown, only
 what types you must catch in order to handle all exceptions - the function was permitted
-to throw types derived from those types.
+to throw types derived from those types. See [[id:c9746604-a7f4-4ccc-926a-52edb899d492][(Re)Adding ~throw()~ specifiers]] for more
+details.
 
 This facility was deprecated in C++11 with the introduction of ~noexcept~ and removed
 in C++17.
@@ -610,7 +615,8 @@ deduce the exception specification.
 The key components of this proposal are as follows:
 
 It proposes (re)adding ~throw()~ specifiers which can be used to declare a function
-as having either a static exception specifier or dynamic exception specifier.
+as having either a static exception specification, ~throw(T1, T2...)~,
+or dynamic exception specifier, ~throw(...)~ or ~throw(std::any_exception)~.
 
 It proposes adding the ~throw(auto)~ syntax for deducing the throw-specification of a
 function from its definition, which must be visible before use of the function.
@@ -628,6 +634,9 @@ thrown from the associated try-block, allowing a way to use the same handler tem
 to handle different types, without the need for type-erasing the exception.
 
 ** (Re)Adding ~throw()~ specifiers
+:PROPERTIES:
+:ID:       c9746604-a7f4-4ccc-926a-52edb899d492
+:END:
 
 The original design of exceptions in C++ included a throw-specification that allowed
 the programmer to declare a list of exception types that a function might exit with, by
@@ -666,7 +675,7 @@ avoid the pitfalls of the original design.
 ** Static exception specifications
 
 A /static exception specification/ is an exception specification that lists a finite
-list of possible exception types that a function may exit with.
+set of possible exception types that a function may exit with.
 
 A /non-empty static exception specification/ is a static exception specification that
 contains one or more exception types listed in the throw specification.
