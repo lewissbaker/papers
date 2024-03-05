@@ -318,21 +318,6 @@ This paper is structured into the following sections:
 :ID:       1bf2ccdf-cee6-4226-beec-3de59d57472d
 :END:
 
-*************** TODO Add better motivation that calls out the benefits of this design
-- Enables exceptions to be returned:
-  - with similar performance to normal return values
-  - without need for dynamic allocation - either on stack or in registers
-  - without need for run-time type information and dynamic handler matching
-  - without need for exception-tables in the binary
-  - with deterministic runtime performance
-- This enables exception use in environments that traditionally have had to
-  disable exceptions due to the overhead
-  - Safety-critical embedded systems
-  - Real-time systems such as games
-- Enables ability to check that all exceptions thrown are handled and that
-  there are no unhandled exceptions
-*************** END
-
 The paper [P0709R4] "Deterministic exceptions: throwing values" by Herb Sutter
 contains detailed motivation for improving exceptions, and covers the background
 and history of exceptions in C++ better than I could do here.
@@ -4587,8 +4572,7 @@ not required to.
 
 *** Criticisms of Java Checked exceptions
 
-
-
+TODO: Flesh this out.
 
 ** Midori
 
@@ -4612,8 +4596,7 @@ the state changes that occur while that exception is propagated up the call stac
 across threads in a concurrent program – and the resulting state by the time it gets caught or goes unhandled.
 #+end_quote
 
-
-
+TODO: Finish writing this.
 
 ** Deducing exception specifications
 :PROPERTIES:
@@ -4775,7 +4758,6 @@ across threads in a concurrent program – and the resulting state by the time i
   - N4456 - Towards improved support for games, graphics, real-time, low latency, embedded systems
     - Mentions wanting guaranteed support for -fno-exceptions, -fno-rtti
       No detail on why/motivation/issues.
-  -
 
 - P0709 Zero-overhead deterministic exceptions (Herb Sutter)
   - Intro sections have a lot of good motivation for fixing exceptions.
@@ -4814,53 +4796,11 @@ across threads in a concurrent program – and the resulting state by the time i
   - Suggests adding a ~throws{E}~ syntax for specifying a single error type that would be thrown
     instead of ~std::error~.
 
-
-** Freestanding
-
-
-** Alternative Error-handling mechanisms
-
-*** std::expected
-
-- N4015 - A proposal to add a utility class to represent expected monad (2014)
-- N4109 - A proposal to add a utility class to represent expected monad - Revision 1 (2014)
-
-
-*** std::variant
-
-- N4450 - Variant: a typesafe union (v2)
-- N4542 - Variant: a type-safe union (v4) (2015)
-- P0129R0   We cannot (realistically) get rid of throwing moves
-  - Talks about std::variant and support for types with throwing move ctor/assignment
-- P0087R0   Variant: a type-safe union without undefined behavior (v2)
-- P0088R0   Variant: a type-safe union that is rarely invalid (v5) (2015)
-- P0088R1   Variant: a type-safe union that is rarely invalid (v6) (2015)
-- P0239R0   valueless_by_exception (2015)
-- P0088R2           Variant: a type-safe union for C++17 (v7) (2016)
-- P0095R0   The case for a language based variant
-
-*** std::optional
-
-
 * Design Discussion
 :PROPERTIES:
 :ID:       e6228e14-fde7-4217-b0c8-a9b7fb781ac5
 :END:
 ** Code Evolution
-
-As a code-base evolves over time, there are a number of potential changes we may want to
-make to a function and its exception-specification over time.
-
-The exception-specification forms part of the interface of a function and provides
-callers with information about
-
-There are a number of cases that we need to consider with regards to functions with exception-specifications
-as code evolves
-
-With the existing dynamic exceptions facility in C++, extending the set of potentially-thrown
-exceptions for a given function to include a new exception type can be done
-
-
 
 TODO:
 - How do we evolve a function to add new exception types?
@@ -4868,11 +4808,21 @@ TODO:
 - What about changing from dynamic to static?
 - Or from static to dynamic?
 
-
 ** A new calling convention / function-type
 
+TODO: Describe impacts of adding another category of function-types.
+- specialization of function-traits
+- function-object wrappers
+- type-erasing facilities
 
+TODO: Discuss trade-offs of allowing cast from ~throw(T1, T2)~ function-pointers to
+~throw(...)~ / ~noexcept(false)~ function-pointers
+- ABI / calling-convention impacts
+- thunks
+  
 ** Changing the implementation changes the calling convention
+
+TODO: Expand on these points in more detail
 
 - this was a problem with the implicit constexpr paper
 
@@ -4894,13 +4844,35 @@ counter points
 ** How accurate does the potentially-thrown exception type calculation need to be?
 
 This paper currently proposes rules for computing the set of potentially-thrown exception types in a
-somewhat conservative way and might include exceptions that
+somewhat conservative way and might include exceptions that a deeper analysis would deduce are
+unreachable.
 
 It considers only control-flow structure of the function-body and function-signatures of called functions.
-It does not involve or require any reasoning about whether or not conditions are always true or false unless.
+It does not involve or require any reasoning about whether or not conditions are always true or false except for ~if constexpr~.
 
 There are a couple of decisions that were made in the design described in this paper which should
-be considered
+be considered further
+- whether to consider all identifier labels as reachable or whether to only consider an identifier
+  label reachable if there is a corresponding ~goto~ statement that is also reachable.
+
+** Permission to throw types derived from ~std::bad_alloc~ / ~std::bad_cast~
+
+The definition of global ~operator new~ and ~dynamic_cast~ facilities permit implementations to
+throw exceptions that will be caught by a handler for ~std::bad_alloc~ or ~std::bad_cast~.
+
+This allows implementations to throw types that are derived from these types.
+
+If we want to allow these expressions to have static exception specifications then we would
+need to constrain these implementations to throw types that were exactly ~std::bad_alloc~
+or ~std::bad_cast~. However, doing so is a potential breaking change for some implementations.
+
+And whilst portable C++ code should not be relying on catching a particular exception-type
+derived from these classes, implementations could potentially define the semantics for their
+implementations of these facilities to throw ~vendor::bad_alloc~ or ~vendor::bad_cast~.
+
+Having these expressions actually have a static throw-specification would also introduce
+a dependency of those expressions on the corresponding library-defined types, which
+could be problematic for some implementations.
 
 ** Avoiding dependencies on thread-locals
 :PROPERTIES:
@@ -5164,7 +5136,6 @@ More exploration is needed to determine the viability of this option.
 In the meantime, it's possible that freestanding platforms that do not support thread-locals
 could provide basic exception support but without providing ~std::uncaught_exceptions()~.
 
-
 ** Calling C functions
 
 When importing APIs from C libraries which were not written with consumption by C++ in-mind,
@@ -5252,6 +5223,114 @@ For example: The following would
   } }
 #+end_src
 
+Another potential direction we could explore is the use of ~try~ expressions.
+For example: A ~try/else~ expression that evaluates a first sub-expression and if that exits with an exception then evaluates a second sub-expression as a fallback value.
+#+begin_src c++
+  int result = try some_c_api(handle) else std::terminate();
+  int result = try some_c_api(handle) else std::unreachable(); // compiler optimizes this to be as if the function was noexcept.
+  int result = try some_c_api(handle) else -1;
+#+end_src
+
+This could help simplify calling C APIs that have not been marked non-throwing but for which
+the programmer knows it cannot throw.
+
+Note that this paper does not propose either of these directions at this time, only
+list them as potential directions for further investigation.
+
+** Interaction with Contracts
+
+The contracts proposal [P2900R6] adds the ability to add pre-conditions and post-conditions to function declarations
+and also allows adding ~contract_assert()~ expressions.
+
+When a contract that is checked is violated, a violation handler is invoked.
+As currently specified, implementations can permit the volation handler to throw an exception.
+This means that ~contract_assert()~ statements can potentially throw exceptions.
+
+Whether the violation handler is a throwing handler or not is not necessarily known
+at the time that a ~contract_assert()~ statement is compiled.
+
+Further, throwing violation handlers are not restricted to throwing an exception of a particular type,
+so if treating a ~contract_assert()~ statement as potentially-throwing then we would need to consider
+it as potentially-throwing _any_ exception type - i.e. as if it had a dynamic exception specification.
+
+However, one stated design principle of the contracts facility, listed in [P2900R6]:
+#+begin_quote
+*Concepts do not see Contracts* - if the mere presence of a contract assertion, independent
+of the predicate within that assertion, on a function or in a block of code would change
+when the satisfiability of a concept then a contained program could be substantially changed
+by simply using contracts in such a way. Therefore, we remove the ability to do this.
+As a corollary, the addition or removal of a ocntract assertion must not change the result
+of SFINAE, the result of overload resolution, the result of ~noexcept~ operator, or which
+branch is selected by an ~if constexpr~.
+#+end_quote
+
+However, this principle, in combination with potentially-throwing contract violation handlers,
+seems to be in conflict with several of the features proposed in this paper.
+
+The design in P2900R6 makes ~contract_assert~ a statement so that you cannot ask the question
+whether it is ~noexcept~ or not as a ~noexcept~ expression requires its operand to also be
+an expression. This defers needing to answer the question of whether or not ~contract_assert~
+is potentially throwing.
+
+However, this question needs to be answered if we wanted to be able to use contracts in
+combination with the features proposed in this paper - something I would dearly like to support.
+
+For example: What is the deduced exception specification of these functions?
+#+begin_src c++
+  int example1(int x) throw(auto) {
+    contract_assert(x != 0);
+    return 42 / x;
+  }
+  int example2(int x) throw(auto) pre(x != 0) {
+    return 42 / x;
+  }
+#+end_src
+
+For example: Are the following functions well-formed?
+#+begin_src c++
+  void example3(int x) throw() {
+    contract_assert(x != 0); // ill-formed if potentially-throwing
+  }
+  void example4(int x) throw() pre(x != 0) {
+    // does a function with a precondition have a potentially-throwing function-body?
+  }
+#+end_src
+
+For example: Is the call to ~set_error()~ below a discarded statement or not?
+#+begin_src c++
+  void example5(int x) throw() {
+    try {
+      contract_assert(x != 0);
+    } catch (...) {
+      constexpr bool is_reachable = sizeof...(declthrow(throw)) > 0;
+      if constexpr (is_reachable) {
+	set_error(std::current_exception());
+      }
+    }
+  }
+#+end_src
+
+If we follow the principle that introducing contracts should not change the satisfiability
+of a concept then, for the purposes of computing the set of potentially-thrown exception types
+of a ~contract_assert~ statement, we would need to treat it as if it were non-throwing.
+
+However, this then seems at odds with the desire for people to make use of throwing
+violation handlers to recover from program bugs, as code surrounding contract-assertions
+is going to assume that they do not throw - which they don't, for a correct program
+which does not violate any of its contracts.
+
+I think this conflict helps us get to the core question of what does an exception-specification
+mean *in the presence of contract checks that might fail*.
+
+If I mark a function as ~noexcept~, does that mean that it guarantees that calling it will not
+ever throw an exception?
+Or does it mean it will not throw /for an evaluation that does not violate any contract checks/?
+
+I don't have any answers at the moment, but I would like to try to find a solution here
+that meets the needs of both people that want to try to recover from program bugs by
+throwing exceptions, and the needs of people that want to be able to mark as many functions
+as possible with narrow throw-specifications to enable them to reason about the program
+and, with this proposal, obtain improved runtime performance for exception-handling.
 
 ** Standard Library Impacts
 
@@ -5313,7 +5392,7 @@ For example:
   } catch (...) { std::terminate(); }
 #+end_src
 
-Of course, this is just semantically equivalent to declaring the function ~noexcept~.
+Of course, this is then just semantically equivalent to declaring the function ~noexcept~.
 
 Ideally we'd be able to declare that this handler was unreachable by calling ~std::unreachable()~
 instead, however ~std::unreachable()~ is not specified as ~noexcept~ and so might again throw
