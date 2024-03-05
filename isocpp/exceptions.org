@@ -4125,7 +4125,7 @@ It could be:
   e.g. because the expression needs to be callable from within a ~noexcept~ function but is
   surrounded by a try/catch that catches and handles ~std::bad_alloc~.
 
-This confusion/ambiguity is similar to the one that was raised during the design of contracts
+This confusion/ambiguity is similar to the one that was raised during the design of concepts
 for C++20 - is a ~{ expr } -> T;~ clause in a requires-expression checking that the expression
 results in exactly type ~T~, or is it checking that the expression is convertible to type ~T~?
 
@@ -5237,7 +5237,7 @@ the programmer knows it cannot throw.
 Note that this paper does not propose either of these directions at this time, only
 list them as potential directions for further investigation.
 
-** Interaction with Contracts
+** Interaction with Contracts :noexport:
 
 The contracts proposal [P2900R6] adds the ability to add pre-conditions and post-conditions to function declarations
 and also allows adding ~contract_assert()~ expressions.
@@ -5247,7 +5247,9 @@ As currently specified, implementations can permit the volation handler to throw
 This means that ~contract_assert()~ statements can potentially throw exceptions.
 
 Whether the violation handler is a throwing handler or not is not necessarily known
-at the time that a ~contract_assert()~ statement is compiled.
+by the compiler at the time that a ~contract_assert()~ statement is compiled, and the
+current contracts facility provides no way of detecting whether or not a contract-assertion
+is potentially throwing.
 
 Further, throwing violation handlers are not restricted to throwing an exception of a particular type,
 so if treating a ~contract_assert()~ statement as potentially-throwing then we would need to consider
@@ -5320,7 +5322,7 @@ is going to assume that they do not throw - which they don't, for a correct prog
 which does not violate any of its contracts.
 
 I think this conflict helps us get to the core question of what does an exception-specification
-mean *in the presence of contract checks that might fail*.
+mean /in the presence of contract checks that might fail/.
 
 If I mark a function as ~noexcept~, does that mean that it guarantees that calling it will not
 ever throw an exception?
