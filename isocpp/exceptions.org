@@ -57,14 +57,14 @@ as contracts and discussions around ~noexcept~ policy in the standard library.
 
 * Synopsis
 
-Example 1: Explicit throw specifications
+*Example 1: Explicit throw specifications*
 #+begin_src c++
 void throws_nothing() throw(); // empty static exception specification - equivalent to noexcept(true)
 void throws_a_b() throw(A, B); // static exception specification
 void throws_any() throw(...);  // dynamic exception specification - equivalent to noexcept(false)
 #+end_src
 
-Example 2: Deduced throw specifications
+*Example 2: Deduced throw specifications*
 #+begin_src c++
   template<std::ranges::range R, typename F>
   requires std::invocable<F&, std::ranges::range_reference_t<R>>
@@ -75,17 +75,17 @@ Example 2: Deduced throw specifications
   }
 #+end_src
 
-Example 3: Querying the potentially-thrown exception types + use of template handlers
+*Example 3: Querying the potentially-thrown exception types + use of template handlers*
 #+begin_src c++
 std::variant<std::monostate, declthrow(throws_a_b())...> err; // variant<monostate, A, B>
 try {
   throws_a_b();
-} template catch (auto& e) { // instantiated for each static exception type { A , B }
+} template catch (auto& e) { // instantiated for each static exception type in set { A , B }
   err.template emplace<decltype(auto(e))>(std::move(e));
 }
 #+end_src
 
-Example 4: Checked exception specifications - Calling ~throw(A,B)~ function from ~throw()~ function
+*Example 4: Checked exception specifications - Calling ~throw(A,B)~ function from ~throw()~ function*
 #+begin_src c++
   void nothrow_caller() throw() {
     throws_a_b(); // Ill-formed: A and B not handled locally and not listed in throw specification
@@ -103,7 +103,7 @@ Example 4: Checked exception specifications - Calling ~throw(A,B)~ function from
   }
 #+end_src
 
-Example 5: Checked exception specifications - Calling ~throw(...)~ function from ~throw()~ function
+*Example 5: Checked exception specifications - Calling ~throw(...)~ function from ~throw()~ function*
 #+begin_src c++
   void nothrow_caller() throw() {
     throws_any(); // Ill-formed: dynamic exception not handled locally
@@ -115,19 +115,15 @@ Example 5: Checked exception specifications - Calling ~throw(...)~ function from
   }
 #+end_src
 
-Example 6: Checked exception specifications - Calling ~throw(A,B)~ function from ~throw(A)~ function
+*Example 6: Checked exception specifications - Calling ~throw(A,B)~ function from ~throw(A)~ function*
 #+begin_src c++
   void caller() throw(A) {
     throws_a_b(); // Ill-formed: B not handled locally and not listed in throw specification
 
-    try {
-      throws_a_b(); // OK
-    }
+    try { throws_a_b(); /* OK */ }
     catch (B) {}
 
-    try {
-      throws_a_b(); // OK
-    }
+    try { throws_a_b(); /* OK */ }
     catch (A a) {
       if (!can_handle(a)) throw; // OK: rethrows A, which is allowed
     }
@@ -135,22 +131,18 @@ Example 6: Checked exception specifications - Calling ~throw(A,B)~ function from
   }
 #+end_src
 
-Example 7: Checked exception specifications - Calling ~throw(...)~ function from ~throw(A)~ function
+*Example 7: Checked exception specifications - Calling ~throw(...)~ function from ~throw(A)~ function*
 #+begin_src c++
   void caller() throw(A) {
     throws_any(); // Ill-formed: dynamic exception not handled locally
 
-    try {
-      throws_any(); // OK - all exceptions handled
-    }
+    try { throws_any(); /* OK - all exceptions handled */ }
     catch (const A&) {
       throw; // Ill-formed: Might rethrow type derived from A (unless A is final)
     }
     catch(...) {}
 
-    try {
-      throws_any(); // OK - exceptions handled
-    }
+    try { throws_any(); /* OK - exceptions handled */ }
     catch(const A& a) {
       throw a; // OK - only throws A - slices types derived from A
     }
@@ -158,42 +150,42 @@ Example 7: Checked exception specifications - Calling ~throw(...)~ function from
   }
 #+end_src
 
-Example 8: Simpler alternative to ~std::expected~ / ~std::variant~ code
+*Example 8: Simpler alternative to ~std::expected~ / ~std::variant~ code*
 
-Currently, you might write an API as follows, avoiding using exceptions:
+An API that can fail but avoids using exceptions might look like:
 #+begin_src c++
-std::expected<X, E1> get_x() noexcept;
-std::expected<Y, E2> get_y() noexcept;
+  std::expected<X, E1> get_x() noexcept;
+  std::expected<Y, E2> get_y() noexcept;
 
-std::expected<Z, std::variant<E1, E2>> make_z() noexcept {
-  auto x = get_x();
-  if (!x) return {std::unexpect, std::move(x).error()};
+  std::expected<Z, std::variant<E1, E2>> make_z() noexcept {
+    auto x = get_x();
+    if (!x) return {std::unexpect, std::move(x).error()};
 
-  auto y = get_y();
-  if (!x) return {std::unexpect, std::move(y).error()};
+    auto y = get_y();
+    if (!x) return {std::unexpect, std::move(y).error()};
 
-  return {std::in_place, std::move(x).value(), std::move(y).value()};
-}
-
-std::expected<Z, std::variant<E1, E2>> make_z_p2561() {
-  return {std::in_place, x??, y??}; // ?? error-propagation operator from P2561
-}
-
-void consumer() noexcept {
-  auto result = make_z();
-  if (!result) {
-    std::visit(overload(
-      [&](const E1& e) noexcept { /* handle E1 */ },
-      [&](const E2& e) noexcept { /* handle E2 */ }),
-      result.error());
-    return;
+    return {std::in_place, std::move(x).value(), std::move(y).value()};
   }
 
-  Z& z = result.value();
-  // use z
-}
+  std::expected<Z, std::variant<E1, E2>> make_z_p2561() {
+    return {std::in_place, get_x()??, get_y()??}; // ?? error-propagation operator from P2561
+  }
+
+  void consumer() noexcept {
+    auto result = make_z();
+    if (!result) {
+      std::visit(overload(
+	[&](const E1& e) noexcept { /* handle E1 */ },
+	[&](const E2& e) noexcept { /* handle E2 */ }),
+	result.error());
+      return;
+    }
+
+    Z& z = result.value();
+    // use z
+  }
 #+end_src
-which can instead be written using static exceptions, with equivalent or better performance:
+which can instead be written using static exceptions, with equivalent (or better) performance:
 #+begin_src c++
   X get_x() throw(E1);
   Y get_y() throw(E2);
@@ -212,7 +204,7 @@ which can instead be written using static exceptions, with equivalent or better 
   }
 #+end_src
 
-Example 9: Guarantees deterministic local throw/catch
+*Example 9: Guaranteed deterministic local throw/catch, even in ~throw(...)~ functions*
 #+begin_src c++
   void example(std::vector<std::vector<std::string>> vec) {
     struct InvalidString {};
@@ -257,7 +249,7 @@ The proposed design is also similar in many ways to the design proposed in
 However, it differs in a number of key areas:
 - It allows users to specify a list of multiple exception types they might throw
   in the ~throw()~ specifier rather than limiting them to throwing only ~std::error~ or,
-  in the proposed extension, a single error type.
+  in the extension proposed at the end of P0709, a single error type.
 - It does not require the introduction of a special ~std::error~ type
   that must be used to wrap all exceptions-as-values. Such a type could
   potentially be used in conjunction with this proposal via ~throw(std::error)~,
@@ -290,18 +282,29 @@ scope of handlers, then the only dependency on thread-local storage is ~std::unc
 which is not required in a lot of projects and could potentially be omitted from freestanding environments.
 See the section on [[id:58f857b8-ec19-4dd5-ac5d-2efa62ebac55][Avoiding dependencies on thread-locals]] for more details.
 
-The ability to enable compile-time checking that all exceptions are handled and that
-there are no hidden calls to ~std::terminate()~ inserted by the compiler due to unhandled
-exceptions helps to ensure that programs do not unknowingly leave certain error conditions
-unhandled.
+The ability to opt-in to compile-time checking that all exceptions are handled helps to
+ensure that all error-conditions have been handled, potentially helping to improve the
+correctness, reliability and safety of code. Callers of a function cannot forget to
+handle errors like they can with other mechanisms for communicating errors.
 
-This may also help to remove some barriers to C++ exceptions being used in environments
-for which termination should only be performed in the presence of unrecoverable errors.
+It also allows a program to ensure that there are no hidden calls to ~std::terminate()~
+inserted by the compiler due to unhandled exceptions, which can potentially remove some
+barriers to use of C++ exceptions in environments where termination should only be performed
+in the presence of unrecoverable errors.
+
 Authors of functions that have checked exception specifications can still explicitly catch
 exceptions that represent fatal error conditions and insert an explicit call to ~std::terminate()~
-to get the same behaviour as the dynamic ~noexcept~ behaviour - only now these calls to
-~std::terminate()~ appear in source code and so can be more easily audited than the implicit
+to get the same behaviour as the dynamically-checked ~noexcept~ behaviour - only now these calls
+to ~std::terminate()~ appear in source code and so can be more easily audited than the implicit
 ones the compiler was inserting.
+
+Adopting this paper would have some implications for P2900 contracts proposal and general ~noexcept~
+policy in the standard library. It forces us to confront the question of whether a function with
+a deduced exception specification that evaluates a ~contract_assert~ should be considered
+potentially-throwing. This in turn will force us to consider exactly what ~noexcept~ means and
+therefore develop clearer policy about where it should be applied.
+This paper discusses these question briefly and poses some potential directions, but does not
+seek to answer them at this stage.
 
 This paper is structured into the following sections:
 - *[[id:1bf2ccdf-cee6-4226-beec-3de59d57472d][Motivation]]* - motivation for addition of this feature
@@ -330,62 +333,272 @@ This paper is structured into the following sections:
   there are no unhandled exceptions
 *************** END
 
-The paper [[https://wg21.link/P0709][P0709]] "Deterministic exceptions: throwing values" by Herb Sutter
+The paper [P0709R4] "Deterministic exceptions: throwing values" by Herb Sutter
 contains detailed motivation for improving exceptions, and covers the background
 and history of exceptions in C++ better than I could do here.
 
 I agree with much of the philosophy and motivations expressed in P0709 and have
 used them as inspiration for the design for this paper. However, this paper takes
 a different approach to solving the issues raised - hopefully one that is more
-closely aligned with the goals and principles of C++.
+closely aligned with the general design principles of C++.
 
-Key points:
-- Exceptions are expensive on many platforms for error-handling that is not rare.
-  - In some cases, taking the exceptional path is 100-1000x slower than the normal
-    return-path.
-  - This leads to people using alternative error-handling mechanisms.
-    e.g. ~std::error_code~, ~boost::outcome~, ~std::expected~, ~std::optional~, etc.
-  - These alternative error-codes aren't universally usable in all places
-    e.g. constructors, overloaded operators
-  - Some don't force users to handle the errors - making their use error-prone.
-  - The growing number of error-handling mechanisms in use means it is harder to
-    integrate components that use different error-handling techniques.
-  - The alternatives can also incur runtime overhead
-    - The result is type-erased, e.g. in a variant-like type, and requires branching
-      to the code-path to handle each of the cases.
-    - They inhibit copy-elision of returned results
-      - Results must be packed in a container (like ~std::expected~) and then unpacked by
-	the caller.
-      - This can result in many extra copies/moves of both success-results and error-results
-	compared to returning the value itself and using exceptions.
-    - They can require objects to have an invalid state.
-      e.g. a constructor with an ~error_code~-out-parameter, or a subsequent query to
-      ask if the object construction succeeded.
-      This may require additional state to be stored in the object, or additional
-      pre-conditions to be added to methods on that object.
+The paper [P1947R0] "C++ exceptions and alternatives" by Bjarne Stroustrup argues that
+adding yet-another-error-handling mechanism is likely to further fracture the community
+because existing mechanisms and styles won't disappear and efficiency improvements
+will be patchy and limited.
 
-- Exceptions often have non-deterministic overhead which makes them unsuitable for use in
-  environments that need to provide real-time guarantees.
-  - There are some workarounds for this, but they are not widely used / have some
-    limitations.
-    e.g. see Gibbs and Stroustrup's paper on "Fast Dynamic Casting" which assigns prime numbers
-    to each unique exception-type and uses integer division to determine castability.
+P1947 advocates instead for improving the existing C++ exceptions that we have and
+highlights some problems with some of the alternative error-code based handling mechanisms.
 
-- Exceptions have hidden control-flow that makes it hard to know if you have handled
-  all possible error-cases.
-  - Adding a new exception that might be thrown from a function is potentially a breaking
-    change, but there is no guarantee that existing code calling this function will stop
-    compiling - you may just end up with a runtime error that then goes unhandled.
+Improvements in this space should try to be consistent with, as much as possible, the
+existing C++ exception design. For example, by ensuring that a thrown exception object
+of type, ~T~, remains an exception object of type ~T~ as it propagates up the stack,
+regardless of whether callers have dynamic or static exception specifications.
 
-This paper explores language changes that should allow exceptions to be several
-orders of magnitude faster on error-paths than major existing implementations -
-performance of the order of that of a normal return-value, without overly penalising
-execution cost of the success path.
-- Exceptions may be returned on the stack or in registers as part of the
-  calling convention.
-- Exiting a function with an exception can directly return to the caller's
-  handler/unwind code-path instead of to a switch. There is no need to lookup
-  exception tables and dynamically find the right handler.
+** Alternative error-signalling mechansisms have problems too
+
+Code-bases that avoid using exceptions, for whatever reason, need to choose an alternative
+error-signalling mechanism to signal to the caller that an operation failed.
+
+For example, by using ~std::error_code~ (either as a return-value or out-parameter),
+~boost::outcome~, ~std::expected~, ~std::optional~, etc.
+
+Many of these error-handling mechanisms force the user to make other trade-offs
+in return for avoiding exceptions. If we can reduce the reasons for people to
+avoid using exceptions, we can potentially reduce the need to make some of these
+trade-offs.
+
+*** Composition of facilities that use different error-signaling mechanisms
+
+As pointed out in P1947, these alternative error mechanisms aren't universally
+usable in all places. For example, calls to constructors are unable to change the return-type
+to return a value-or-error object, and overload operators are unable to take additional
+out-parameters that can receive error-codes.
+
+Many of these error-signalling mechanisms don't force users to handle the errors,
+meaning users can mask problems by accidentally ignoring errors, making their use "error"-prone.
+
+The growing number of error-handling mechanisms in use means it is harder to
+integrate components that use different error-handling techniques - often requiring
+explicit conversion/adaptation between components that use different error-signalling
+mechanisms.
+
+Many generic algorithms assume that if an operation doesn't throw an exception then it
+must have succeeded. Adapting these algorithms to other error-signalling mechanisms
+often requires reimplementing them.
+
+*** Runtime overhead due to additional branching, packing/unpacking
+
+The alternative error-handling mechanisms can also incur runtime overhead compared
+to exception-based code, at least for the success-path.
+
+They often require returning a value that can either represent a success or an error.
+The calling code then needs to inspect the value to see which kind of result it is
+and then branch on the answer rather than just continuing on the success path.
+
+Alternatives can inhibits copy-elision of returned values. Results typically need to
+be packed into some container, such as ~std::expected~, and then unpacked by the caller
+before being passed by-value to another function, or used to initialize a data-member
+with aggregate initialization.
+
+When propagating error values through many layers of a call-stack each caller needs
+to inspect the result, unpack the error, repack into a new wrapper object of its
+return-type.
+
+Both cases require additional calls to move-constructors compared to returning the
+success value on its own, or compared to throwing an exception.
+
+*** May require an additional "invalid" state, additional preconditions
+
+They also typically require objects to have an invalid state.
+
+A constructor that can fail but that does not throw an exception will generally require
+a subsequent query after calling the constructor to check whether construction succeeded
+before attempting to use that object.
+
+This can potentially require that object to hold additional state to represent that
+invalid state.
+
+It also require adding additional pre-conditions on each operation performed on the object
+that check that the object is valid.
+
+** Making exceptions fast by-design
+
+Exceptions are expensive on many platforms for an error-handling that is not rare.
+In some cases, taking the exceptional path can be 100-1000x slower than the normal
+return-path.
+
+This can be doubly bad for services that use exceptions for error-handling which
+triggers during service-overload situations. If a system is overloaded and starts
+throwing errors but this results in taking code-paths that are significantly more
+expensive then this can easily lead to a snow-balling effect where a few small
+errors quickly leads to much larger system failures.
+
+The dynamic nature of exceptions as they are today, which relies on dynamic allocation,
+run-time type information and dynamic type-matching of handlers during unwind, makes
+it very difficult reason about the performance of code in exceptional situations.
+
+Dynamic allocation can potentially make system-calls to acquire memory from the operating
+system, or block acquring locks on shared data-structures, leading to unpredictable
+execution times.
+
+The cost of dynamic type-matching when searching for a handler can depend on what DLLs
+happen to be loaded into the process.
+
+While there have been efforts to reduce the cost of the dynamic exceptions, such as
+[FastCasting] and [Renwick], they do not solve the whole problem. For example,
+even with the stack-allocation techniques described in [FastCasting], dynamic allocation
+is still required to transport exceptions across threads - something that will be
+increasingly common with the upcoming ~std::excecution~ facilities proposed in [P2300].
+
+All of these performance issues with exceptions are well-known and are one of the
+primary reasons why people avoid using exceptions, or restrict their use to genuinely
+rare error-conditions.
+
+However, exceptions as a model for error handling generally have a lot of benefits
+and is well integrated into the language.
+
+If we can find a way to make exceptions fast by-design, of the order of normal return-values
+and as efficient or better than the alternative error-signalling mechanisms, then it
+would opens up a number of possibilities.
+
+Exceptions then become possible to use in environments that were traditionally unable
+to use them (or even enable them) for performance reasons.
+e.g. freestanding/embedded systems, or real-time systems such as games.
+
+It also opens up opportunities for APIs to use exceptions to report errors that are not rare.
+This can help make the ergonomics of using these APIs nicer by keeping the success-path
+of using the APIs clean and free-of error-handling logic.
+
+** Supporting exceptions in freestanding and real-time environments
+
+The current lack of availability of support for exceptions in freestanding environments
+significantly limits the how much of the standard library can be used in those environments,
+and also forces those environments to use other, potentially more error-prone, error-handling techniques.
+This is unfortunate as many safety-critical systems target freestanding environments.
+
+To be able to be used in freestanding environments, the code-size and run-time overhead
+of using exceptions needs to be small enough that it can be used on small micro-controllers
+that may only have 10's of KB of memory available.
+
+Dependencies on dynamic allocation, run-time type-information and thread-locals can easily
+eat up a significant portion of memory available for program text.
+
+For real-time environments, such as games, where high-performance and binary size is a
+key reqirement, the current dynamic nature of exceptions and the common implementations
+of that design lead to overhead that is undesirable, even if exception paths are not evaluated.
+
+** Reducing bugs caused by failure to handle error-conditions
+
+Use of exceptions in a program can introduce hidden control-flow that makes it hard to
+know if you have handled all possible error-cases in your function.
+
+The existing proposals for exceptions have not yet sought to address the problem
+of programs unintentionally failing to handle exceptions as a potential source of bugs
+in a program.
+
+If function authors are able to opt-in to having their function's exception specification
+checked at compile time to make sure they are not violating it then we can potentially
+reduce or eliminate two classes of bugs relating to unhandled exceptions.
+
+The first case is where the programmer fails to handle a given exception due to an
+oversight when initially writing the function.
+
+The second case is where a function was correct when initially written, but as code
+evolves, a function it calls is later modified to report new error-conditions for
+which the initial function was not aware it needed to handle.
+
+Currently, the language offers little help to users wanting to catch this class of errors.
+
+** Describing the contract in code instead of in documentation
+
+A function declaration defines the contract between callers of that function and the
+implementations of that function.
+
+The status quo is that the function declaration currently only describes the types
+that a caller must provide as arguments, the type that the function will return on
+success, and whether or not the function might indicate failure by throwing an
+exception (via the ~noexcept~ specifier).
+
+We have also added attributes such as ~[[noreturn]]~ and ~[[nodiscard]]~ that provide
+the user more information about whether the function can return normally, or whether
+the return-value is safe to discard.
+
+With the contracts facility proposed in [P2900R6], we would gain the ability to describe
+runtime properties of the values that must be passed to a function and returned from
+it.
+
+The set of exception-types that may be thrown forms an important part of a function's
+contract - it tells the caller "here are the ways in which I might fail", not just _that_
+it might fail.
+
+However, currently, the ability to specify a set of exception-types that a function
+may throw is noticeably absent from the declaration of a function.
+
+Prior to C++17, there was the ability to declare constraints on the set of exception
+types a function could throw, by providing a ~throw()~ specifier. Though, even with
+this capability, you could not tell the exact set of types that may be thrown, only
+what types you must catch in order to handle all exceptions - the function was permitted
+to throw types derived from those types.
+
+This facility was deprecated in C++11 with the introduction of ~noexcept~ and removed
+in C++17.
+
+Both users and compilers would benefit from having more information about the
+set of exceptions that can be thrown - allowing local reasoning about the potential
+exception code-paths without requiring global knowledge of the program.
+
+*** Uses in generic code
+
+When writing generic code that ends up calling into APIs on types provided by the user,
+we don't necessarily know what exception types they may throw. If that generic code
+wants to be able to capture an exception, store it and rethrow it later, the best it
+can do is store the exception in a ~std::exception_ptr~ - meaning we need type-erasure
+and dynamic allocation.
+
+If a program had a way to query the set of concrete exception types that may be thrown
+from an expression at compile time then the generic code could find more efficient ways
+to store an exception object, such as in a ~std::variant~.
+
+** Reducing boiler-plate when writing functions that are transparent to exceptions
+
+Authors of generic code often desire to write facilities that are transparent to exceptions.
+e.g. they call onto methods on types provided by the user and want to throw any exceptions
+that those methods can throw.
+
+This is often expressed in standardese as "is expression equivalent to", or "Throws: exceptions
+thrown by ~func(x)~".
+
+Currently, if generic functions want their ~noexcept~ specifier to correctly report whether
+or not the function might throw an exception, the author must write an expression as a
+parameter to the ~noexcept~ specifier that computes this result.
+
+To do this correctly, the author must identify and duplicate every expression in the
+function body (including any implicit conversions) and then query whether or not that
+expression can potentially throw passing it as the argument to a ~noexcept~ expression.
+
+This is highly tedious code to write and often difficult to get right, especially in the
+presence of constructs like ~if constexpr~ within the function body.
+
+If you get it wrong by being conservative, resulting in a ~noexcept(false)~ when a
+~noexcept(true)~ would have been appropriate then you might end up with slower code-generation,
+or dispatching to a less efficient algorithm (e.g. via ~std::move_if_noexcept~).
+
+However, it is much more likely that an author misses an expression and accidentally
+declares a function as ~noexcept(true)~ when it should have been ~noexcept(false)~.
+If this is the case and the function throws then your program ends up terminating.
+
+The compiler is much better placed to be able to reliably deduce whether or not
+a function can potentially throw an exception from the body than the programmer is.
+
+Futher, the extra syntactic noise in the signature of the function often obscures the more
+important parts of the function definition, like the parameters, const-qualifiers, etc,
+reducing readability.
+
+We already have the ability to deduce the return-type of a function from the function body
+by declaring a return-type of ~auto~ or ~decltype(auto)~. It would simplify a lot of
+generic code that wants to be transparent to exceptions if we could also let the compiler
+deduce the exception specification.
 
 * Proposal
 :PROPERTIES:
@@ -6176,14 +6389,20 @@ this paper.
 
 * References
 
-- "Fast dynamic casting" (Gibbs, Stroustrup)\\
+- [FastCasting] "Fast dynamic casting" (Gibbs, Stroustrup)\\
   https://www.stroustrup.com/fast_dynamic_casting.pdf
 
 - [P0709R4] "Zero-overhead deterministic exceptions: Throwing values" (Sutter)\\
   https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/p0709r4.pdf
 
+- [P1947R0] "C++ exceptions and alternatives" (Stroustrup)\\
+  https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/p1947r0.pdf
+
 - [P2268R0] "Freestanding Roadmap" (Craig)\\
   https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/p2268r0.html
+
+- [P2300] "~std::execution~" (Multiple authors)\\
+  https://isocpp.org/files/papers/P2300R8.html
 
 - [Renwick] "Low-cost deterministic C++ exceptions for embedded systems" (Renwick, Spink, Franke)\\
   https://dl.acm.org/doi/10.1145/3302516.3307346
