@@ -403,11 +403,11 @@ function from its definition, which must be visible before use of the function.
 
 It proposes rules for statically checking at compile-time that the bodies of function
 definitions with ~throw()~ specifiers do not violate their exception specification.
-Failure to handle all such cases or declare that you forward on the exception are
-ill-formed.
+Failure to either handle all such cases or declare that you forward on unhandled
+exceptions are ill-formed.
 
 It proposes adding the ~declthrow(expr)~ syntax for querying what set of exception
-types might be thrown from a particular exception.
+types might be thrown from a particular expression.
 
 It proposes adding the ~template catch~ syntax to allow catching static exceptions
 thrown from the associated try-block, allowing a way to use the same handler template
