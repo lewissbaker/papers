@@ -3,7 +3,7 @@
 "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
 <head>
-<!-- 2024-03-05 Tue 20:45 -->
+<!-- 2024-03-06 Wed 00:52 -->
 <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>D3166R0: Static Exception Specifications</title>
@@ -201,172 +201,166 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org776c5e7">1. Abstract</a></li>
-<li><a href="#orgca2de21">2. Synopsis</a></li>
-<li><a href="#org59d1b1e">3. Overview</a></li>
-<li><a href="#orgacbe295">4. Motivation</a>
+<li><a href="#org54086b0">1. Abstract</a></li>
+<li><a href="#org26121f8">2. Synopsis</a></li>
+<li><a href="#org2e54373">3. Overview</a></li>
+<li><a href="#org1d789b4">4. Motivation</a>
 <ul>
-<li><a href="#orgb0c04fa">4.1. Alternative error-signalling mechansisms have problems too</a>
+<li><a href="#org8deed39">4.1. Alternative error-signalling mechansisms have problems too</a>
 <ul>
-<li><a href="#org55c3502">4.1.1. Composition of facilities that use different error-signaling mechanisms</a></li>
-<li><a href="#orgaa4bff8">4.1.2. Runtime overhead due to additional branching, packing/unpacking</a></li>
-<li><a href="#org0630cf8">4.1.3. May require an additional "invalid" state, additional preconditions</a></li>
+<li><a href="#org8d34b2c">4.1.1. Composition of facilities that use different error-signaling mechanisms</a></li>
+<li><a href="#orgf0659c9">4.1.2. Runtime overhead due to additional branching, packing/unpacking</a></li>
+<li><a href="#orgd727c2b">4.1.3. May require an additional "invalid" state, additional preconditions</a></li>
 </ul>
 </li>
-<li><a href="#orgd3c8b28">4.2. Making exceptions fast by-design</a></li>
-<li><a href="#orgcb77ee6">4.3. Supporting exceptions in freestanding and real-time environments</a></li>
-<li><a href="#orgbeae759">4.4. Reducing bugs caused by failure to handle error-conditions</a></li>
-<li><a href="#orge9d938a">4.5. Describing the contract in code instead of in documentation</a>
+<li><a href="#orgfae1735">4.2. Making exceptions fast by-design</a></li>
+<li><a href="#orgd307ed4">4.3. Supporting exceptions in freestanding and real-time environments</a></li>
+<li><a href="#org23c580a">4.4. Reducing bugs caused by failure to handle error-conditions</a></li>
+<li><a href="#org6c6202c">4.5. Describing the contract in code instead of in documentation</a>
 <ul>
-<li><a href="#orgba06ab3">4.5.1. Uses in generic code</a></li>
+<li><a href="#orge02bdf4">4.5.1. Uses in generic code</a></li>
 </ul>
 </li>
-<li><a href="#org5bb71f5">4.6. Reducing boiler-plate when writing functions that are transparent to exceptions</a></li>
+<li><a href="#org3b96e1b">4.6. Reducing boiler-plate when writing functions that are transparent to exceptions</a></li>
 </ul>
 </li>
-<li><a href="#org23e6a13">5. Proposal</a>
+<li><a href="#org20896e2">5. Proposal</a>
 <ul>
-<li><a href="#org4e9d1b7">5.1. Overview</a></li>
-<li><a href="#orge0467e9">5.2. (Re)Adding <code>throw()</code> specifiers</a></li>
-<li><a href="#org1e0d309">5.3. Static exception specifications</a>
+<li><a href="#org9a2770d">5.1. Overview</a></li>
+<li><a href="#org31d286d">5.2. (Re)Adding <code>throw()</code> specifiers</a></li>
+<li><a href="#org82bd62f">5.3. Static exception specifications</a>
 <ul>
-<li><a href="#org06f0b63">5.3.1. Types in a throw-specification form an unordered set</a></li>
-<li><a href="#orga8f9033">5.3.2. Handling of <code>std::any_exception</code> in the throw-specifier</a></li>
-<li><a href="#org79fd89a">5.3.3. The types in the throw specification describe all concrete types that may be thrown</a></li>
-<li><a href="#org77287ed">5.3.4. Exception types may not be references, cv-qualified, or void</a></li>
-<li><a href="#orgca16a35">5.3.5. Static exception specifications are part of the function type</a></li>
-<li><a href="#orgd30938a">5.3.6. Deducing throw-specifications from a function signature</a></li>
-<li><a href="#org938f7a8">5.3.7. <code>throw(auto)</code> - Deducing exception-specifications from the body of a function</a></li>
-<li><a href="#org24b9285">5.3.8. Forward declarations of <code>throw(auto)</code> functions</a></li>
-<li><a href="#org1f4b68b">5.3.9. Deduced exception-specifications and recursive functions</a></li>
-<li><a href="#orgb2ef6a1">5.3.10. Delayed computation of deduced throw specifications</a></li>
-<li><a href="#org367379c">5.3.11. Do we also need <code>noexcept(auto)</code>?</a></li>
+<li><a href="#org99739e9">5.3.1. Types in a throw-specification form an unordered set</a></li>
+<li><a href="#orgd219f3a">5.3.2. Handling of <code>std::any_exception</code> in the throw-specifier</a></li>
+<li><a href="#org2fb416c">5.3.3. The types in the throw specification describe all concrete types that may be thrown</a></li>
+<li><a href="#orgdaacb89">5.3.4. Exception types may not be references, cv-qualified, or void</a></li>
+<li><a href="#org479c818">5.3.5. Static exception specifications are part of the function type</a></li>
+<li><a href="#orgf3cc7d9">5.3.6. Deducing throw-specifications from a function signature</a></li>
+<li><a href="#org532762e">5.3.7. <code>throw(auto)</code> - Deducing exception-specifications from the body of a function</a></li>
+<li><a href="#org9485a0c">5.3.8. Forward declarations of <code>throw(auto)</code> functions</a></li>
+<li><a href="#orgb3e16c5">5.3.9. Deduced exception-specifications and recursive functions</a></li>
+<li><a href="#org648f39d">5.3.10. Delayed computation of deduced throw specifications</a></li>
+<li><a href="#org1ed4d68">5.3.11. Do we also need <code>noexcept(auto)</code>?</a></li>
 </ul>
 </li>
-<li><a href="#org769245a">5.4. Querying the throw-specification</a>
+<li><a href="#orgc473630">5.4. Querying the throw-specification</a>
 <ul>
-<li><a href="#orgbbfd43a">5.4.1. <code>declthrow</code> of a call to a <code>throw(...)</code> function</a></li>
-<li><a href="#org68b2fc4">5.4.2. Mixed dynamic and static exception specifications</a></li>
-<li><a href="#org38284ec">5.4.3. Order of the exception types</a></li>
-<li><a href="#org3f9d823">5.4.4. Exception specifications of defaulted special member functions</a></li>
-<li><a href="#orgef0df63">5.4.5. Introducing a pack outside of a template</a></li>
-<li><a href="#orgea9d963">5.4.6. Packs of <code>declthrow</code> packs</a></li>
-<li><a href="#orgf222181">5.4.7. Availability of the <code>declthrow</code> keyword</a></li>
-<li><a href="#orgb9f61a5">5.4.8. Alternative Syntaxes Considered</a></li>
-<li><a href="#orgdf021f3">5.4.9. Filtering the set of exceptions</a></li>
+<li><a href="#org5a19d7f">5.4.1. <code>declthrow</code> of a call to a <code>throw(...)</code> function</a></li>
+<li><a href="#org10be157">5.4.2. Mixed dynamic and static exception specifications</a></li>
+<li><a href="#orgcd2898e">5.4.3. Order of the exception types</a></li>
+<li><a href="#org1fa2857">5.4.4. Exception specifications of defaulted special member functions</a></li>
+<li><a href="#org971f2d2">5.4.5. Introducing a pack outside of a template</a></li>
+<li><a href="#orgbba720b">5.4.6. Packs of <code>declthrow</code> packs</a></li>
+<li><a href="#org99073d9">5.4.7. Availability of the <code>declthrow</code> keyword</a></li>
+<li><a href="#orgb35c7de">5.4.8. Alternative Syntaxes Considered</a></li>
+<li><a href="#orgd20ff6c">5.4.9. Filtering the set of exceptions</a></li>
 </ul>
 </li>
-<li><a href="#org0f786b8">5.5. Checking the throw-specification of a function</a></li>
-<li><a href="#org5e7c80e">5.6. Computing the set of potentially-thrown exception types</a>
+<li><a href="#org8575b64">5.5. Checking the throw-specification of a function</a></li>
+<li><a href="#org101db92">5.6. Computing the set of potentially-thrown exception types</a>
 <ul>
-<li><a href="#org3356e22">5.6.1. Statement Reachability</a></li>
-<li><a href="#orgf5bbc7d">5.6.2. <i>function-body</i></a></li>
-<li><a href="#orge42400d">5.6.3. <i>statement</i></a></li>
-<li><a href="#org02b7c82">5.6.4. <i>expression-statement</i></a></li>
-<li><a href="#org3a2bf16">5.6.5. <i>compound-statement</i></a></li>
-<li><a href="#org4b89c84">5.6.6. <i>selection-statement</i></a></li>
-<li><a href="#orgfc3cb2f">5.6.7. <i>iteration-statement</i></a></li>
-<li><a href="#orga12635c">5.6.8. <i>jump-statement</i></a></li>
-<li><a href="#org14a52fc">5.6.9. <i>declaration-statement</i></a></li>
-<li><a href="#org57acd63">5.6.10. <i>try-block</i></a></li>
-<li><a href="#orgeb9384d">5.6.11. <i>init-statement</i></a></li>
-<li><a href="#org56849be">5.6.12. <i>expression</i></a></li>
+<li><a href="#org047e35a">5.6.1. Statement Reachability</a></li>
+<li><a href="#org5095b05">5.6.2. <i>function-body</i></a></li>
+<li><a href="#org94f0c11">5.6.3. <i>statement</i></a></li>
+<li><a href="#org25f65ba">5.6.4. <i>expression-statement</i></a></li>
+<li><a href="#org9342e54">5.6.5. <i>compound-statement</i></a></li>
+<li><a href="#orgfc97fec">5.6.6. <i>selection-statement</i></a></li>
+<li><a href="#org93cd058">5.6.7. <i>iteration-statement</i></a></li>
+<li><a href="#org90b7a3e">5.6.8. <i>jump-statement</i></a></li>
+<li><a href="#orgd376b63">5.6.9. <i>declaration-statement</i></a></li>
+<li><a href="#org997dfdf">5.6.10. <i>try-block</i></a></li>
+<li><a href="#org1cf07b5">5.6.11. <i>init-statement</i></a></li>
+<li><a href="#orge2ad8a8">5.6.12. <i>expression</i></a></li>
 </ul>
 </li>
-<li><a href="#orgf6477c6">5.7. Template handlers</a>
+<li><a href="#org05fa58f">5.7. Template handlers</a>
 <ul>
-<li><a href="#org0c4b471">5.7.1. Template argument deduction</a></li>
-<li><a href="#org881aa65">5.7.2. Matching dynamic exception objects</a></li>
-<li><a href="#orgbced0eb">5.7.3. Ordering of instantiated handlers</a></li>
+<li><a href="#orgbd16067">5.7.1. Template argument deduction</a></li>
+<li><a href="#org6eb620b">5.7.2. Matching dynamic exception objects</a></li>
+<li><a href="#org5b450ae">5.7.3. Ordering of instantiated handlers</a></li>
 </ul>
 </li>
-<li><a href="#org99eba7d">5.8. Virtual Functions</a>
+<li><a href="#org91d6d3d">5.8. Virtual Functions</a>
 <ul>
-<li><a href="#orgaecc4a2">5.8.1. ABI of virtual functions with differing exception specifications</a></li>
+<li><a href="#org5098f1e">5.8.1. ABI of virtual functions with differing exception specifications</a></li>
 </ul>
 </li>
-<li><a href="#org5d65219">5.9. Concepts</a></li>
-<li><a href="#org3c2d788">5.10. Coroutines</a>
+<li><a href="#org09739d2">5.9. Concepts</a></li>
+<li><a href="#org6372c27">5.10. Coroutines</a>
 <ul>
-<li><a href="#org437fe75">5.10.1. Coroutine promise object handling for static exception objects</a></li>
-<li><a href="#org5d57838">5.10.2. Computing the exception specification of a coroutine with a deduced throw specification</a></li>
+<li><a href="#orgf9db1e2">5.10.1. Coroutine promise object handling for static exception objects</a></li>
+<li><a href="#orge703699">5.10.2. Computing the exception specification of a coroutine with a deduced throw specification</a></li>
 </ul>
 </li>
-<li><a href="#org642f2ca">5.11. Type traits</a>
+<li><a href="#org72da490">5.11. Type traits</a>
 <ul>
-<li><a href="#orgf7f64b0">5.11.1. Nothrow queries</a></li>
-<li><a href="#org6e91116">5.11.2. <code>std::is_function</code> and <code>std::is_member_function_pointer</code></a></li>
-<li><a href="#orge9d5bc9">5.11.3. Additional traits</a></li>
+<li><a href="#orgc738ac6">5.11.1. Nothrow queries</a></li>
+<li><a href="#org8cf16dc">5.11.2. <code>std::is_function</code> and <code>std::is_member_function_pointer</code></a></li>
+<li><a href="#orgc1cc808">5.11.3. Additional traits</a></li>
 </ul>
 </li>
-<li><a href="#org0752b08">5.12. Freestanding</a></li>
+<li><a href="#org2db11e5">5.12. Freestanding</a></li>
 </ul>
 </li>
-<li><a href="#orgfbc9e4c">6. Prior Work</a>
+<li><a href="#org5f1b91c">6. Prior Work</a>
 <ul>
-<li><a href="#orgab8fe9d">6.1. Throw specifications and noexcept</a></li>
-<li><a href="#orgd1808b8">6.2. Java Checked Exceptions</a>
+<li><a href="#org15b819e">6.1. Throw specifications and noexcept</a></li>
+<li><a href="#orgce4cab9">6.2. Java Checked Exceptions</a>
 <ul>
-<li><a href="#orga911d81">6.2.1. Background On How Exceptions work in Java</a></li>
-<li><a href="#org6ac2563">6.2.2. Criticisms of Java Checked exceptions</a></li>
+<li><a href="#org452cd57">6.2.1. Background On How Exceptions work in Java</a></li>
+<li><a href="#orga58ecb1">6.2.2. Criticisms of Java Checked exceptions</a></li>
 </ul>
 </li>
-<li><a href="#orgb7ba59e">6.3. Midori</a></li>
-<li><a href="#org7dcf9ee">6.4. Deducing exception specifications</a></li>
-<li><a href="#org5f25513">6.5. Faster Exceptions</a></li>
-<li><a href="#org78d06ce">6.6. Freestanding</a></li>
-<li><a href="#org9d96423">6.7. Alternative Error-handling mechanisms</a>
-<ul>
-<li><a href="#org3e73423">6.7.1. std::expected</a></li>
-<li><a href="#org8697875">6.7.2. std::variant</a></li>
-<li><a href="#org9fcb0da">6.7.3. std::optional</a></li>
+<li><a href="#org1f07abf">6.3. Midori</a></li>
+<li><a href="#orgd29825e">6.4. Deducing exception specifications</a></li>
+<li><a href="#org5e61cc8">6.5. Faster Exceptions</a></li>
 </ul>
 </li>
+<li><a href="#org4ae9239">7. Design Discussion</a>
+<ul>
+<li><a href="#org0436fea">7.1. Code Evolution</a></li>
+<li><a href="#org5fa416c">7.2. A new calling convention / function-type</a></li>
+<li><a href="#orga98f78c">7.3. Changing the implementation changes the calling convention</a></li>
+<li><a href="#orgc2a3aaf">7.4. How accurate does the potentially-thrown exception type calculation need to be?</a></li>
+<li><a href="#org8d58acb">7.5. Permission to throw types derived from <code>std::bad_alloc</code> / <code>std::bad_cast</code></a></li>
+<li><a href="#orgb5c3901">7.6. Avoiding dependencies on thread-locals</a>
+<ul>
+<li><a href="#org19a1022">7.6.1. Avoiding overhead implied by <code>std::current_exception()</code> and <code>throw;</code></a></li>
+<li><a href="#orge35601f">7.6.2. Avoiding overhead implied by <code>std::unhandled_exceptions()</code></a></li>
 </ul>
 </li>
-<li><a href="#orgdb80c48">7. Design Discussion</a>
+<li><a href="#org423b1c1">7.7. Calling C functions</a></li>
+<li><a href="#org3fda78e">7.8. Interaction with Contracts</a></li>
+<li><a href="#org2302a00">7.9. Standard Library Impacts</a>
 <ul>
-<li><a href="#org540ef7b">7.1. Code Evolution</a></li>
-<li><a href="#org0167acf">7.2. A new calling convention / function-type</a></li>
-<li><a href="#org0e4efc0">7.3. Changing the implementation changes the calling convention</a></li>
-<li><a href="#org24db3c7">7.4. How accurate does the potentially-thrown exception type calculation need to be?</a></li>
-<li><a href="#org8528b1a">7.5. Avoiding dependencies on thread-locals</a>
-<ul>
-<li><a href="#org26a321d">7.5.1. Avoiding overhead implied by <code>std::current_exception()</code> and <code>throw;</code></a></li>
-<li><a href="#orgc0f39e5">7.5.2. Avoiding overhead implied by <code>std::unhandled_exceptions()</code></a></li>
-</ul>
-</li>
-<li><a href="#orgb9f6626">7.6. Calling C functions</a></li>
-<li><a href="#orgf31dfa4">7.7. Standard Library Impacts</a>
-<ul>
-<li><a href="#orga3545a1">7.7.1. Whether implementations add <code>noexcept</code> to "Throws: Nothing" functions can now affect well-formedness of a program</a></li>
-<li><a href="#org9fc05ad">7.7.2. Should implementations be allowed to strengthen "Throws: something" exception specification to a static exception specification?</a></li>
-<li><a href="#org8e4cfed">7.7.3. Usage of the standard library in functions with static throw-specifications will be painful without more noexcept</a></li>
-<li><a href="#orgdd3d470">7.7.4. Function-wrapper types</a></li>
+<li><a href="#orgc6e0558">7.9.1. Whether implementations add <code>noexcept</code> to "Throws: Nothing" functions can now affect well-formedness of a program</a></li>
+<li><a href="#org497e3e4">7.9.2. Should implementations be allowed to strengthen "Throws: something" exception specification to a static exception specification?</a></li>
+<li><a href="#org8a610e9">7.9.3. Usage of the standard library in functions with static throw-specifications will be painful without more noexcept</a></li>
+<li><a href="#org0a10f0d">7.9.4. Function-wrapper types</a></li>
 </ul>
 </li>
 </ul>
 </li>
-<li><a href="#orgfff9ae2">8. Implementation Strategies</a>
+<li><a href="#org9d65065">8. Implementation Strategies</a>
 <ul>
-<li><a href="#org1738bfe">8.1. Multiple return-paths/return-addresses</a>
+<li><a href="#org169bbc2">8.1. Multiple return-paths/return-addresses</a>
 <ul>
-<li><a href="#orgd74e27e">8.1.1. Inline Jump Tables</a></li>
-<li><a href="#org471674b">8.1.2. "NOP Stuffing" Jump Tables</a></li>
+<li><a href="#org812e246">8.1.1. Inline Jump Tables</a></li>
+<li><a href="#orge004831">8.1.2. "NOP Stuffing" Jump Tables</a></li>
 </ul>
 </li>
-<li><a href="#org9d59614">8.2. Multiple return-value-slots</a></li>
-<li><a href="#orgd1b939b">8.3. Passing an exception-value-slot parameter</a></li>
-<li><a href="#org952a873">8.4. Walking stack to find storage</a></li>
-<li><a href="#orgdd524e9">8.5. Unwinding through scopes with destructors</a></li>
-<li><a href="#orgc1aea88">8.6. Interop between static-exception functions and dynamic-exception functions</a></li>
-<li><a href="#orgcbebaa9">8.7. Virtual function calls</a></li>
-<li><a href="#org567093b">8.8. Interaction with <code>std::uncaught_exceptions()</code></a></li>
-<li><a href="#orga249f5e">8.9. Static exceptions and the Itanium C++ ABI</a></li>
+<li><a href="#org8465f54">8.2. Multiple return-value-slots</a></li>
+<li><a href="#org97440c8">8.3. Passing an exception-value-slot parameter</a></li>
+<li><a href="#orga0962da">8.4. Walking stack to find storage</a></li>
+<li><a href="#org6999cd9">8.5. Unwinding through scopes with destructors</a></li>
+<li><a href="#orga2d1307">8.6. Interop between static-exception functions and dynamic-exception functions</a></li>
+<li><a href="#org306649b">8.7. Virtual function calls</a></li>
+<li><a href="#org9cc8f10">8.8. Interaction with <code>std::uncaught_exceptions()</code></a></li>
+<li><a href="#org758acd5">8.9. Static exceptions and the Itanium C++ ABI</a></li>
 </ul>
 </li>
-<li><a href="#orgf46f453">9. Acknowledgements</a></li>
-<li><a href="#org1b8b113">10. References</a></li>
+<li><a href="#org360ddfd">9. Acknowledgements</a></li>
+<li><a href="#org922f72c">10. References</a></li>
 </ul>
 </div>
 </div>
@@ -401,8 +395,8 @@
 </tbody>
 </table>
 
-<div id="outline-container-org776c5e7" class="outline-2">
-<h2 id="org776c5e7"><span class="section-number-2">1.</span> Abstract</h2>
+<div id="outline-container-org54086b0" class="outline-2">
+<h2 id="org54086b0"><span class="section-number-2">1.</span> Abstract</h2>
 <div class="outline-text-2" id="text-1">
 <p>
 Exceptions are the C++ language's primary tool for communicating errors to callers.
@@ -460,8 +454,8 @@ as contracts and discussions around <code>noexcept</code> policy in the standard
 </div>
 </div>
 
-<div id="outline-container-orgca2de21" class="outline-2">
-<h2 id="orgca2de21"><span class="section-number-2">2.</span> Synopsis</h2>
+<div id="outline-container-org26121f8" class="outline-2">
+<h2 id="org26121f8"><span class="section-number-2">2.</span> Synopsis</h2>
 <div class="outline-text-2" id="text-2">
 <p>
 <b>Example 1: Explicit throw specifications</b>
@@ -663,8 +657,8 @@ which can instead be written using static exceptions, with equivalent (or better
 </div>
 </div>
 
-<div id="outline-container-org59d1b1e" class="outline-2">
-<h2 id="org59d1b1e"><span class="section-number-2">3.</span> Overview</h2>
+<div id="outline-container-org2e54373" class="outline-2">
+<h2 id="org2e54373"><span class="section-number-2">3.</span> Overview</h2>
 <div class="outline-text-2" id="text-3">
 <p>
 This paper proposes introducing <i>static exception specifications</i>, repurposing the
@@ -736,7 +730,7 @@ If you can avoid using facilities that require dynamic exceptions, such as
 <code>std::current_exception()</code> and <code>throw;</code> expressions that appear outside of the lexical
 scope of handlers, then the only dependency on thread-local storage is <code>std::uncaught_exceptions()</code>,
 which is not required in a lot of projects and could potentially be omitted from freestanding environments.
-See the section on <a href="#org8528b1a">Avoiding dependencies on thread-locals</a> for more details.
+See the section on <a href="#orgb5c3901">Avoiding dependencies on thread-locals</a> for more details.
 </p>
 
 <p>
@@ -775,17 +769,17 @@ seek to answer them at this stage.
 This paper is structured into the following sections:
 </p>
 <ul class="org-ul">
-<li><b><a href="#orgacbe295">Motivation</a></b> - motivation for addition of this feature</li>
-<li><b><a href="#org23e6a13">Proposal</a></b> - describes the design of the features this paper is proposing</li>
-<li><b><a href="#orgfbc9e4c">Prior Work</a></b> - a comparison of this work to prior-art in this area. e.g. to Java, Midori, C++98</li>
-<li><b><a href="#orgdb80c48">Design Discussion</a></b> - further discussion of important design points, alternatives, future work, etc.</li>
-<li><b><a href="#orgfff9ae2">Implementation Strategies</a></b> - discusses potential strategies implementations could use to implement this design efficiently</li>
+<li><b><a href="#org1d789b4">Motivation</a></b> - motivation for addition of this feature</li>
+<li><b><a href="#org20896e2">Proposal</a></b> - describes the design of the features this paper is proposing</li>
+<li><b><a href="#org5f1b91c">Prior Work</a></b> - a comparison of this work to prior-art in this area. e.g. to Java, Midori, C++98</li>
+<li><b><a href="#org4ae9239">Design Discussion</a></b> - further discussion of important design points, alternatives, future work, etc.</li>
+<li><b><a href="#org9d65065">Implementation Strategies</a></b> - discusses potential strategies implementations could use to implement this design efficiently</li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-orgacbe295" class="outline-2">
-<h2 id="orgacbe295"><span class="section-number-2">4.</span> Motivation</h2>
+<div id="outline-container-org1d789b4" class="outline-2">
+<h2 id="org1d789b4"><span class="section-number-2">4.</span> Motivation</h2>
 <div class="outline-text-2" id="text-4">
 <p>
 The paper [P0709R4] "Deterministic exceptions: throwing values" by Herb Sutter
@@ -796,8 +790,7 @@ and history of exceptions in C++ better than I could do here.
 <p>
 I agree with much of the philosophy and motivations expressed in P0709 and have
 used them as inspiration for the design for this paper. However, this paper takes
-a different approach to solving the issues raised - hopefully one that is more
-closely aligned with the general design principles of C++.
+a different approach to solving the issues raised.
 </p>
 
 <p>
@@ -820,8 +813,8 @@ regardless of whether callers have dynamic or static exception specifications.
 </p>
 </div>
 
-<div id="outline-container-orgb0c04fa" class="outline-3">
-<h3 id="orgb0c04fa"><span class="section-number-3">4.1.</span> Alternative error-signalling mechansisms have problems too</h3>
+<div id="outline-container-org8deed39" class="outline-3">
+<h3 id="org8deed39"><span class="section-number-3">4.1.</span> Alternative error-signalling mechansisms have problems too</h3>
 <div class="outline-text-3" id="text-4-1">
 <p>
 Code-bases that avoid using exceptions, for whatever reason, need to choose an alternative
@@ -841,8 +834,8 @@ trade-offs.
 </p>
 </div>
 
-<div id="outline-container-org55c3502" class="outline-4">
-<h4 id="org55c3502"><span class="section-number-4">4.1.1.</span> Composition of facilities that use different error-signaling mechanisms</h4>
+<div id="outline-container-org8d34b2c" class="outline-4">
+<h4 id="org8d34b2c"><span class="section-number-4">4.1.1.</span> Composition of facilities that use different error-signaling mechanisms</h4>
 <div class="outline-text-4" id="text-4-1-1">
 <p>
 As pointed out in P1947, these alternative error mechanisms aren't universally
@@ -858,7 +851,7 @@ meaning users can mask problems by accidentally ignoring errors, making their us
 
 <p>
 The growing number of error-handling mechanisms in use means it is harder to
-integrate components that use different error-handling techniques - often requiring
+compose components that use different error-handling techniques - often requiring
 explicit conversion/adaptation between components that use different error-signalling
 mechanisms.
 </p>
@@ -871,8 +864,8 @@ often requires reimplementing them.
 </div>
 </div>
 
-<div id="outline-container-orgaa4bff8" class="outline-4">
-<h4 id="orgaa4bff8"><span class="section-number-4">4.1.2.</span> Runtime overhead due to additional branching, packing/unpacking</h4>
+<div id="outline-container-orgf0659c9" class="outline-4">
+<h4 id="orgf0659c9"><span class="section-number-4">4.1.2.</span> Runtime overhead due to additional branching, packing/unpacking</h4>
 <div class="outline-text-4" id="text-4-1-2">
 <p>
 The alternative error-handling mechanisms can also incur runtime overhead compared
@@ -905,8 +898,8 @@ success value on its own, or compared to throwing an exception.
 </div>
 </div>
 
-<div id="outline-container-org0630cf8" class="outline-4">
-<h4 id="org0630cf8"><span class="section-number-4">4.1.3.</span> May require an additional "invalid" state, additional preconditions</h4>
+<div id="outline-container-orgd727c2b" class="outline-4">
+<h4 id="orgd727c2b"><span class="section-number-4">4.1.3.</span> May require an additional "invalid" state, additional preconditions</h4>
 <div class="outline-text-4" id="text-4-1-3">
 <p>
 They also typically require objects to have an invalid state.
@@ -931,8 +924,8 @@ that check that the object is valid.
 </div>
 </div>
 
-<div id="outline-container-orgd3c8b28" class="outline-3">
-<h3 id="orgd3c8b28"><span class="section-number-3">4.2.</span> Making exceptions fast by-design</h3>
+<div id="outline-container-orgfae1735" class="outline-3">
+<h3 id="orgfae1735"><span class="section-number-3">4.2.</span> Making exceptions fast by-design</h3>
 <div class="outline-text-3" id="text-4-2">
 <p>
 Exceptions are expensive on many platforms for an error-handling that is not rare.
@@ -941,10 +934,10 @@ return-path.
 </p>
 
 <p>
-This can be doubly bad for services that use exceptions for error-handling which
+This can be especially problematic for services that use exceptions for error-handling which
 triggers during service-overload situations. If a system is overloaded and starts
 throwing errors but this results in taking code-paths that are significantly more
-expensive then this can easily lead to a snow-balling effect where a few small
+expensive then this can easily result in a snow-balling effect where a few small
 errors quickly leads to much larger system failures.
 </p>
 
@@ -956,21 +949,28 @@ it very difficult reason about the performance of code in exceptional situations
 
 <p>
 Dynamic allocation can potentially make system-calls to acquire memory from the operating
-system, or block acquring locks on shared data-structures, leading to unpredictable
-execution times.
+system, or block acquring locks on shared data-structures, leading to unpredictable,
+non-deterministic execution times.
 </p>
 
 <p>
 The cost of dynamic type-matching when searching for a handler can depend on what DLLs
-happen to be loaded into the process.
+happen to be loaded into the process - something that is very difficult to reason about
+locally.
 </p>
 
 <p>
 While there have been efforts to reduce the cost of the dynamic exceptions, such as
 [FastCasting] and [Renwick], they do not solve the whole problem. For example,
-even with the stack-allocation techniques described in [FastCasting], dynamic allocation
+even with the stack-allocation techniques described in [Renwick], dynamic allocation
 is still required to transport exceptions across threads - something that will be
 increasingly common with the upcoming <code>std::excecution</code> facilities proposed in [P2300].
+</p>
+
+<p>
+The cost of exceptions in production implementations have remained roughly the same
+over the past few decades as improvements, to the extent they would be possible, would
+result in extremely disruptive ABI breaks.
 </p>
 
 <p>
@@ -1004,8 +1004,8 @@ of using the APIs clean and free-of error-handling logic.
 </div>
 </div>
 
-<div id="outline-container-orgcb77ee6" class="outline-3">
-<h3 id="orgcb77ee6"><span class="section-number-3">4.3.</span> Supporting exceptions in freestanding and real-time environments</h3>
+<div id="outline-container-orgd307ed4" class="outline-3">
+<h3 id="orgd307ed4"><span class="section-number-3">4.3.</span> Supporting exceptions in freestanding and real-time environments</h3>
 <div class="outline-text-3" id="text-4-3">
 <p>
 The current lack of availability of support for exceptions in freestanding environments
@@ -1033,8 +1033,8 @@ of that design lead to overhead that is undesirable, even if exception paths are
 </div>
 </div>
 
-<div id="outline-container-orgbeae759" class="outline-3">
-<h3 id="orgbeae759"><span class="section-number-3">4.4.</span> Reducing bugs caused by failure to handle error-conditions</h3>
+<div id="outline-container-org23c580a" class="outline-3">
+<h3 id="org23c580a"><span class="section-number-3">4.4.</span> Reducing bugs caused by failure to handle error-conditions</h3>
 <div class="outline-text-3" id="text-4-4">
 <p>
 Use of exceptions in a program can introduce hidden control-flow that makes it hard to
@@ -1070,8 +1070,8 @@ Currently, the language offers little help to users wanting to catch this class 
 </div>
 </div>
 
-<div id="outline-container-orge9d938a" class="outline-3">
-<h3 id="orge9d938a"><span class="section-number-3">4.5.</span> Describing the contract in code instead of in documentation</h3>
+<div id="outline-container-org6c6202c" class="outline-3">
+<h3 id="org6c6202c"><span class="section-number-3">4.5.</span> Describing the contract in code instead of in documentation</h3>
 <div class="outline-text-3" id="text-4-5">
 <p>
 A function declaration defines the contract between callers of that function and the
@@ -1113,7 +1113,8 @@ Prior to C++17, there was the ability to declare constraints on the set of excep
 types a function could throw, by providing a <code>throw()</code> specifier. Though, even with
 this capability, you could not tell the exact set of types that may be thrown, only
 what types you must catch in order to handle all exceptions - the function was permitted
-to throw types derived from those types.
+to throw types derived from those types. See <a href="#org31d286d">(Re)Adding <code>throw()</code> specifiers</a> for more
+details.
 </p>
 
 <p>
@@ -1128,8 +1129,8 @@ exception code-paths without requiring global knowledge of the program.
 </p>
 </div>
 
-<div id="outline-container-orgba06ab3" class="outline-4">
-<h4 id="orgba06ab3"><span class="section-number-4">4.5.1.</span> Uses in generic code</h4>
+<div id="outline-container-orge02bdf4" class="outline-4">
+<h4 id="orge02bdf4"><span class="section-number-4">4.5.1.</span> Uses in generic code</h4>
 <div class="outline-text-4" id="text-4-5-1">
 <p>
 When writing generic code that ends up calling into APIs on types provided by the user,
@@ -1148,8 +1149,8 @@ to store an exception object, such as in a <code>std::variant</code>.
 </div>
 </div>
 
-<div id="outline-container-org5bb71f5" class="outline-3">
-<h3 id="org5bb71f5"><span class="section-number-3">4.6.</span> Reducing boiler-plate when writing functions that are transparent to exceptions</h3>
+<div id="outline-container-org3b96e1b" class="outline-3">
+<h3 id="org3b96e1b"><span class="section-number-3">4.6.</span> Reducing boiler-plate when writing functions that are transparent to exceptions</h3>
 <div class="outline-text-3" id="text-4-6">
 <p>
 Authors of generic code often desire to write facilities that are transparent to exceptions.
@@ -1212,13 +1213,13 @@ deduce the exception specification.
 </div>
 </div>
 
-<div id="outline-container-org23e6a13" class="outline-2">
-<h2 id="org23e6a13"><span class="section-number-2">5.</span> Proposal</h2>
+<div id="outline-container-org20896e2" class="outline-2">
+<h2 id="org20896e2"><span class="section-number-2">5.</span> Proposal</h2>
 <div class="outline-text-2" id="text-5">
 </div>
 
-<div id="outline-container-org4e9d1b7" class="outline-3">
-<h3 id="org4e9d1b7"><span class="section-number-3">5.1.</span> Overview</h3>
+<div id="outline-container-org9a2770d" class="outline-3">
+<h3 id="org9a2770d"><span class="section-number-3">5.1.</span> Overview</h3>
 <div class="outline-text-3" id="text-5-1">
 <p>
 The key components of this proposal are as follows:
@@ -1226,7 +1227,8 @@ The key components of this proposal are as follows:
 
 <p>
 It proposes (re)adding <code>throw()</code> specifiers which can be used to declare a function
-as having either a static exception specifier or dynamic exception specifier.
+as having either a static exception specification, <code>throw(T1, T2...)</code>,
+or dynamic exception specifier, <code>throw(...)</code> or <code>throw(std::any_exception)</code>.
 </p>
 
 <p>
@@ -1254,8 +1256,8 @@ to handle different types, without the need for type-erasing the exception.
 </div>
 </div>
 
-<div id="outline-container-orge0467e9" class="outline-3">
-<h3 id="orge0467e9"><span class="section-number-3">5.2.</span> (Re)Adding <code>throw()</code> specifiers</h3>
+<div id="outline-container-org31d286d" class="outline-3">
+<h3 id="org31d286d"><span class="section-number-3">5.2.</span> (Re)Adding <code>throw()</code> specifiers</h3>
 <div class="outline-text-3" id="text-5-2">
 <p>
 The original design of exceptions in C++ included a throw-specification that allowed
@@ -1308,12 +1310,12 @@ avoid the pitfalls of the original design.
 </div>
 </div>
 
-<div id="outline-container-org1e0d309" class="outline-3">
-<h3 id="org1e0d309"><span class="section-number-3">5.3.</span> Static exception specifications</h3>
+<div id="outline-container-org82bd62f" class="outline-3">
+<h3 id="org82bd62f"><span class="section-number-3">5.3.</span> Static exception specifications</h3>
 <div class="outline-text-3" id="text-5-3">
 <p>
 A <i>static exception specification</i> is an exception specification that lists a finite
-list of possible exception types that a function may exit with.
+set of possible exception types that a function may exit with.
 </p>
 
 <p>
@@ -1386,8 +1388,8 @@ definition must have an equivalent static exception specification on the declara
 </p>
 </div>
 
-<div id="outline-container-org06f0b63" class="outline-4">
-<h4 id="org06f0b63"><span class="section-number-4">5.3.1.</span> Types in a throw-specification form an unordered set</h4>
+<div id="outline-container-org99739e9" class="outline-4">
+<h4 id="org99739e9"><span class="section-number-4">5.3.1.</span> Types in a throw-specification form an unordered set</h4>
 <div class="outline-text-4" id="text-5-3-1">
 <p>
 The order of the types in the throw-specification is not significant. The throw-specification
@@ -1445,8 +1447,8 @@ For example:
 </div>
 </div>
 
-<div id="outline-container-orga8f9033" class="outline-4">
-<h4 id="orga8f9033"><span class="section-number-4">5.3.2.</span> Handling of <code>std::any_exception</code> in the throw-specifier</h4>
+<div id="outline-container-orgd219f3a" class="outline-4">
+<h4 id="orgd219f3a"><span class="section-number-4">5.3.2.</span> Handling of <code>std::any_exception</code> in the throw-specifier</h4>
 <div class="outline-text-4" id="text-5-3-2">
 <p>
 The <code>std::any_exception</code> type is a type that is handled specially by throw specifications.
@@ -1508,8 +1510,8 @@ depending on the type, <code>T</code>.
 </div>
 </div>
 
-<div id="outline-container-org79fd89a" class="outline-4">
-<h4 id="org79fd89a"><span class="section-number-4">5.3.3.</span> The types in the throw specification describe all concrete types that may be thrown</h4>
+<div id="outline-container-org2fb416c" class="outline-4">
+<h4 id="org2fb416c"><span class="section-number-4">5.3.3.</span> The types in the throw specification describe all concrete types that may be thrown</h4>
 <div class="outline-text-4" id="text-5-3-3">
 <p>
 One of the prime motivations behind re-adding throw-specifications is to provide the compiler
@@ -1558,8 +1560,8 @@ in detail in a later section.
 </div>
 </div>
 
-<div id="outline-container-org77287ed" class="outline-4">
-<h4 id="org77287ed"><span class="section-number-4">5.3.4.</span> Exception types may not be references, cv-qualified, or void</h4>
+<div id="outline-container-orgdaacb89" class="outline-4">
+<h4 id="orgdaacb89"><span class="section-number-4">5.3.4.</span> Exception types may not be references, cv-qualified, or void</h4>
 <div class="outline-text-4" id="text-5-3-4">
 <p>
 Types listed in the throw-specification may not be references, cv-qualified, or <code>void</code>.
@@ -1572,8 +1574,8 @@ support throw-specifications that are references or cv-qualified.
 </div>
 </div>
 
-<div id="outline-container-orgca16a35" class="outline-4">
-<h4 id="orgca16a35"><span class="section-number-4">5.3.5.</span> Static exception specifications are part of the function type</h4>
+<div id="outline-container-org479c818" class="outline-4">
+<h4 id="org479c818"><span class="section-number-4">5.3.5.</span> Static exception specifications are part of the function type</h4>
 <div class="outline-text-4" id="text-5-3-5">
 <p>
 The throw-specification is part of the function type, much like <code>noexcept</code> specifier is
@@ -1658,8 +1660,8 @@ to a pointer to a function with a <code>noexcept(false)</code> exception specifi
 </div>
 </div>
 
-<div id="outline-container-orgd30938a" class="outline-4">
-<h4 id="orgd30938a"><span class="section-number-4">5.3.6.</span> Deducing throw-specifications from a function signature</h4>
+<div id="outline-container-orgf3cc7d9" class="outline-4">
+<h4 id="orgf3cc7d9"><span class="section-number-4">5.3.6.</span> Deducing throw-specifications from a function signature</h4>
 <div class="outline-text-4" id="text-5-3-6">
 <p>
 It is permitted to allow template arguments to be deduced from the throw-specification
@@ -1691,8 +1693,8 @@ This is similar to the ability to deduce whether a function signature is <code>n
 </div>
 </div>
 
-<div id="outline-container-org938f7a8" class="outline-4">
-<h4 id="org938f7a8"><span class="section-number-4">5.3.7.</span> <code>throw(auto)</code> - Deducing exception-specifications from the body of a function</h4>
+<div id="outline-container-org532762e" class="outline-4">
+<h4 id="org532762e"><span class="section-number-4">5.3.7.</span> <code>throw(auto)</code> - Deducing exception-specifications from the body of a function</h4>
 <div class="outline-text-4" id="text-5-3-7">
 <p>
 Often, when writing forwarding functions, or function templates, you just want the function to be
@@ -1717,7 +1719,7 @@ the expression needed to compute the <code>noexcept</code> specifier argument qu
 </div>
 
 <ol class="org-ol">
-<li><a id="orge90a508"></a>Prior work on deducing exception specifications<br />
+<li><a id="orga026af8"></a>Prior work on deducing exception specifications<br />
 <div class="outline-text-5" id="text-5-3-7-1">
 <p>
 This usability issue was identified as a problem back when <code>noexcept</code> was originally proposed for C++11:
@@ -1760,7 +1762,7 @@ do need to compute accurate exception specifications.
 </div>
 </li>
 
-<li><a id="org4fcb6d7"></a><code>throw(auto)</code><br />
+<li><a id="org2225a51"></a><code>throw(auto)</code><br />
 <div class="outline-text-5" id="text-5-3-7-2">
 <p>
 With the (re)introduction of throw-specifications, the task of computing a correct throw-specification
@@ -1859,7 +1861,7 @@ function-templates that are defined as "expression-equivalent to" some expressio
 </div>
 </li>
 
-<li><a id="org875108c"></a>Further motivation for <code>throw(auto)</code> from P2300 <code>std::execution</code><br />
+<li><a id="orgdd63b64"></a>Further motivation for <code>throw(auto)</code> from P2300 <code>std::execution</code><br />
 <div class="outline-text-5" id="text-5-3-7-3">
 <p>
 One place where having accurate exception specifications (whether <code>noexcept</code> or <code>throw()</code> specifications)
@@ -1943,8 +1945,8 @@ their sender/receiver code runs faster when appropriate.
 </ol>
 </div>
 
-<div id="outline-container-org24b9285" class="outline-4">
-<h4 id="org24b9285"><span class="section-number-4">5.3.8.</span> Forward declarations of <code>throw(auto)</code> functions</h4>
+<div id="outline-container-org9485a0c" class="outline-4">
+<h4 id="org9485a0c"><span class="section-number-4">5.3.8.</span> Forward declarations of <code>throw(auto)</code> functions</h4>
 <div class="outline-text-4" id="text-5-3-8">
 <p>
 The use of <code>throw(auto)</code> on a forward-declaration of the function requires that the definition
@@ -1999,8 +2001,8 @@ it can be used has implications for recursive functions, however.
 </div>
 </div>
 
-<div id="outline-container-org1f4b68b" class="outline-4">
-<h4 id="org1f4b68b"><span class="section-number-4">5.3.9.</span> Deduced exception-specifications and recursive functions</h4>
+<div id="outline-container-orgb3e16c5" class="outline-4">
+<h4 id="orgb3e16c5"><span class="section-number-4">5.3.9.</span> Deduced exception-specifications and recursive functions</h4>
 <div class="outline-text-4" id="text-5-3-9">
 <p>
 Supporting deduced exception-specifications for recursive functions is a challenge.
@@ -2098,8 +2100,8 @@ niche case and so this paper proposes that it be left ill-formed for now.
 </div>
 </div>
 
-<div id="outline-container-orgb2ef6a1" class="outline-4">
-<h4 id="orgb2ef6a1"><span class="section-number-4">5.3.10.</span> Delayed computation of deduced throw specifications</h4>
+<div id="outline-container-org648f39d" class="outline-4">
+<h4 id="org648f39d"><span class="section-number-4">5.3.10.</span> Delayed computation of deduced throw specifications</h4>
 <div class="outline-text-4" id="text-5-3-10">
 <p>
 The throw-specification of a function or function-template with a deduced throw specification
@@ -2118,8 +2120,8 @@ to compute the throw-specification so that the function-pointer type is known.
 </div>
 </div>
 
-<div id="outline-container-org367379c" class="outline-4">
-<h4 id="org367379c"><span class="section-number-4">5.3.11.</span> Do we also need <code>noexcept(auto)</code>?</h4>
+<div id="outline-container-org1ed4d68" class="outline-4">
+<h4 id="org1ed4d68"><span class="section-number-4">5.3.11.</span> Do we also need <code>noexcept(auto)</code>?</h4>
 <div class="outline-text-4" id="text-5-3-11">
 <p>
 We could also consider adding support for the <code>noexcept(auto)</code> syntax, in addition to <code>throw(auto)</code>.
@@ -2197,8 +2199,8 @@ It can be added later if usage experience shows that it would have sufficient va
 </div>
 </div>
 
-<div id="outline-container-org769245a" class="outline-3">
-<h3 id="org769245a"><span class="section-number-3">5.4.</span> Querying the throw-specification</h3>
+<div id="outline-container-orgc473630" class="outline-3">
+<h3 id="orgc473630"><span class="section-number-3">5.4.</span> Querying the throw-specification</h3>
 <div class="outline-text-3" id="text-5-4">
 <p>
 Once we have the ability to specify static-exception-specifications on functions, there
@@ -2253,8 +2255,8 @@ For example:
 </div>
 </div>
 
-<div id="outline-container-orgbbfd43a" class="outline-4">
-<h4 id="orgbbfd43a"><span class="section-number-4">5.4.1.</span> <code>declthrow</code> of a call to a <code>throw(...)</code> function</h4>
+<div id="outline-container-org5a19d7f" class="outline-4">
+<h4 id="org5a19d7f"><span class="section-number-4">5.4.1.</span> <code>declthrow</code> of a call to a <code>throw(...)</code> function</h4>
 <div class="outline-text-4" id="text-5-4-1">
 <p>
 If the expression may exit with a dynamic-exception (i.e. one of the sub-expressions has an exception specification of <code>noexcept(false)</code> or <code>throw(...)</code>)
@@ -2266,7 +2268,7 @@ An alias for this type is made available as <code>std::any_exception</code> in t
 </p>
 
 <div class="org-src-container">
-<pre class="src src-c++" id="org83f124b"><span class="org-keyword">namespace</span> <span class="org-constant">std</span> {
+<pre class="src src-c++" id="org620ea33"><span class="org-keyword">namespace</span> <span class="org-constant">std</span> {
   <span class="org-comment-delimiter">// </span><span class="org-comment">NOTE: using pack indexing syntax proposed in P2662R2</span>
   <span class="org-keyword">using</span> <span class="org-type">any_exception</span> = declthrow(<span class="org-keyword">static_cast</span>&lt;<span class="org-type">void</span>(*)()<span class="org-keyword">throw</span>(...)&gt;(<span class="org-constant">nullptr</span>)())...[0];
 }
@@ -2297,8 +2299,8 @@ This is explored in more detail in the design discussion section.
 </div>
 </div>
 
-<div id="outline-container-org68b2fc4" class="outline-4">
-<h4 id="org68b2fc4"><span class="section-number-4">5.4.2.</span> Mixed dynamic and static exception specifications</h4>
+<div id="outline-container-org10be157" class="outline-4">
+<h4 id="org10be157"><span class="section-number-4">5.4.2.</span> Mixed dynamic and static exception specifications</h4>
 <div class="outline-text-4" id="text-5-4-2">
 <p>
 When the operand to <code>declthrow()</code> contains multiple sub-expressions, some of which have
@@ -2372,8 +2374,8 @@ For example: With this behaviour we can write the following code
 </div>
 </div>
 
-<div id="outline-container-org38284ec" class="outline-4">
-<h4 id="org38284ec"><span class="section-number-4">5.4.3.</span> Order of the exception types</h4>
+<div id="outline-container-orgcd2898e" class="outline-4">
+<h4 id="orgcd2898e"><span class="section-number-4">5.4.3.</span> Order of the exception types</h4>
 <div class="outline-text-4" id="text-5-4-3">
 <p>
 In the section on throw-specifications above it noted that the order of types listed in the throw
@@ -2395,14 +2397,21 @@ is a sure-fire way to introduce ODR-violations.
 </p>
 
 <p>
+Any unique set of exception types queried via a <code>declthrow</code> expression or by deducing the types
+listed in a static exception specification of a function signature needs to consistently yield
+a list of types in that set in a canonical order.
+</p>
+
+<p>
 There are a few other questions around the ordering of the exception types:
 </p>
 <ul class="org-ul">
 <li>Should the order be some ordering of all types?
 i.e. if <code>E1</code> appears before <code>E2</code> in some <code>declthrow()</code> query, then <code>E1</code> appears before <code>E2</code> in <i>all</i> <code>declthrow()</code> queries.
 <ul class="org-ul">
-<li>This would effectively provide a built-in facility for sorting types in type-lists.
-Note that <a href="https://wg21.link/P2830">P2830</a> "Standardized Type Ordering" is also exploring the design space for sorting of types.</li>
+<li>This would effectively provide a built-in facility for sorting types in type-lists.</li>
+<li>Note that <a href="https://wg21.link/P2830">P2830</a> "Standardized Type Ordering" is also exploring the design space for sorting of types.
+Should the order that types are returned in be consistent with the order produced by that facility?</li>
 </ul></li>
 <li>Should the order be specified by the standard? or should it be unspecified/implementation-defined?
 <ul class="org-ul">
@@ -2482,8 +2491,8 @@ or by their fully-scoped names.
 </div>
 </div>
 
-<div id="outline-container-org3f9d823" class="outline-4">
-<h4 id="org3f9d823"><span class="section-number-4">5.4.4.</span> Exception specifications of defaulted special member functions</h4>
+<div id="outline-container-org1fa2857" class="outline-4">
+<h4 id="org1fa2857"><span class="section-number-4">5.4.4.</span> Exception specifications of defaulted special member functions</h4>
 <div class="outline-text-4" id="text-5-4-4">
 <p>
 See [dcl.fct.def.default].
@@ -2630,8 +2639,8 @@ of defaulting exception specifications can be applied.
 </div>
 </div>
 
-<div id="outline-container-orgef0df63" class="outline-4">
-<h4 id="orgef0df63"><span class="section-number-4">5.4.5.</span> Introducing a pack outside of a template</h4>
+<div id="outline-container-org971f2d2" class="outline-4">
+<h4 id="org971f2d2"><span class="section-number-4">5.4.5.</span> Introducing a pack outside of a template</h4>
 <div class="outline-text-4" id="text-5-4-5">
 <p>
 The introduction of a <code>declthrow(expr)</code> syntax that can introduce a pack of types at an arbitrary
@@ -2744,8 +2753,8 @@ some of these cases possible. See P1858R2, P2632R0.
 </div>
 </div>
 
-<div id="outline-container-orgea9d963" class="outline-4">
-<h4 id="orgea9d963"><span class="section-number-4">5.4.6.</span> Packs of <code>declthrow</code> packs</h4>
+<div id="outline-container-orgbba720b" class="outline-4">
+<h4 id="orgbba720b"><span class="section-number-4">5.4.6.</span> Packs of <code>declthrow</code> packs</h4>
 <div class="outline-text-4" id="text-5-4-6">
 <p>
 One common use-case of <code>declthrow</code> is to compute throw-specifications for other functions.
@@ -2808,8 +2817,8 @@ from the body, rather than having to duplicate the relevant parts of the body in
 </div>
 </div>
 
-<div id="outline-container-orgf222181" class="outline-4">
-<h4 id="orgf222181"><span class="section-number-4">5.4.7.</span> Availability of the <code>declthrow</code> keyword</h4>
+<div id="outline-container-org99073d9" class="outline-4">
+<h4 id="org99073d9"><span class="section-number-4">5.4.7.</span> Availability of the <code>declthrow</code> keyword</h4>
 <div class="outline-text-4" id="text-5-4-7">
 <p>
 A search of GitHub public repositories yielded no direct matches for the identifier <code>declthrow</code>,
@@ -2823,8 +2832,8 @@ A search of <a href="https://codesearch.isocpp.org/">https://codesearch.isocpp.o
 </div>
 </div>
 
-<div id="outline-container-orgb9f61a5" class="outline-4">
-<h4 id="orgb9f61a5"><span class="section-number-4">5.4.8.</span> Alternative Syntaxes Considered</h4>
+<div id="outline-container-orgb35c7de" class="outline-4">
+<h4 id="orgb35c7de"><span class="section-number-4">5.4.8.</span> Alternative Syntaxes Considered</h4>
 <div class="outline-text-4" id="text-5-4-8">
 <p>
 Another alternative syntax considered was the reuse of the <code>throw</code> keyword in a
@@ -2850,8 +2859,8 @@ used to query the value-type of an expression.
 </div>
 </div>
 
-<div id="outline-container-orgdf021f3" class="outline-4">
-<h4 id="orgdf021f3"><span class="section-number-4">5.4.9.</span> Filtering the set of exceptions</h4>
+<div id="outline-container-orgd20ff6c" class="outline-4">
+<h4 id="orgd20ff6c"><span class="section-number-4">5.4.9.</span> Filtering the set of exceptions</h4>
 <div class="outline-text-4" id="text-5-4-9">
 <p>
 Sometimes we want to build a throw-specification that indicates that we throw any exception
@@ -2952,8 +2961,8 @@ approach.
 </div>
 </div>
 
-<div id="outline-container-org0f786b8" class="outline-3">
-<h3 id="org0f786b8"><span class="section-number-3">5.5.</span> Checking the throw-specification of a function</h3>
+<div id="outline-container-org8575b64" class="outline-3">
+<h3 id="org8575b64"><span class="section-number-3">5.5.</span> Checking the throw-specification of a function</h3>
 <div class="outline-text-3" id="text-5-5">
 <p>
 A function declaration that includes a <i>static-exception-specification</i> must have a definition that
@@ -3007,8 +3016,8 @@ required to be performed.
 </div>
 </div>
 
-<div id="outline-container-org5e7c80e" class="outline-3">
-<h3 id="org5e7c80e"><span class="section-number-3">5.6.</span> Computing the set of potentially-thrown exception types</h3>
+<div id="outline-container-org101db92" class="outline-3">
+<h3 id="org101db92"><span class="section-number-3">5.6.</span> Computing the set of potentially-thrown exception types</h3>
 <div class="outline-text-3" id="text-5-6">
 <p>
 The ability to check the throw-specification of a function, compute the results of a <code>declthrow</code>
@@ -3044,8 +3053,8 @@ descriptive enough to understand the proposed semantics.
 </p>
 </div>
 
-<div id="outline-container-org3356e22" class="outline-4">
-<h4 id="org3356e22"><span class="section-number-4">5.6.1.</span> Statement Reachability</h4>
+<div id="outline-container-org047e35a" class="outline-4">
+<h4 id="org047e35a"><span class="section-number-4">5.6.1.</span> Statement Reachability</h4>
 <div class="outline-text-4" id="text-5-6-1">
 <p>
 When computing the set of exceptions that may the thrown from some constructs, there are cases
@@ -3083,7 +3092,7 @@ divert control-flow elsewhere.
 </div>
 
 <ol class="org-ol">
-<li><a id="orgdb8d933"></a>Interrupted-flow statements<br />
+<li><a id="orgd1a5fd4"></a>Interrupted-flow statements<br />
 <div class="outline-text-5" id="text-5-6-1-1">
 <p>
 An <i>interrupted-flow statement</i> is a statement for which execution cannot flow to the next statement
@@ -3149,7 +3158,7 @@ reachable handler (see section on <i>try-block</i> below) of the <i>try-block</i
 </div>
 </li>
 
-<li><a id="orgd243e8a"></a>Interrupted-flow expressions<br />
+<li><a id="org7768954"></a>Interrupted-flow expressions<br />
 <div class="outline-text-5" id="text-5-6-1-2">
 <p>
 An <i>interrupted-flow-expression</i> is a potentially evaluated expression that is one of the following:
@@ -3169,7 +3178,7 @@ An <i>interrupted-flow-expression</i> is a potentially evaluated expression that
 </div>
 </li>
 
-<li><a id="org072fddf"></a>Potentially-reachable statements<br />
+<li><a id="org71697e0"></a>Potentially-reachable statements<br />
 <div class="outline-text-5" id="text-5-6-1-3">
 <p>
 A <i>potentially-reachable statement</i> is a statement of a function that the compiler determines
@@ -3179,7 +3188,7 @@ It does not consider the values of any expressions which are semantically comput
 </div>
 
 <ol class="org-ol">
-<li><a id="org8cd4e17"></a>Reachability of compound-statements<br />
+<li><a id="org27233a1"></a>Reachability of compound-statements<br />
 <div class="outline-text-6" id="text-5-6-1-3-1">
 <p>
 A sub-statement of a <i>compound-statement</i> is a <i>potentially-reachable statement</i> if:
@@ -3200,7 +3209,7 @@ A <i>compound-statement</i> that is the top-level <i>compound-statement</i> of a
 </div>
 </li>
 
-<li><a id="org712d5b0"></a>Reachability of components of an if-statement<br />
+<li><a id="org0985e0c"></a>Reachability of components of an if-statement<br />
 <div class="outline-text-6" id="text-5-6-1-3-2">
 <p>
 In an if-statement of the form <code>if ( /condition/ ) /statement/</code> or <code>if ( /init-statement/ /condition/ ) /statement/</code> with or without the <code>else /statement/</code> then;
@@ -3227,7 +3236,7 @@ evaluates to <code>false</code>.</li>
 </div>
 </li>
 
-<li><a id="org3353aaf"></a>Reachability of components of a switch statement<br />
+<li><a id="org1f99a6b"></a>Reachability of components of a switch statement<br />
 <div class="outline-text-6" id="text-5-6-1-3-3">
 <p>
 In a switch-statement of the form <code>switch ( /condition/ ) /statement/</code>:
@@ -3276,7 +3285,7 @@ For example:
 </div>
 </li>
 
-<li><a id="org11981ee"></a>Reachability of components of an iteration-statement<br />
+<li><a id="orge338fb2"></a>Reachability of components of an iteration-statement<br />
 <div class="outline-text-6" id="text-5-6-1-3-4">
 <p>
 In an iteration-statement of the form <code>while ( /condition/ ) /statement/</code>
@@ -3319,7 +3328,7 @@ and is not an <i>interrupted-flow statement</i> and either the <i>condition</i> 
 </div>
 </li>
 
-<li><a id="org32382ae"></a>Reachability of identifier labels<br />
+<li><a id="org061ea03"></a>Reachability of identifier labels<br />
 <div class="outline-text-6" id="text-5-6-1-3-5">
 <p>
 These rules treat all identifier labels as potentially-reachable and does not do any analysis to
@@ -3437,7 +3446,7 @@ worth the additional complexity it would place on implementations.
 </ol>
 </li>
 
-<li><a id="orgf05412a"></a>Flowing off the end of a compound-statement<br />
+<li><a id="orgf19947f"></a>Flowing off the end of a compound-statement<br />
 <div class="outline-text-5" id="text-5-6-1-4">
 <p>
 Execution may flow off the end of a <i>compound-statement</i> if either;
@@ -3456,7 +3465,7 @@ have destructors that have the attribute <code>[[noreturn]]</code>.</li>
 </div>
 </li>
 
-<li><a id="org0a5a2ca"></a>Flowing off the end of a switch statement<br />
+<li><a id="org61da95c"></a>Flowing off the end of a switch statement<br />
 <div class="outline-text-5" id="text-5-6-1-5">
 <p>
 The rules for determining that a switch statement is an <i>interrupted-flow statement</i> require
@@ -3534,7 +3543,7 @@ of a <code>default:</code> label here.
 </div>
 </li>
 
-<li><a id="org3090e4f"></a>Use of <code>[[noreturn]]</code> for normative semantics<br />
+<li><a id="org7281cdc"></a>Use of <code>[[noreturn]]</code> for normative semantics<br />
 <div class="outline-text-5" id="text-5-6-1-6">
 <p>
 The rules above treats calls to functions marked as <code>[[noreturn]]</code> as being interrupted-flow expressions
@@ -3575,8 +3584,8 @@ returning normally.
 </ol>
 </div>
 
-<div id="outline-container-orgf5bbc7d" class="outline-4">
-<h4 id="orgf5bbc7d"><span class="section-number-4">5.6.2.</span> <i>function-body</i></h4>
+<div id="outline-container-org5095b05" class="outline-4">
+<h4 id="org5095b05"><span class="section-number-4">5.6.2.</span> <i>function-body</i></h4>
 <div class="outline-text-4" id="text-5-6-2">
 <p>
 The computation of the set of exception types of a <i>function-body</i> is used for two main purposes:
@@ -3655,8 +3664,8 @@ of types described by (<i>C</i> - <i>D</i>) ∪ <i>E</i>&#x2026;
 </div>
 </div>
 
-<div id="outline-container-orge42400d" class="outline-4">
-<h4 id="orge42400d"><span class="section-number-4">5.6.3.</span> <i>statement</i></h4>
+<div id="outline-container-org94f0c11" class="outline-4">
+<h4 id="org94f0c11"><span class="section-number-4">5.6.3.</span> <i>statement</i></h4>
 <div class="outline-text-4" id="text-5-6-3">
 <p>
 A statement is one of the following cases:
@@ -3677,8 +3686,8 @@ See the relevant section for a description of each.
 </div>
 </div>
 
-<div id="outline-container-org02b7c82" class="outline-4">
-<h4 id="org02b7c82"><span class="section-number-4">5.6.4.</span> <i>expression-statement</i></h4>
+<div id="outline-container-org25f65ba" class="outline-4">
+<h4 id="org25f65ba"><span class="section-number-4">5.6.4.</span> <i>expression-statement</i></h4>
 <div class="outline-text-4" id="text-5-6-4">
 <p>
 An <i>expression-statement</i> has a set of potentially-thrown exception types equal to
@@ -3691,8 +3700,8 @@ See section on <i>expression</i> handling below.
 </div>
 </div>
 
-<div id="outline-container-org3a2bf16" class="outline-4">
-<h4 id="org3a2bf16"><span class="section-number-4">5.6.5.</span> <i>compound-statement</i></h4>
+<div id="outline-container-org9342e54" class="outline-4">
+<h4 id="org9342e54"><span class="section-number-4">5.6.5.</span> <i>compound-statement</i></h4>
 <div class="outline-text-4" id="text-5-6-5">
 <p>
 The set of potentially thrown exception types for a <i>compound-statement</i> is the union of
@@ -3733,8 +3742,8 @@ The set of potentially-thrown-exceptions from the following compound-statement i
 </div>
 </div>
 
-<div id="outline-container-org4b89c84" class="outline-4">
-<h4 id="org4b89c84"><span class="section-number-4">5.6.6.</span> <i>selection-statement</i></h4>
+<div id="outline-container-orgfc97fec" class="outline-4">
+<h4 id="orgfc97fec"><span class="section-number-4">5.6.6.</span> <i>selection-statement</i></h4>
 <div class="outline-text-4" id="text-5-6-6">
 <p>
 Selection statements include <code>if</code>, <code>if constexpr</code>, <code>if consteval</code> and <code>switch</code> statements.
@@ -3742,7 +3751,7 @@ Selection statements include <code>if</code>, <code>if constexpr</code>, <code>i
 </div>
 
 <ol class="org-ol">
-<li><a id="org495564b"></a><code>if</code> statements<br />
+<li><a id="org6d58bf4"></a><code>if</code> statements<br />
 <div class="outline-text-5" id="text-5-6-6-1">
 <p>
 The set of potentially-thrown exception types of an <code>if</code> statement is the
@@ -3780,7 +3789,7 @@ use the <code>if constexpr</code> form of selection-statement (see below).
 </div>
 
 <ol class="org-ol">
-<li><a id="orgc6dd328"></a>Reachability of if-statement components<br />
+<li><a id="org1f88b81"></a>Reachability of if-statement components<br />
 <div class="outline-text-6" id="text-5-6-6-1-1">
 <p>
 With if-statements there is the question of whether we should consider the set of potentially-thrown
@@ -3840,7 +3849,7 @@ according to the above rules since the if-statement is not a reachable statement
 </ol>
 </li>
 
-<li><a id="orgefa6d24"></a><code>if constexpr</code> statements<br />
+<li><a id="org505e880"></a><code>if constexpr</code> statements<br />
 <div class="outline-text-5" id="text-5-6-6-2">
 <p>
 As the condition of a constexpr if statement is evaluated as part of constant evaluation
@@ -3888,7 +3897,7 @@ equal to { <code>X</code> }.
 </div>
 </li>
 
-<li><a id="org7f4fda9"></a><code>if consteval</code><br />
+<li><a id="org836d893"></a><code>if consteval</code><br />
 <div class="outline-text-5" id="text-5-6-6-3">
 <p>
 An if-statement of the form <code>if consteval /compound-statement/</code> has a set of
@@ -3923,7 +3932,7 @@ breaking change.
 </div>
 </li>
 
-<li><a id="org3594ffb"></a><code>switch</code><br />
+<li><a id="org70e0bb9"></a><code>switch</code><br />
 <div class="outline-text-5" id="text-5-6-6-4">
 <p>
 A switch statement of the form <code>switch ( /init-statement/ /condition/ ) /statement/</code>
@@ -3941,8 +3950,8 @@ thrown exception types of the following parts:
 </ol>
 </div>
 
-<div id="outline-container-orgfc3cb2f" class="outline-4">
-<h4 id="orgfc3cb2f"><span class="section-number-4">5.6.7.</span> <i>iteration-statement</i></h4>
+<div id="outline-container-org93cd058" class="outline-4">
+<h4 id="org93cd058"><span class="section-number-4">5.6.7.</span> <i>iteration-statement</i></h4>
 <div class="outline-text-4" id="text-5-6-7">
 <p>
 The following kinds of iteration-statement are possible:
@@ -3975,8 +3984,8 @@ even if the statement's <i>condition</i> is such that the body will never be exe
 </div>
 </div>
 
-<div id="outline-container-orga12635c" class="outline-4">
-<h4 id="orga12635c"><span class="section-number-4">5.6.8.</span> <i>jump-statement</i></h4>
+<div id="outline-container-org90b7a3e" class="outline-4">
+<h4 id="org90b7a3e"><span class="section-number-4">5.6.8.</span> <i>jump-statement</i></h4>
 <div class="outline-text-4" id="text-5-6-8">
 <p>
 Jump statements include:
@@ -3998,7 +4007,7 @@ those exceptions should be covered by the declaration statement for that variabl
 </div>
 
 <ol class="org-ol">
-<li><a id="orgabc7177"></a><code>return</code> statements<br />
+<li><a id="orge228087"></a><code>return</code> statements<br />
 <div class="outline-text-5" id="text-5-6-8-1">
 <p>
 A <code>return</code> statement has a set of potentially-thrown exception types equal to the
@@ -4105,7 +4114,7 @@ How, and whether, to do this is an open-question.
 </div>
 </li>
 
-<li><a id="org8d97211"></a><code>co_return</code> statements<br />
+<li><a id="orgf2a06a6"></a><code>co_return</code> statements<br />
 <div class="outline-text-5" id="text-5-6-8-2">
 <p>
 A <code>co_return</code> statement of the form <code>co_return;</code> has a set of potentially-thrown exception types
@@ -4131,8 +4140,8 @@ exception types equal to the set of potentially thrown exception types of the st
 </ol>
 </div>
 
-<div id="outline-container-org14a52fc" class="outline-4">
-<h4 id="org14a52fc"><span class="section-number-4">5.6.9.</span> <i>declaration-statement</i></h4>
+<div id="outline-container-orgd376b63" class="outline-4">
+<h4 id="orgd376b63"><span class="section-number-4">5.6.9.</span> <i>declaration-statement</i></h4>
 <div class="outline-text-4" id="text-5-6-9">
 <p>
 A declaration statement consists of a <i>block-declaration</i>, which in turn consists of one of the following:
@@ -4162,7 +4171,7 @@ with an exception.
 </div>
 
 <ol class="org-ol">
-<li><a id="orgc6e2837"></a><i>simple-declaration</i><br />
+<li><a id="orga08eff2"></a><i>simple-declaration</i><br />
 <div class="outline-text-5" id="text-5-6-9-1">
 <p>
 A declaration statement that declares one or more block variables with automatic storage duration
@@ -4202,7 +4211,7 @@ if a constant-evaluation exits with an exception.
 </div>
 </li>
 
-<li><a id="org2821c1f"></a><i>asm-declaration</i><br />
+<li><a id="orgfd441e0"></a><i>asm-declaration</i><br />
 <div class="outline-text-5" id="text-5-6-9-2">
 <p>
 The <i>asm-declaration</i> has implementation defined behaviour and, while in theory, on some implementations,
@@ -4241,8 +4250,8 @@ what the desired semantics are here.
 </ol>
 </div>
 
-<div id="outline-container-org57acd63" class="outline-4">
-<h4 id="org57acd63"><span class="section-number-4">5.6.10.</span> <i>try-block</i></h4>
+<div id="outline-container-org997dfdf" class="outline-4">
+<h4 id="org997dfdf"><span class="section-number-4">5.6.10.</span> <i>try-block</i></h4>
 <div class="outline-text-4" id="text-5-6-10">
 <p>
 A <i>try-block</i> statement has the form <code>try /compound-statement/</code> followed by one or more
@@ -4327,8 +4336,8 @@ The set of potentially-thrown exception types of the <i>try-block</i> is the res
 </div>
 </div>
 
-<div id="outline-container-orgeb9384d" class="outline-4">
-<h4 id="orgeb9384d"><span class="section-number-4">5.6.11.</span> <i>init-statement</i></h4>
+<div id="outline-container-org1cf07b5" class="outline-4">
+<h4 id="org1cf07b5"><span class="section-number-4">5.6.11.</span> <i>init-statement</i></h4>
 <div class="outline-text-4" id="text-5-6-11">
 <p>
 An init-statement is either a:
@@ -4350,8 +4359,8 @@ function call expression of the object's destructor.
 </div>
 </div>
 
-<div id="outline-container-org56849be" class="outline-4">
-<h4 id="org56849be"><span class="section-number-4">5.6.12.</span> <i>expression</i></h4>
+<div id="outline-container-orge2ad8a8" class="outline-4">
+<h4 id="orge2ad8a8"><span class="section-number-4">5.6.12.</span> <i>expression</i></h4>
 <div class="outline-text-4" id="text-5-6-12">
 <p>
 There are many different types of expressions that need to be considered.
@@ -4365,7 +4374,7 @@ that do not follow the general rules.
 </div>
 
 <ol class="org-ol">
-<li><a id="orgac96892"></a>General rules for expressions<br />
+<li><a id="org5843ad4"></a>General rules for expressions<br />
 <div class="outline-text-5" id="text-5-6-12-1">
 <p>
 Expressions that have sub-expressions in general have a set of potentially-thrown exception
@@ -4382,7 +4391,7 @@ generally have an empty set of potentially-thrown exceptions.
 </div>
 </li>
 
-<li><a id="orgdd3e1be"></a>Function call expressions<br />
+<li><a id="orgdc65165"></a>Function call expressions<br />
 <div class="outline-text-5" id="text-5-6-12-2">
 <p>
 Function call expressions have a set of potentially-thrown exception types equal to the
@@ -4427,7 +4436,7 @@ as per the next section.
 </div>
 </li>
 
-<li><a id="org0c55286"></a>prvalue expressions<br />
+<li><a id="orgef814d7"></a>prvalue expressions<br />
 <div class="outline-text-5" id="text-5-6-12-3">
 <p>
 If an expression has a prvalue value category then the set of potentially thrown exception
@@ -4444,7 +4453,7 @@ initialization of return values).
 </div>
 </li>
 
-<li><a id="org01d13f4"></a>Standard conversions<br />
+<li><a id="orgb2f7540"></a>Standard conversions<br />
 <div class="outline-text-5" id="text-5-6-12-4">
 <p>
 The set of potentially-thrown exceptions from all standard conversions listed under
@@ -4453,7 +4462,7 @@ The set of potentially-thrown exceptions from all standard conversions listed un
 </div>
 </li>
 
-<li><a id="org1ad496a"></a>Constant expressions<br />
+<li><a id="org7ecc963"></a>Constant expressions<br />
 <div class="outline-text-5" id="text-5-6-12-5">
 <p>
 In C++23 it is not permitted for an exception to be thrown within the evaluation of a constant
@@ -4552,7 +4561,7 @@ the exception up to some caller that then handles the exception.
 </div>
 </li>
 
-<li><a id="org0eb6c9d"></a>Throw expressions<br />
+<li><a id="org832ebb3"></a>Throw expressions<br />
 <div class="outline-text-5" id="text-5-6-12-6">
 <p>
 We need to consider both:
@@ -4564,7 +4573,7 @@ We need to consider both:
 </div>
 
 <ol class="org-ol">
-<li><a id="org1c5a14a"></a><code>throw &lt;expr&gt;</code><br />
+<li><a id="org30558e0"></a><code>throw &lt;expr&gt;</code><br />
 <div class="outline-text-6" id="text-5-6-12-6-1">
 <p>
 A throw-expression constructs and throws a new exception object of type equal to the decayed type of the operand expression.
@@ -4599,7 +4608,7 @@ thrown exceptions.
 </div>
 
 <ol class="org-ol">
-<li><a id="org88de705"></a>Dynamic and Static throw expressions<br />
+<li><a id="org3f8fada"></a>Dynamic and Static throw expressions<br />
 <div class="outline-text-7" id="text-5-6-12-6-1-1">
 <p>
 The function that contained the throw expression that created the exception object is
@@ -4690,7 +4699,7 @@ of the lifetime of the static exception object.
 </div>
 </li>
 
-<li><a id="org819b6f5"></a>Lifetime of exception objects created by static throw expressions<br />
+<li><a id="orgbda5bbe"></a>Lifetime of exception objects created by static throw expressions<br />
 <div class="outline-text-7" id="text-5-6-12-6-1-2">
 <p>
 According to [except.throw] p4
@@ -4796,7 +4805,7 @@ it provides to the function it calls.
 </div>
 
 <ol class="org-ol">
-<li><a id="orga7a8783"></a>Examples of static exception object lifetime and storage duration<br />
+<li><a id="orgbe88009"></a>Examples of static exception object lifetime and storage duration<br />
 <div class="outline-text-8" id="text-5-6-12-6-1-2-1">
 <p>
 The following examples walk through some simple cases and describe how the
@@ -4990,7 +4999,7 @@ is thrown from outside of the handler.</li>
 </ol>
 </li>
 
-<li><a id="org9645856"></a>Rules for throw expressions<br />
+<li><a id="orge2975a9"></a>Rules for throw expressions<br />
 <div class="outline-text-7" id="text-5-6-12-6-1-3">
 <p>
 The set of potentially-thrown exception types of a throw expression is the union of
@@ -5011,7 +5020,7 @@ if the implementation fails to allocate storage for the exception object.
 </ol>
 </li>
 
-<li><a id="org33c0ad8"></a><code>throw</code> (rethrowing the currently handled exception)<br />
+<li><a id="orgf560f04"></a><code>throw</code> (rethrowing the currently handled exception)<br />
 <div class="outline-text-6" id="text-5-6-12-6-2">
 <p>
 If the rethrow expression occurs lexically within the body of a handler and is not nested within
@@ -5072,7 +5081,7 @@ types that may be handled by handlers earlier in the sequence of handlers for th
 </div>
 
 <ol class="org-ol">
-<li><a id="org6317e87"></a>Unreachable handlers<br />
+<li><a id="org182f22d"></a>Unreachable handlers<br />
 <div class="outline-text-7" id="text-5-6-12-6-2-1">
 <p>
 One of the interesting cases to handle is when we can statically determine whether the handler is
@@ -5215,7 +5224,7 @@ For example:
 </div>
 </li>
 
-<li><a id="orgfa0a6ab"></a>Rethrow expression rules<br />
+<li><a id="org9b68dae"></a>Rethrow expression rules<br />
 <div class="outline-text-7" id="text-5-6-12-6-2-2">
 <p>
 If the rethrow expression is unassociated with a handler then the set of potentially-thrown exception types
@@ -5277,7 +5286,7 @@ Note that these rules make the result of a <code>declthrow(throw)</code> express
 </div>
 </li>
 
-<li><a id="org099cd97"></a>Examples<br />
+<li><a id="org91c9f6e"></a>Examples<br />
 <div class="outline-text-7" id="text-5-6-12-6-2-3">
 <p>
 Given the following declarations:
@@ -5513,7 +5522,7 @@ The final handler matches an unbounded set of types not derived from A.
 </ol>
 </li>
 
-<li><a id="org7830d32"></a><i>await-expression</i><br />
+<li><a id="org58e9f40"></a><i>await-expression</i><br />
 <div class="outline-text-5" id="text-5-6-12-7">
 <p>
 An expression of the form <code>co_await /expression/</code> has a set of potentially-thrown exception
@@ -5541,7 +5550,7 @@ applied more generally across all expression evaluation.
 </div>
 </li>
 
-<li><a id="org2085d7b"></a><i>yield-expression</i><br />
+<li><a id="org1a11139"></a><i>yield-expression</i><br />
 <div class="outline-text-5" id="text-5-6-12-8">
 <p>
 A <code>co_yield /assignment-expression/</code> or <code>co_yield /braced-init-list/</code> expression has a
@@ -5552,7 +5561,7 @@ thrown exception types of the expression <code>co_await promise.yield_value(expr
 </div>
 </li>
 
-<li><a id="orgf5f5e7e"></a><code>dynamic_cast</code><br />
+<li><a id="org5229eea"></a><code>dynamic_cast</code><br />
 <div class="outline-text-5" id="text-5-6-12-9">
 <p>
 Basically, any <code>dynamic_cast</code> expression to reference-type that could fail the runtime
@@ -5573,7 +5582,7 @@ thrown was exactly the type <code>std::bad_cast</code>.
 </div>
 </li>
 
-<li><a id="orged8f90f"></a><code>typeid</code><br />
+<li><a id="org8d41a4e"></a><code>typeid</code><br />
 <div class="outline-text-5" id="text-5-6-12-10">
 <p>
 A <code>typeid(/type-id/)</code> expression has an empty set of potentially-thrown exception types.
@@ -5613,7 +5622,7 @@ to be empty.
 </div>
 </li>
 
-<li><a id="orgf491c75"></a>Name expressions<br />
+<li><a id="org75aebf9"></a>Name expressions<br />
 <div class="outline-text-5" id="text-5-6-12-11">
 <p>
 Expressions that simply name an object
@@ -5633,7 +5642,7 @@ These expressions have an empty set of potentially thrown exception types.
 </div>
 </li>
 
-<li><a id="orgd1da981"></a>Lambda expressions<br />
+<li><a id="org8dfd28d"></a>Lambda expressions<br />
 <div class="outline-text-5" id="text-5-6-12-12">
 <p>
 The set of potentially-thrown exception types of a lambda expression are
@@ -5646,8 +5655,8 @@ of the lambda captures.
 </div>
 </div>
 
-<div id="outline-container-orgf6477c6" class="outline-3">
-<h3 id="orgf6477c6"><span class="section-number-3">5.7.</span> Template handlers</h3>
+<div id="outline-container-org05fa58f" class="outline-3">
+<h3 id="org05fa58f"><span class="section-number-3">5.7.</span> Template handlers</h3>
 <div class="outline-text-3" id="text-5-7">
 <p>
 Template handlers are the static-exception equivalent of a <code>catch(...)</code>.
@@ -5792,8 +5801,8 @@ For example:
 </div>
 </div>
 
-<div id="outline-container-org0c4b471" class="outline-4">
-<h4 id="org0c4b471"><span class="section-number-4">5.7.1.</span> Template argument deduction</h4>
+<div id="outline-container-orgbd16067" class="outline-4">
+<h4 id="orgbd16067"><span class="section-number-4">5.7.1.</span> Template argument deduction</h4>
 <div class="outline-text-4" id="text-5-7-1">
 <p>
 When the compiler is trying to determine which handler, if any, will match
@@ -5858,8 +5867,8 @@ example([] <span class="org-keyword">throw</span>(<span class="org-type">int</sp
 </div>
 </div>
 
-<div id="outline-container-org881aa65" class="outline-4">
-<h4 id="org881aa65"><span class="section-number-4">5.7.2.</span> Matching dynamic exception objects</h4>
+<div id="outline-container-org6eb620b" class="outline-4">
+<h4 id="org6eb620b"><span class="section-number-4">5.7.2.</span> Matching dynamic exception objects</h4>
 <div class="outline-text-4" id="text-5-7-2">
 <p>
 The proposed design is such that a template handler does not match a thrown
@@ -5877,8 +5886,8 @@ instantiated with <code>decltype(e)</code> deduced to <code>std::exception_ptr</
 </div>
 </div>
 
-<div id="outline-container-orgbced0eb" class="outline-4">
-<h4 id="orgbced0eb"><span class="section-number-4">5.7.3.</span> Ordering of instantiated handlers</h4>
+<div id="outline-container-org5b450ae" class="outline-4">
+<h4 id="org5b450ae"><span class="section-number-4">5.7.3.</span> Ordering of instantiated handlers</h4>
 <div class="outline-text-4" id="text-5-7-3">
 <p>
 For the purposes of determining which handler is a match, instantiations of a given
@@ -5891,8 +5900,8 @@ appears earlier in a list of instantiations.
 </div>
 </div>
 
-<div id="outline-container-org99eba7d" class="outline-3">
-<h3 id="org99eba7d"><span class="section-number-3">5.8.</span> Virtual Functions</h3>
+<div id="outline-container-org91d6d3d" class="outline-3">
+<h3 id="org91d6d3d"><span class="section-number-3">5.8.</span> Virtual Functions</h3>
 <div class="outline-text-3" id="text-5-8">
 <p>
 Virtual functions declared on a base-class can potentially have a different (wider) exception
@@ -6018,8 +6027,8 @@ a dynamic exception type may be thrown.
 </p>
 </div>
 
-<div id="outline-container-orgaecc4a2" class="outline-4">
-<h4 id="orgaecc4a2"><span class="section-number-4">5.8.1.</span> ABI of virtual functions with differing exception specifications</h4>
+<div id="outline-container-org5098f1e" class="outline-4">
+<h4 id="org5098f1e"><span class="section-number-4">5.8.1.</span> ABI of virtual functions with differing exception specifications</h4>
 <div class="outline-text-4" id="text-5-8-1">
 <p>
 While the language semantics described above are a natural extension of the current rules around
@@ -6120,14 +6129,14 @@ class function's ABI.
 <p>
 These thunks would be the kind of thunk that is generated when you cast a function
 to a function-pointer with a different exception-specification, described in
-<a href="#orgca16a35">Static exception specifications are part of the function type</a>.
+<a href="#org479c818">Static exception specifications are part of the function type</a>.
 </p>
 </div>
 </div>
 </div>
 
-<div id="outline-container-org5d65219" class="outline-3">
-<h3 id="org5d65219"><span class="section-number-3">5.9.</span> Concepts</h3>
+<div id="outline-container-org09739d2" class="outline-3">
+<h3 id="org09739d2"><span class="section-number-3">5.9.</span> Concepts</h3>
 <div class="outline-text-3" id="text-5-9">
 <p>
 A <code>requires</code> expression allows checking that certain expressions are <code>noexcept</code>.
@@ -6292,8 +6301,8 @@ to for more complicated type-constraints.
 </div>
 </div>
 
-<div id="outline-container-org3c2d788" class="outline-3">
-<h3 id="org3c2d788"><span class="section-number-3">5.10.</span> Coroutines</h3>
+<div id="outline-container-org6372c27" class="outline-3">
+<h3 id="org6372c27"><span class="section-number-3">5.10.</span> Coroutines</h3>
 <div class="outline-text-3" id="text-5-10">
 <p>
 Coroutines have several areas that require updates to support static exception specifications:
@@ -6310,8 +6319,8 @@ The rules for computing the set of potentially thrown exceptions for <code>co_re
 </p>
 </div>
 
-<div id="outline-container-org437fe75" class="outline-4">
-<h4 id="org437fe75"><span class="section-number-4">5.10.1.</span> Coroutine promise object handling for static exception objects</h4>
+<div id="outline-container-orgf9db1e2" class="outline-4">
+<h4 id="orgf9db1e2"><span class="section-number-4">5.10.1.</span> Coroutine promise object handling for static exception objects</h4>
 <div class="outline-text-4" id="text-5-10-1">
 <p>
 The current behaviour of a coroutine with a given <i>function-body</i> is specified to be as if the <i>function-body</i> were replaced by:
@@ -6491,8 +6500,8 @@ coroutines without needing to invoke any of the dynamic exception machinery of t
 </div>
 </div>
 
-<div id="outline-container-org5d57838" class="outline-4">
-<h4 id="org5d57838"><span class="section-number-4">5.10.2.</span> Computing the exception specification of a coroutine with a deduced throw specification</h4>
+<div id="outline-container-orge703699" class="outline-4">
+<h4 id="orge703699"><span class="section-number-4">5.10.2.</span> Computing the exception specification of a coroutine with a deduced throw specification</h4>
 <div class="outline-text-4" id="text-5-10-2">
 <p>
 When a coroutine is invoked, the call to the coroutine does not necessarily invoke the entire body
@@ -6535,8 +6544,8 @@ calls global <code>operator new</code>.</li>
 </div>
 </div>
 
-<div id="outline-container-org642f2ca" class="outline-3">
-<h3 id="org642f2ca"><span class="section-number-3">5.11.</span> Type traits</h3>
+<div id="outline-container-org72da490" class="outline-3">
+<h3 id="org72da490"><span class="section-number-3">5.11.</span> Type traits</h3>
 <div class="outline-text-3" id="text-5-11">
 <p>
 The standard library has a number of traits queries that let you query properties about
@@ -6544,8 +6553,8 @@ certain operations and whether or not they are "nothrow".
 </p>
 </div>
 
-<div id="outline-container-orgf7f64b0" class="outline-4">
-<h4 id="orgf7f64b0"><span class="section-number-4">5.11.1.</span> Nothrow queries</h4>
+<div id="outline-container-orgc738ac6" class="outline-4">
+<h4 id="orgc738ac6"><span class="section-number-4">5.11.1.</span> Nothrow queries</h4>
 <div class="outline-text-4" id="text-5-11-1">
 <p>
 The existing <code>std::is_nothrow_*</code> traits are specified in terms of <code>noexcept</code> expressions.
@@ -6563,8 +6572,8 @@ It is not expected that implementations will require any changes to these traits
 </div>
 </div>
 
-<div id="outline-container-org6e91116" class="outline-4">
-<h4 id="org6e91116"><span class="section-number-4">5.11.2.</span> <code>std::is_function</code> and <code>std::is_member_function_pointer</code></h4>
+<div id="outline-container-org8cf16dc" class="outline-4">
+<h4 id="org8cf16dc"><span class="section-number-4">5.11.2.</span> <code>std::is_function</code> and <code>std::is_member_function_pointer</code></h4>
 <div class="outline-text-4" id="text-5-11-2">
 <p>
 While the specification of these traits need not change, as they are just defined in terms
@@ -6577,13 +6586,13 @@ of functions.
 It is noted that libc++, libstdc++ and MSSTL all either are defined in terms of compiler
 intrinsics, which would need to be updated as part of implementing this feature, or are
 defined in terms of other properties of the type. For example, by computing <code>is_function_v&lt;T&gt;</code>
-by checking whether the result of evaluating <code>is_const_v&lt;const  T&gt; &amp;&amp; !is_reference_v&lt;T&gt;</code> is <code>true</code>.
+by checking whether the result of evaluating <code>!is_const_v&lt;const  T&gt; &amp;&amp; !is_reference_v&lt;T&gt;</code> is <code>true</code>.
 </p>
 </div>
 </div>
 
-<div id="outline-container-orge9d5bc9" class="outline-4">
-<h4 id="orge9d5bc9"><span class="section-number-4">5.11.3.</span> Additional traits</h4>
+<div id="outline-container-orgc1cc808" class="outline-4">
+<h4 id="orgc1cc808"><span class="section-number-4">5.11.3.</span> Additional traits</h4>
 <div class="outline-text-4" id="text-5-11-3">
 <p>
 It's possible we may want to add some additional traits for querying information about
@@ -6599,21 +6608,41 @@ them has been established.
 </div>
 </div>
 
-<div id="outline-container-org0752b08" class="outline-3">
-<h3 id="org0752b08"><span class="section-number-3">5.12.</span> Freestanding</h3>
+<div id="outline-container-org2db11e5" class="outline-3">
+<h3 id="org2db11e5"><span class="section-number-3">5.12.</span> Freestanding</h3>
 <div class="outline-text-3" id="text-5-12">
+<p>
+This paper proposes that the following facilites be available in conforming freestanding implementations:
+</p>
+<ul class="org-ul">
+<li>static throw expressions</li>
+<li>static rethrow expressions</li>
+<li>try/catch</li>
+<li><code>template catch</code> handlers</li>
+<li>functions with throw specifications</li>
+</ul>
+
+<p>
+The following facilities would not be required in a freestanding implementation:
+</p>
+<ul class="org-ul">
+<li>dynamic throw expression</li>
+<li>dynamic rethrow expression</li>
+<li><code>std::exception_ptr</code></li>
+<li><code>std::uncaught_exceptions()</code></li>
+<li><code>std::current_exception()</code></li>
+</ul>
 </div>
 </div>
 </div>
 
-
-<div id="outline-container-orgfbc9e4c" class="outline-2">
-<h2 id="orgfbc9e4c"><span class="section-number-2">6.</span> Prior Work</h2>
+<div id="outline-container-org5f1b91c" class="outline-2">
+<h2 id="org5f1b91c"><span class="section-number-2">6.</span> Prior Work</h2>
 <div class="outline-text-2" id="text-6">
 </div>
 
-<div id="outline-container-orgab8fe9d" class="outline-3">
-<h3 id="orgab8fe9d"><span class="section-number-3">6.1.</span> Throw specifications and noexcept</h3>
+<div id="outline-container-org15b819e" class="outline-3">
+<h3 id="org15b819e"><span class="section-number-3">6.1.</span> Throw specifications and noexcept</h3>
 <div class="outline-text-3" id="text-6-1">
 <ul class="org-ul">
 <li><a href="https://wg21.link/N2855">N2855</a> - Rvalue References and Exception Safety (2009)
@@ -6746,12 +6775,12 @@ revision of the standard, as the noexcept operator becomes an observable part of
 </div>
 
 
-<div id="outline-container-orgd1808b8" class="outline-3">
-<h3 id="orgd1808b8"><span class="section-number-3">6.2.</span> Java Checked Exceptions</h3>
+<div id="outline-container-orgce4cab9" class="outline-3">
+<h3 id="orgce4cab9"><span class="section-number-3">6.2.</span> Java Checked Exceptions</h3>
 <div class="outline-text-3" id="text-6-2">
 </div>
-<div id="outline-container-orga911d81" class="outline-4">
-<h4 id="orga911d81"><span class="section-number-4">6.2.1.</span> Background On How Exceptions work in Java</h4>
+<div id="outline-container-org452cd57" class="outline-4">
+<h4 id="org452cd57"><span class="section-number-4">6.2.1.</span> Background On How Exceptions work in Java</h4>
 <div class="outline-text-4" id="text-6-2-1">
 <p>
 In the Java exception model all exception types inherit from the <code>Throwable</code> base class.
@@ -6823,16 +6852,18 @@ not required to.
 </div>
 </div>
 
-<div id="outline-container-org6ac2563" class="outline-4">
-<h4 id="org6ac2563"><span class="section-number-4">6.2.2.</span> Criticisms of Java Checked exceptions</h4>
+<div id="outline-container-orga58ecb1" class="outline-4">
+<h4 id="orga58ecb1"><span class="section-number-4">6.2.2.</span> Criticisms of Java Checked exceptions</h4>
+<div class="outline-text-4" id="text-6-2-2">
+<p>
+TODO: Flesh this out.
+</p>
 </div>
 </div>
+</div>
 
-
-
-
-<div id="outline-container-orgb7ba59e" class="outline-3">
-<h3 id="orgb7ba59e"><span class="section-number-3">6.3.</span> Midori</h3>
+<div id="outline-container-org1f07abf" class="outline-3">
+<h3 id="org1f07abf"><span class="section-number-3">6.3.</span> Midori</h3>
 <div class="outline-text-3" id="text-6-3">
 <p>
 Midori was an internal research/incubation project at Microsoft that explored ways of
@@ -6861,14 +6892,15 @@ the state changes that occur while that exception is propagated up the call stac
 across threads in a concurrent program – and the resulting state by the time it gets caught or goes unhandled.
 </p>
 </blockquote>
+
+<p>
+TODO: Finish writing this.
+</p>
 </div>
 </div>
 
-
-
-
-<div id="outline-container-org7dcf9ee" class="outline-3">
-<h3 id="org7dcf9ee"><span class="section-number-3">6.4.</span> Deducing exception specifications</h3>
+<div id="outline-container-orgd29825e" class="outline-3">
+<h3 id="orgd29825e"><span class="section-number-3">6.4.</span> Deducing exception specifications</h3>
 <div class="outline-text-3" id="text-6-4">
 <ul class="org-ul">
 <li>N3202 - To which extent can noexcept be deduced (Bjarne) (2010)
@@ -7085,8 +7117,8 @@ for SFINAE cases.
 </div>
 </div>
 
-<div id="outline-container-org5f25513" class="outline-3">
-<h3 id="org5f25513"><span class="section-number-3">6.5.</span> Faster Exceptions</h3>
+<div id="outline-container-org5e61cc8" class="outline-3">
+<h3 id="org5e61cc8"><span class="section-number-3">6.5.</span> Faster Exceptions</h3>
 <div class="outline-text-3" id="text-6-5">
 <ul class="org-ul">
 <li>N4049 - 0-overhead-principle violations in exception handling (2014)</li>
@@ -7099,7 +7131,6 @@ for SFINAE cases.
 <li>Mentions wanting guaranteed support for -fno-exceptions, -fno-rtti
 No detail on why/motivation/issues.</li>
 </ul></li>
-<li></li>
 </ul></li>
 
 <li>P0709 Zero-overhead deterministic exceptions (Herb Sutter)
@@ -7155,84 +7186,15 @@ instead of <code>std::error</code>.</li>
 </ul>
 </div>
 </div>
-
-
-<div id="outline-container-org78d06ce" class="outline-3">
-<h3 id="org78d06ce"><span class="section-number-3">6.6.</span> Freestanding</h3>
 </div>
 
-
-<div id="outline-container-org9d96423" class="outline-3">
-<h3 id="org9d96423"><span class="section-number-3">6.7.</span> Alternative Error-handling mechanisms</h3>
-<div class="outline-text-3" id="text-6-7">
-</div>
-<div id="outline-container-org3e73423" class="outline-4">
-<h4 id="org3e73423"><span class="section-number-4">6.7.1.</span> std::expected</h4>
-<div class="outline-text-4" id="text-6-7-1">
-<ul class="org-ul">
-<li>N4015 - A proposal to add a utility class to represent expected monad (2014)</li>
-<li>N4109 - A proposal to add a utility class to represent expected monad - Revision 1 (2014)</li>
-</ul>
-</div>
-</div>
-
-
-<div id="outline-container-org8697875" class="outline-4">
-<h4 id="org8697875"><span class="section-number-4">6.7.2.</span> std::variant</h4>
-<div class="outline-text-4" id="text-6-7-2">
-<ul class="org-ul">
-<li>N4450 - Variant: a typesafe union (v2)</li>
-<li>N4542 - Variant: a type-safe union (v4) (2015)</li>
-<li>P0129R0   We cannot (realistically) get rid of throwing moves
-<ul class="org-ul">
-<li>Talks about std::variant and support for types with throwing move ctor/assignment</li>
-</ul></li>
-<li>P0087R0   Variant: a type-safe union without undefined behavior (v2)</li>
-<li>P0088R0   Variant: a type-safe union that is rarely invalid (v5) (2015)</li>
-<li>P0088R1   Variant: a type-safe union that is rarely invalid (v6) (2015)</li>
-<li>P0239R0   valueless<sub>by</sub><sub>exception</sub> (2015)</li>
-<li>P0088R2           Variant: a type-safe union for C++17 (v7) (2016)</li>
-<li>P0095R0   The case for a language based variant</li>
-</ul>
-</div>
-</div>
-
-<div id="outline-container-org9fcb0da" class="outline-4">
-<h4 id="org9fcb0da"><span class="section-number-4">6.7.3.</span> std::optional</h4>
-</div>
-</div>
-</div>
-
-
-<div id="outline-container-orgdb80c48" class="outline-2">
-<h2 id="orgdb80c48"><span class="section-number-2">7.</span> Design Discussion</h2>
+<div id="outline-container-org4ae9239" class="outline-2">
+<h2 id="org4ae9239"><span class="section-number-2">7.</span> Design Discussion</h2>
 <div class="outline-text-2" id="text-7">
 </div>
-<div id="outline-container-org540ef7b" class="outline-3">
-<h3 id="org540ef7b"><span class="section-number-3">7.1.</span> Code Evolution</h3>
+<div id="outline-container-org0436fea" class="outline-3">
+<h3 id="org0436fea"><span class="section-number-3">7.1.</span> Code Evolution</h3>
 <div class="outline-text-3" id="text-7-1">
-<p>
-As a code-base evolves over time, there are a number of potential changes we may want to
-make to a function and its exception-specification over time.
-</p>
-
-<p>
-The exception-specification forms part of the interface of a function and provides
-callers with information about
-</p>
-
-<p>
-There are a number of cases that we need to consider with regards to functions with exception-specifications
-as code evolves
-</p>
-
-<p>
-With the existing dynamic exceptions facility in C++, extending the set of potentially-thrown
-exceptions for a given function to include a new exception type can be done
-</p>
-
-
-
 <p>
 TODO:
 </p>
@@ -7245,15 +7207,36 @@ TODO:
 </div>
 </div>
 
+<div id="outline-container-org5fa416c" class="outline-3">
+<h3 id="org5fa416c"><span class="section-number-3">7.2.</span> A new calling convention / function-type</h3>
+<div class="outline-text-3" id="text-7-2">
+<p>
+TODO: Describe impacts of adding another category of function-types.
+</p>
+<ul class="org-ul">
+<li>specialization of function-traits</li>
+<li>function-object wrappers</li>
+<li>type-erasing facilities</li>
+</ul>
 
-<div id="outline-container-org0167acf" class="outline-3">
-<h3 id="org0167acf"><span class="section-number-3">7.2.</span> A new calling convention / function-type</h3>
+<p>
+TODO: Discuss trade-offs of allowing cast from <code>throw(T1, T2)</code> function-pointers to
+<code>throw(...)</code> / <code>noexcept(false)</code> function-pointers
+</p>
+<ul class="org-ul">
+<li>ABI / calling-convention impacts</li>
+<li>thunks</li>
+</ul>
+</div>
 </div>
 
-
-<div id="outline-container-org0e4efc0" class="outline-3">
-<h3 id="org0e4efc0"><span class="section-number-3">7.3.</span> Changing the implementation changes the calling convention</h3>
+<div id="outline-container-orga98f78c" class="outline-3">
+<h3 id="orga98f78c"><span class="section-number-3">7.3.</span> Changing the implementation changes the calling convention</h3>
 <div class="outline-text-3" id="text-7-3">
+<p>
+TODO: Expand on these points in more detail
+</p>
+
 <ul class="org-ul">
 <li>this was a problem with the implicit constexpr paper</li>
 </ul>
@@ -7285,29 +7268,66 @@ specification is "expression equivalent to" the function body</li>
 </div>
 </div>
 
-<div id="outline-container-org24db3c7" class="outline-3">
-<h3 id="org24db3c7"><span class="section-number-3">7.4.</span> How accurate does the potentially-thrown exception type calculation need to be?</h3>
+<div id="outline-container-orgc2a3aaf" class="outline-3">
+<h3 id="orgc2a3aaf"><span class="section-number-3">7.4.</span> How accurate does the potentially-thrown exception type calculation need to be?</h3>
 <div class="outline-text-3" id="text-7-4">
 <p>
 This paper currently proposes rules for computing the set of potentially-thrown exception types in a
-somewhat conservative way and might include exceptions that
+somewhat conservative way and might include exceptions that a deeper analysis would deduce are
+unreachable.
 </p>
 
 <p>
 It considers only control-flow structure of the function-body and function-signatures of called functions.
-It does not involve or require any reasoning about whether or not conditions are always true or false unless.
+It does not involve or require any reasoning about whether or not conditions are always true or false except for <code>if constexpr</code>.
 </p>
 
 <p>
 There are a couple of decisions that were made in the design described in this paper which should
-be considered
+be considered further
+</p>
+<ul class="org-ul">
+<li>whether to consider all identifier labels as reachable or whether to only consider an identifier
+label reachable if there is a corresponding <code>goto</code> statement that is also reachable.</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org8d58acb" class="outline-3">
+<h3 id="org8d58acb"><span class="section-number-3">7.5.</span> Permission to throw types derived from <code>std::bad_alloc</code> / <code>std::bad_cast</code></h3>
+<div class="outline-text-3" id="text-7-5">
+<p>
+The definition of global <code>operator new</code> and <code>dynamic_cast</code> facilities permit implementations to
+throw exceptions that will be caught by a handler for <code>std::bad_alloc</code> or <code>std::bad_cast</code>.
+</p>
+
+<p>
+This allows implementations to throw types that are derived from these types.
+</p>
+
+<p>
+If we want to allow these expressions to have static exception specifications then we would
+need to constrain these implementations to throw types that were exactly <code>std::bad_alloc</code>
+or <code>std::bad_cast</code>. However, doing so is a potential breaking change for some implementations.
+</p>
+
+<p>
+And whilst portable C++ code should not be relying on catching a particular exception-type
+derived from these classes, implementations could potentially define the semantics for their
+implementations of these facilities to throw <code>vendor::bad_alloc</code> or <code>vendor::bad_cast</code>.
+</p>
+
+<p>
+Having these expressions actually have a static throw-specification would also introduce
+a dependency of those expressions on the corresponding library-defined types, which
+could be problematic for some implementations.
 </p>
 </div>
 </div>
 
-<div id="outline-container-org8528b1a" class="outline-3">
-<h3 id="org8528b1a"><span class="section-number-3">7.5.</span> Avoiding dependencies on thread-locals</h3>
-<div class="outline-text-3" id="text-7-5">
+<div id="outline-container-orgb5c3901" class="outline-3">
+<h3 id="orgb5c3901"><span class="section-number-3">7.6.</span> Avoiding dependencies on thread-locals</h3>
+<div class="outline-text-3" id="text-7-6">
 <p>
 The design proposed by this paper allows eliminating some of the overhead of dynamic exceptions;
 in particular the dynamic allocation, reference-counting and run-time type-information needed to
@@ -7328,9 +7348,9 @@ thread-locals for freestanding environments and this paper discusses them furthe
 </p>
 </div>
 
-<div id="outline-container-org26a321d" class="outline-4">
-<h4 id="org26a321d"><span class="section-number-4">7.5.1.</span> Avoiding overhead implied by <code>std::current_exception()</code> and <code>throw;</code></h4>
-<div class="outline-text-4" id="text-7-5-1">
+<div id="outline-container-org19a1022" class="outline-4">
+<h4 id="org19a1022"><span class="section-number-4">7.6.1.</span> Avoiding overhead implied by <code>std::current_exception()</code> and <code>throw;</code></h4>
+<div class="outline-text-4" id="text-7-6-1">
 <p>
 The <code>std::current_exception()</code> function and <code>throw;</code> expression can be called from any
 function dynamically within the scope of a handler - they don't need to be called from
@@ -7387,8 +7407,8 @@ could avoid needing to register the information about the exception object.
 </div>
 
 <ol class="org-ol">
-<li><a id="org46a32db"></a>Using <code>catch static</code> to reduce overhead of dynamic exception facilities<br />
-<div class="outline-text-5" id="text-7-5-1-1">
+<li><a id="orge5e709c"></a>Using <code>catch static</code> to reduce overhead of dynamic exception facilities<br />
+<div class="outline-text-5" id="text-7-6-1-1">
 <p>
 We could consider adding some kind of annotation/specifier to a handler that allows
 the author to indicate that they will not be making use of the dynamic exception
@@ -7427,8 +7447,8 @@ go to get the exception object in this case.
 </div>
 </li>
 
-<li><a id="org08f4d69"></a>Catching <code>std::exception_ptr</code> as an alternative to calling <code>std::current_exception()</code><br />
-<div class="outline-text-5" id="text-7-5-1-2">
+<li><a id="org80e9e26"></a>Catching <code>std::exception_ptr</code> as an alternative to calling <code>std::current_exception()</code><br />
+<div class="outline-text-5" id="text-7-6-1-2">
 <p>
 Another avenue to explore that might reduce the need for thread-local access
 is to allow the user to write:
@@ -7541,9 +7561,9 @@ an alternative API for obtaining the current exception an an <code>exception_ptr
 </div>
 
 
-<div id="outline-container-orgc0f39e5" class="outline-4">
-<h4 id="orgc0f39e5"><span class="section-number-4">7.5.2.</span> Avoiding overhead implied by <code>std::unhandled_exceptions()</code></h4>
-<div class="outline-text-4" id="text-7-5-2">
+<div id="outline-container-orge35601f" class="outline-4">
+<h4 id="orge35601f"><span class="section-number-4">7.6.2.</span> Avoiding overhead implied by <code>std::unhandled_exceptions()</code></h4>
+<div class="outline-text-4" id="text-7-6-2">
 <p>
 The <code>std::unhandled_exceptions()</code> function reports a count of the number of in-flight
 exceptions on the current thread - ones for which a <code>throw</code> expression has been evaluated
@@ -7677,10 +7697,9 @@ could provide basic exception support but without providing <code>std::uncaught_
 </div>
 </div>
 
-
-<div id="outline-container-orgb9f6626" class="outline-3">
-<h3 id="orgb9f6626"><span class="section-number-3">7.6.</span> Calling C functions</h3>
-<div class="outline-text-3" id="text-7-6">
+<div id="outline-container-org423b1c1" class="outline-3">
+<h3 id="org423b1c1"><span class="section-number-3">7.7.</span> Calling C functions</h3>
+<div class="outline-text-3" id="text-7-7">
 <p>
 When importing APIs from C libraries which were not written with consumption by C++ in-mind,
 C function declarations will generally not have any exception-specification listed on them,
@@ -7793,17 +7812,172 @@ For example: The following would
 } }
 </pre>
 </div>
+
+<p>
+Another potential direction we could explore is the use of <code>try</code> expressions.
+For example: A <code>try/else</code> expression that evaluates a first sub-expression and if that exits with an exception then evaluates a second sub-expression as a fallback value.
+</p>
+<div class="org-src-container">
+<pre class="src src-c++"><span class="org-type">int</span> <span class="org-variable-name">result</span> = <span class="org-keyword">try</span> some_c_api(handle) <span class="org-keyword">else</span> <span class="org-constant">std</span>::terminate();
+<span class="org-type">int</span> <span class="org-variable-name">result</span> = <span class="org-keyword">try</span> some_c_api(handle) <span class="org-keyword">else</span> <span class="org-constant">std</span>::unreachable(); <span class="org-comment-delimiter">// </span><span class="org-comment">compiler optimizes this to be as if the function was noexcept.</span>
+<span class="org-type">int</span> <span class="org-variable-name">result</span> = <span class="org-keyword">try</span> some_c_api(handle) <span class="org-keyword">else</span> -1;
+</pre>
+</div>
+
+<p>
+This could help simplify calling C APIs that have not been marked non-throwing but for which
+the programmer knows it cannot throw.
+</p>
+
+<p>
+Note that this paper does not propose either of these directions at this time, only
+list them as potential directions for further investigation.
+</p>
 </div>
 </div>
 
+<div id="outline-container-org3fda78e" class="outline-3">
+<h3 id="org3fda78e"><span class="section-number-3">7.8.</span> Interaction with Contracts</h3>
+<div class="outline-text-3" id="text-7-8">
+<p>
+The contracts proposal [P2900R6] adds the ability to add pre-conditions and post-conditions to function declarations
+and also allows adding <code>contract_assert()</code> expressions.
+</p>
 
-<div id="outline-container-orgf31dfa4" class="outline-3">
-<h3 id="orgf31dfa4"><span class="section-number-3">7.7.</span> Standard Library Impacts</h3>
-<div class="outline-text-3" id="text-7-7">
+<p>
+When a contract that is checked is violated, a violation handler is invoked.
+As currently specified, implementations can permit the volation handler to throw an exception.
+This means that <code>contract_assert()</code> statements can potentially throw exceptions.
+</p>
+
+<p>
+Whether the violation handler is a throwing handler or not is not necessarily known
+at the time that a <code>contract_assert()</code> statement is compiled.
+</p>
+
+<p>
+Further, throwing violation handlers are not restricted to throwing an exception of a particular type,
+so if treating a <code>contract_assert()</code> statement as potentially-throwing then we would need to consider
+it as potentially-throwing <span class="underline">any</span> exception type - i.e. as if it had a dynamic exception specification.
+</p>
+
+<p>
+However, one stated design principle of the contracts facility, listed in [P2900R6]:
+</p>
+<blockquote>
+<p>
+<b>Concepts do not see Contracts</b> - if the mere presence of a contract assertion, independent
+of the predicate within that assertion, on a function or in a block of code would change
+when the satisfiability of a concept then a contained program could be substantially changed
+by simply using contracts in such a way. Therefore, we remove the ability to do this.
+As a corollary, the addition or removal of a ocntract assertion must not change the result
+of SFINAE, the result of overload resolution, the result of <code>noexcept</code> operator, or which
+branch is selected by an <code>if constexpr</code>.
+</p>
+</blockquote>
+
+<p>
+However, this principle, in combination with potentially-throwing contract violation handlers,
+seems to be in conflict with several of the features proposed in this paper.
+</p>
+
+<p>
+The design in P2900R6 makes <code>contract_assert</code> a statement so that you cannot ask the question
+whether it is <code>noexcept</code> or not as a <code>noexcept</code> expression requires its operand to also be
+an expression. This defers needing to answer the question of whether or not <code>contract_assert</code>
+is potentially throwing.
+</p>
+
+<p>
+However, this question needs to be answered if we wanted to be able to use contracts in
+combination with the features proposed in this paper - something I would dearly like to support.
+</p>
+
+<p>
+For example: What is the deduced exception specification of these functions?
+</p>
+<div class="org-src-container">
+<pre class="src src-c++"><span class="org-type">int</span> <span class="org-function-name">example1</span>(<span class="org-type">int</span> <span class="org-variable-name">x</span>) <span class="org-keyword">throw</span>(<span class="org-keyword">auto</span>) {
+  contract_assert(x != 0);
+  <span class="org-keyword">return</span> 42 / x;
+}
+<span class="org-type">int</span> <span class="org-function-name">example2</span>(<span class="org-type">int</span> <span class="org-variable-name">x</span>) <span class="org-keyword">throw</span>(<span class="org-keyword">auto</span>) <span class="org-function-name">pre</span>(x != 0) {
+  <span class="org-keyword">return</span> 42 / x;
+}
+</pre>
 </div>
-<div id="outline-container-orga3545a1" class="outline-4">
-<h4 id="orga3545a1"><span class="section-number-4">7.7.1.</span> Whether implementations add <code>noexcept</code> to "Throws: Nothing" functions can now affect well-formedness of a program</h4>
-<div class="outline-text-4" id="text-7-7-1">
+
+<p>
+For example: Are the following functions well-formed?
+</p>
+<div class="org-src-container">
+<pre class="src src-c++"><span class="org-type">void</span> <span class="org-function-name">example3</span>(<span class="org-type">int</span> <span class="org-variable-name">x</span>) <span class="org-keyword">throw</span>() {
+  contract_assert(x != 0); <span class="org-comment-delimiter">// </span><span class="org-comment">ill-formed if potentially-throwing</span>
+}
+<span class="org-type">void</span> <span class="org-function-name">example4</span>(<span class="org-type">int</span> <span class="org-variable-name">x</span>) <span class="org-keyword">throw</span>() <span class="org-function-name">pre</span>(x != 0) {
+  <span class="org-comment-delimiter">// </span><span class="org-comment">does a function with a precondition have a potentially-throwing function-body?</span>
+}
+</pre>
+</div>
+
+<p>
+For example: Is the call to <code>set_error()</code> below a discarded statement or not?
+</p>
+<div class="org-src-container">
+<pre class="src src-c++"><span class="org-type">void</span> <span class="org-function-name">example5</span>(<span class="org-type">int</span> <span class="org-variable-name">x</span>) <span class="org-keyword">throw</span>() {
+  <span class="org-keyword">try</span> {
+    contract_assert(x != 0);
+  } <span class="org-keyword">catch</span> (...) {
+    <span class="org-keyword">constexpr</span> <span class="org-type">bool</span> <span class="org-variable-name">is_reachable</span> = <span class="org-keyword">sizeof</span>...(<span class="org-type">declthrow</span>(<span class="org-keyword">throw</span>)) &gt; 0;
+    <span class="org-keyword">if</span> <span class="org-keyword">constexpr</span> (is_reachable) {
+      set_error(<span class="org-constant">std</span>::current_exception());
+    }
+  }
+}
+</pre>
+</div>
+
+<p>
+If we follow the principle that introducing contracts should not change the satisfiability
+of a concept then, for the purposes of computing the set of potentially-thrown exception types
+of a <code>contract_assert</code> statement, we would need to treat it as if it were non-throwing.
+</p>
+
+<p>
+However, this then seems at odds with the desire for people to make use of throwing
+violation handlers to recover from program bugs, as code surrounding contract-assertions
+is going to assume that they do not throw - which they don't, for a correct program
+which does not violate any of its contracts.
+</p>
+
+<p>
+I think this conflict helps us get to the core question of what does an exception-specification
+mean <b>in the presence of contract checks that might fail</b>.
+</p>
+
+<p>
+If I mark a function as <code>noexcept</code>, does that mean that it guarantees that calling it will not
+ever throw an exception?
+Or does it mean it will not throw <i>for an evaluation that does not violate any contract checks</i>?
+</p>
+
+<p>
+I don't have any answers at the moment, but I would like to try to find a solution here
+that meets the needs of both people that want to try to recover from program bugs by
+throwing exceptions, and the needs of people that want to be able to mark as many functions
+as possible with narrow throw-specifications to enable them to reason about the program
+and, with this proposal, obtain improved runtime performance for exception-handling.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2302a00" class="outline-3">
+<h3 id="org2302a00"><span class="section-number-3">7.9.</span> Standard Library Impacts</h3>
+<div class="outline-text-3" id="text-7-9">
+</div>
+<div id="outline-container-orgc6e0558" class="outline-4">
+<h4 id="orgc6e0558"><span class="section-number-4">7.9.1.</span> Whether implementations add <code>noexcept</code> to "Throws: Nothing" functions can now affect well-formedness of a program</h4>
+<div class="outline-text-4" id="text-7-9-1">
 <p>
 A function in the standard library specified as "Throws: Nothing" but for which there is a pre-condition
 are often specified as being <code>noexcept(false)</code> functions. The main rationale here is to allow for the
@@ -7881,7 +8055,7 @@ For example:
 </div>
 
 <p>
-Of course, this is just semantically equivalent to declaring the function <code>noexcept</code>.
+Of course, this is then just semantically equivalent to declaring the function <code>noexcept</code>.
 </p>
 
 <p>
@@ -7909,9 +8083,9 @@ that instead of <code>std::terminate()</code>:
 </div>
 </div>
 
-<div id="outline-container-org9fc05ad" class="outline-4">
-<h4 id="org9fc05ad"><span class="section-number-4">7.7.2.</span> Should implementations be allowed to strengthen "Throws: something" exception specification to a static exception specification?</h4>
-<div class="outline-text-4" id="text-7-7-2">
+<div id="outline-container-org497e3e4" class="outline-4">
+<h4 id="org497e3e4"><span class="section-number-4">7.9.2.</span> Should implementations be allowed to strengthen "Throws: something" exception specification to a static exception specification?</h4>
+<div class="outline-text-4" id="text-7-9-2">
 <p>
 Similar to the case where a function that is specified as "Throws: Nothing", there are also functions that are
 specified as "Throws: &lt;some-concrete-list-of-types&gt;".
@@ -7990,17 +8164,17 @@ implementations to do that.
 </div>
 
 
-<div id="outline-container-org8e4cfed" class="outline-4">
-<h4 id="org8e4cfed"><span class="section-number-4">7.7.3.</span> Usage of the standard library in functions with static throw-specifications will be painful without more noexcept</h4>
+<div id="outline-container-org8a610e9" class="outline-4">
+<h4 id="org8a610e9"><span class="section-number-4">7.9.3.</span> Usage of the standard library in functions with static throw-specifications will be painful without more noexcept</h4>
 </div>
 
-<div id="outline-container-orgdd3d470" class="outline-4">
-<h4 id="orgdd3d470"><span class="section-number-4">7.7.4.</span> Function-wrapper types</h4>
-<div class="outline-text-4" id="text-7-7-4">
+<div id="outline-container-org0a10f0d" class="outline-4">
+<h4 id="org0a10f0d"><span class="section-number-4">7.9.4.</span> Function-wrapper types</h4>
+<div class="outline-text-4" id="text-7-9-4">
 </div>
 <ol class="org-ol">
-<li><a id="org5c4075c"></a><code>std::function</code><br />
-<div class="outline-text-5" id="text-7-7-4-1">
+<li><a id="orga4102f7"></a><code>std::function</code><br />
+<div class="outline-text-5" id="text-7-9-4-1">
 <p>
 This type is parameterised by a function signature of form <code>R(Args...)</code>.
 </p>
@@ -8032,8 +8206,8 @@ exception-list.
 </div>
 </li>
 
-<li><a id="org494f626"></a><code>std::copyable_function</code> and <code>std::move_only_function</code><br />
-<div class="outline-text-5" id="text-7-7-4-2">
+<li><a id="org67bd3b7"></a><code>std::copyable_function</code> and <code>std::move_only_function</code><br />
+<div class="outline-text-5" id="text-7-9-4-2">
 <p>
 These types are parameterised on a function-type that inclues the exception-specification.
 </p>
@@ -8044,8 +8218,8 @@ These types are parameterised on a function-type that inclues the exception-spec
 </div>
 </li>
 
-<li><a id="orgc0e0915"></a>Function objects<br />
-<div class="outline-text-5" id="text-7-7-4-3">
+<li><a id="org6dd7609"></a>Function objects<br />
+<div class="outline-text-5" id="text-7-9-4-3">
 <p>
 The following types could be extended to have call operators annotated with <code>throw(auto)</code>
 to have them deduce the exception specification based on the exception specification of
@@ -8100,8 +8274,8 @@ Bitwise Operations
 </div>
 
 
-<div id="outline-container-orgfff9ae2" class="outline-2">
-<h2 id="orgfff9ae2"><span class="section-number-2">8.</span> Implementation Strategies</h2>
+<div id="outline-container-org9d65065" class="outline-2">
+<h2 id="org9d65065"><span class="section-number-2">8.</span> Implementation Strategies</h2>
 <div class="outline-text-2" id="text-8">
 <p>
 This section describes some potential implementation strategies that could be taken
@@ -8115,8 +8289,8 @@ this section as speculative until implementation experience has been gained.
 </p>
 </div>
 
-<div id="outline-container-org1738bfe" class="outline-3">
-<h3 id="org1738bfe"><span class="section-number-3">8.1.</span> Multiple return-paths/return-addresses</h3>
+<div id="outline-container-org169bbc2" class="outline-3">
+<h3 id="org169bbc2"><span class="section-number-3">8.1.</span> Multiple return-paths/return-addresses</h3>
 <div class="outline-text-3" id="text-8-1">
 <p>
 One of the intents of the semantics described above for functions with static-exception specifications
@@ -8200,8 +8374,8 @@ instruction to be executed on the normal return path compared to a normal functi
 </p>
 </div>
 
-<div id="outline-container-orgd74e27e" class="outline-4">
-<h4 id="orgd74e27e"><span class="section-number-4">8.1.1.</span> Inline Jump Tables</h4>
+<div id="outline-container-org812e246" class="outline-4">
+<h4 id="org812e246"><span class="section-number-4">8.1.1.</span> Inline Jump Tables</h4>
 <div class="outline-text-4" id="text-8-1-1">
 <p>
 The first option would be to immediately follow a <code>call</code> instruction with a series of
@@ -8420,8 +8594,8 @@ path.
 </div>
 </div>
 
-<div id="outline-container-org471674b" class="outline-4">
-<h4 id="org471674b"><span class="section-number-4">8.1.2.</span> "NOP Stuffing" Jump Tables</h4>
+<div id="outline-container-orge004831" class="outline-4">
+<h4 id="orge004831"><span class="section-number-4">8.1.2.</span> "NOP Stuffing" Jump Tables</h4>
 <div class="outline-text-4" id="text-8-1-2">
 <p>
 Another alternative approach of implementing the jump-table is to somehow embed
@@ -8531,8 +8705,8 @@ constraints - these will all need to be investigated.
 </div>
 </div>
 
-<div id="outline-container-org9d59614" class="outline-3">
-<h3 id="org9d59614"><span class="section-number-3">8.2.</span> Multiple return-value-slots</h3>
+<div id="outline-container-org8465f54" class="outline-3">
+<h3 id="org8465f54"><span class="section-number-3">8.2.</span> Multiple return-value-slots</h3>
 <div class="outline-text-3" id="text-8-2">
 <p>
 The previous section focused mostly on how to implement multiple return-addresses
@@ -8606,8 +8780,8 @@ exist and also to discuss some of the tradeoffs.
 </div>
 </div>
 
-<div id="outline-container-orgd1b939b" class="outline-3">
-<h3 id="orgd1b939b"><span class="section-number-3">8.3.</span> Passing an exception-value-slot parameter</h3>
+<div id="outline-container-org97440c8" class="outline-3">
+<h3 id="org97440c8"><span class="section-number-3">8.3.</span> Passing an exception-value-slot parameter</h3>
 <div class="outline-text-3" id="text-8-3">
 <p>
 The first approach described is similar to the approach described in [Renwick].
@@ -8838,8 +9012,8 @@ stack, which has the potential to be a performance issue for large exception obj
 </div>
 </div>
 
-<div id="outline-container-org952a873" class="outline-3">
-<h3 id="org952a873"><span class="section-number-3">8.4.</span> Walking stack to find storage</h3>
+<div id="outline-container-orga0962da" class="outline-3">
+<h3 id="orga0962da"><span class="section-number-3">8.4.</span> Walking stack to find storage</h3>
 <div class="outline-text-3" id="text-8-4">
 <p>
 If we want to avoid needing to move/copy exception objects as they propagate up the
@@ -9088,8 +9262,8 @@ may depend on the context and types involved.
 </div>
 </div>
 
-<div id="outline-container-orgdd524e9" class="outline-3">
-<h3 id="orgdd524e9"><span class="section-number-3">8.5.</span> Unwinding through scopes with destructors</h3>
+<div id="outline-container-org6999cd9" class="outline-3">
+<h3 id="org6999cd9"><span class="section-number-3">8.5.</span> Unwinding through scopes with destructors</h3>
 <div class="outline-text-3" id="text-8-5">
 <p>
 When unwinding due to an exception thrown from a function with a static exception specification,
@@ -9223,20 +9397,20 @@ to the adjusted return-address.
 </div>
 </div>
 
-<div id="outline-container-orgc1aea88" class="outline-3">
-<h3 id="orgc1aea88"><span class="section-number-3">8.6.</span> Interop between static-exception functions and dynamic-exception functions</h3>
+<div id="outline-container-orga2d1307" class="outline-3">
+<h3 id="orga2d1307"><span class="section-number-3">8.6.</span> Interop between static-exception functions and dynamic-exception functions</h3>
 <div class="outline-text-3" id="text-8-6">
 </div>
 </div>
 
-<div id="outline-container-orgcbebaa9" class="outline-3">
-<h3 id="orgcbebaa9"><span class="section-number-3">8.7.</span> Virtual function calls</h3>
+<div id="outline-container-org306649b" class="outline-3">
+<h3 id="org306649b"><span class="section-number-3">8.7.</span> Virtual function calls</h3>
 <div class="outline-text-3" id="text-8-7">
 </div>
 </div>
 
-<div id="outline-container-org567093b" class="outline-3">
-<h3 id="org567093b"><span class="section-number-3">8.8.</span> Interaction with <code>std::uncaught_exceptions()</code></h3>
+<div id="outline-container-org9cc8f10" class="outline-3">
+<h3 id="org9cc8f10"><span class="section-number-3">8.8.</span> Interaction with <code>std::uncaught_exceptions()</code></h3>
 <div class="outline-text-3" id="text-8-8">
 <p>
 During exception unwind due to a thrown static exception object, we will still want the
@@ -9289,8 +9463,8 @@ gives the specified behaviour of <code>std::uncaught_exceptions()</code>.
 </div>
 </div>
 
-<div id="outline-container-orga249f5e" class="outline-3">
-<h3 id="orga249f5e"><span class="section-number-3">8.9.</span> Static exceptions and the Itanium C++ ABI</h3>
+<div id="outline-container-org758acd5" class="outline-3">
+<h3 id="org758acd5"><span class="section-number-3">8.9.</span> Static exceptions and the Itanium C++ ABI</h3>
 <div class="outline-text-3" id="text-8-9">
 <p>
 See <a href="https://godbolt.org/z/8578rKh6j">https://godbolt.org/z/8578rKh6j</a> for an proof-of-concept of how a local throw/catch within a function,
@@ -9313,8 +9487,8 @@ Additional work is required here to validate this approach.
 </div>
 </div>
 
-<div id="outline-container-orgf46f453" class="outline-2">
-<h2 id="orgf46f453"><span class="section-number-2">9.</span> Acknowledgements</h2>
+<div id="outline-container-org360ddfd" class="outline-2">
+<h2 id="org360ddfd"><span class="section-number-2">9.</span> Acknowledgements</h2>
 <div class="outline-text-2" id="text-9">
 <p>
 Special thanks to Ben Craig and Corentin Jabot for providing feedback on drafts of
@@ -9323,8 +9497,8 @@ this paper.
 </div>
 </div>
 
-<div id="outline-container-org1b8b113" class="outline-2">
-<h2 id="org1b8b113"><span class="section-number-2">10.</span> References</h2>
+<div id="outline-container-org922f72c" class="outline-2">
+<h2 id="org922f72c"><span class="section-number-2">10.</span> References</h2>
 <div class="outline-text-2" id="text-10">
 <ul class="org-ul">
 <li>[FastCasting] "Fast dynamic casting" (Gibbs, Stroustrup)<br />
@@ -9365,7 +9539,7 @@ this paper.
 <div id="postamble" class="status">
 <p class="date">Date: 2024-03-01</p>
 <p class="author">Author: Lewis Baker</p>
-<p class="date">Created: 2024-03-05 Tue 20:45</p>
+<p class="date">Created: 2024-03-06 Wed 00:52</p>
 <p class="validation"><a href="https://validator.w3.org/check?uri=referer">Validate</a></p>
 </div>
 </body>
