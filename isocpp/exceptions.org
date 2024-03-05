@@ -1465,11 +1465,16 @@ compute types that have different layouts or ABIs based on the order of the type
 ~declthrow~ expression, and having the same computation produce the results in different orders
 is a sure-fire way to introduce ODR-violations.
 
+Any unique set of exception types queried via a ~declthrow~ expression or by deducing the types
+listed in a static exception specification of a function signature needs to consistently yield
+a list of types in that set in a canonical order.
+
 There are a few other questions around the ordering of the exception types:
 - Should the order be some ordering of all types?
   i.e. if ~E1~ appears before ~E2~ in some ~declthrow()~ query, then ~E1~ appears before ~E2~ in /all/ ~declthrow()~ queries.
   - This would effectively provide a built-in facility for sorting types in type-lists.
-    Note that [[https://wg21.link/P2830][P2830]] "Standardized Type Ordering" is also exploring the design space for sorting of types.
+  - Note that [[https://wg21.link/P2830][P2830]] "Standardized Type Ordering" is also exploring the design space for sorting of types.
+    Should the order that types are returned in be consistent with the order produced by that facility?
 - Should the order be specified by the standard? or should it be unspecified/implementation-defined?
   - It might be difficult to specify an ordering of all types in a portable way.
   - Doing so may improve portability/compatibility of code across compilers.
@@ -4408,7 +4413,7 @@ of functions.
 It is noted that libc++, libstdc++ and MSSTL all either are defined in terms of compiler
 intrinsics, which would need to be updated as part of implementing this feature, or are
 defined in terms of other properties of the type. For example, by computing ~is_function_v<T>~
-by checking whether the result of evaluating ~is_const_v<const  T> && !is_reference_v<T>~ is ~true~.
+by checking whether the result of evaluating ~!is_const_v<const  T> && !is_reference_v<T>~ is ~true~.
 
 *** Additional traits
 
@@ -4421,19 +4426,19 @@ them has been established.
 
 ** Freestanding
 
-*************** TODO Describe which aspects of exceptions could be used in freestanding.
-Allowed:
-- static throw expression
-- static rethrow expression
-- template catch
-Disallowed:
+This paper proposes that the following facilites be available in conforming freestanding implementations:
+- static throw expressions
+- static rethrow expressions
+- try/catch
+- ~template catch~ handlers
+- functions with throw specifications
+
+The following facilities would not be required in a freestanding implementation:
 - dynamic throw expression
 - dynamic rethrow expression
-- exception_ptr
-- uncaught_exceptions()
-- current_exception()
-*************** END
-
+- ~std::exception_ptr~
+- ~std::uncaught_exceptions()~
+- ~std::current_exception()~
 
 * Prior Work
 :PROPERTIES:
