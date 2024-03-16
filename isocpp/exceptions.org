@@ -1,17 +1,17 @@
 # -*- mode: org; org-html-htmlize-output-type: css -*-
-#+TITLE: D3166R0: Static Exception Specifications
+#+TITLE: P3166R0: Static Exception Specifications
 #+AUTHOR: Lewis Baker
 #+EMAIL: lewissbaker@gmail.com
-#+DATE: 2024-03-01
+#+DATE: 2024-03-16
 #+OPTIONS: html5-fancy
 #+OPTIONS: tasks:nil
-#+EXPORT_FILE_NAME: D3166R0
+#+EXPORT_FILE_NAME: P3166R0
 #+EXPORT_EXCLUDE_TAGS: noexport,todo
 
-| Document | *D3166R0*                             |
-| Date     | *2024-03-01*                          |
+| Document | *P3166R0*                             |
+| Date     | *2024-03-16*                          |
 | Reply To | *Lewis Baker <lewissbaker@gmail.com>* |
-| Audience | *EWG*, *SG21*, *SG14*                 |
+| Audience | *EWGI*, *LEWGI*                       |
 
 * Abstract
 
@@ -4747,25 +4747,31 @@ systems it is easy for those high-level calls to end up with 50+ exception-types
 each function, affecting readability of the code.
 
 To avoid such large lists of exceptions, Java code ends up either just listing base-class exceptions
-like ~throws Exception~, or ends up catching but not handling the 
+like ~throws Exception~, or ends up catching and ignoring the exception via a ~catch~ with an empty
+handler.
+
+Note that the status quo in C++ is that any function not marked ~noexcept~ has an exception specification
+that is the equivalent of Java's ~throws Exception~, so if dynamic exceptions are suitable for your
+use-cases then you can continue to use them.
 
 With this paper, if you want to use throw-specifiers and static exceptions all the way up into
 the high-level systems then it's possible there would indeed be a need to list a large number
 of exceptions in such high-level functions.
 
-There are additional tools in C++ that could help make this manageable, however.
+There are additional tools in C++ that could help make this more manageable compared to Java, however.
 
 - Pack aliases, proposed by [P3115R0], could be used to define shorter names for reusable
   sets of exceptions thrown by each subsystem. Then high-level functions could list the
   pack-alias names, ~throw(foo_errors..., bar_errors..., baz_errors...)~ instead of listing
   every exception that might be thrown by each subsystem.
-- Use of deduced exception specifications on high-level systems could be used to allow
-  the compiler to compute the exception specification.
-- 
-
-Existing code in C++ that does not specify an exception 
-
-** C# / .NET
+- Use of ~throw(auto)~ could be used on functions that compose multiple systems to allow
+  the compiler to compute the exception-specification - with the tradeoff that these functions
+  must have their definitions visible to users. Alternatively, use of ~throw~ specfications
+  using ~declthrow()~ queries could be used in the declaration if separate compilation is
+  required.
+- Multiple subsystems could throw types like ~std::error_code~ to represent error conditions
+  so that there is overlap between sets of potentially-thrown exceptions from different
+  subsystems and the errors.
 
 ** Midori
 
@@ -4773,9 +4779,11 @@ Midori was an internal research/incubation project at Microsoft that explored wa
 innovating the software stack, including programming languages, compilers, operating-systems,
 services, applications and overall programming models.
 
-Joe Duffy has written an excellent [[https://joeduffyblog.com/2015/11/03/blogging-about-midori/][blog series]] about the Midori project, which is generally
-a good read which I highly recommend. However, there is one article in particular on the
-[[https://joeduffyblog.com/2016/02/07/the-error-model/][Midori Error Model]] that is worth discussing here as it contains a lot of good ideas and
+Joe Duffy has written an excellent [[https://joeduffyblog.com/2015/11/03/blogging-about-midori/][blog series]]
+about the Midori project, which is generally a good read which I highly recommend.
+However, there is one article in particular on the
+[[https://joeduffyblog.com/2016/02/07/the-error-model/][Midori Error Model]]
+that is worth discussing here as it contains a lot of good ideas and
 also critique of error models of other languages, including Java's checked exceptions
 and C++ exceptions.
 
@@ -4796,9 +4804,12 @@ TODO: Finish writing this.
 :ID:       02f589c7-b738-439d-a886-ed5ccdf08a72
 :END:
 
-- N3202 - To which extent can noexcept be deduced (Bjarne) (2010)
-  - Summarises N3227
-    - "almost every  statement in function tempaltes leak into the noexcept declaration"
+There have been several papers that have explored the idea of deducing exception
+specifications of a function. This section tries to summarise them.
+
+- [[https://wg21.link/N3202][N3202]] - To which extent can noexcept be deduced (Stroustrop) (2010)
+  - Summarises [[https://wg21.link/N3227][N3227]] "Please reconsider ~noexcept~" (2010)
+    - "almost every statement in function templates leak into the noexcept declaration"
     - "a user-maintained noexcept increases the likelihood that the specification is not
       correct. In turn this implies (a) an increased chance that client code terminates
       unexpectedly, or (b) that optimization opportunities are lost. (Note tha providing
@@ -4816,98 +4827,85 @@ TODO: Finish writing this.
     - Walks through some cases where there might be inconsistencies in deducing the noexceptness
       in different contexts.
       - This seems to be based on the assumption that it needs to be an implicit deduction rather
-	than explicit opt-in for each function.
+        than explicit opt-in for each function.
 
 - [[https://wg21.link/N3207][N3207]] - noexcept(auto) (2010)
   - Highlights issues with implicit deduction in N3202
     - Easy to accidentally introduce ODR violations
     - Issues with eager function template instantiation to determine function signature/noexceptness
       (not SFINAE friendly).
-  - Proposes ~noexcept(auto)~ as in-between compromise between having to duplicate body in noexcept declaration, and fully implicit, which has issues
+  - Proposes ~noexcept(auto)~ as in-between compromise between having to duplicate body in noexcept declaration,
+    and fully implicit, which has issues.
   - Doesn't let mutually recursive functions all have their noexcept-specification deduced
     #+BEGIN_SRC c++
       struct A {
-	void f(int i) noexcept(auto)
-	  { if (i > 1) g(i-1); } // call to g()  is ill-formed as it's noexcept specifier is incomplete.
-	void g(int i) noexcept(auto)
-	  { if (i > 1) f(i-1); }
+        void f(int i) noexcept(auto)
+        { if (i > 1) g(i-1); } // call to g() is ill-formed as it's noexcept specifier is incomplete.
+        void g(int i) noexcept(auto)
+        { if (i > 1) f(i-1); }
       };
     #+END_SRC
-  - Also mentions this example as being ill-formed, but it looks ok to me:
+  - Also mentions this example as being ill-formed:
     #+BEGIN_SRC c++
       template<bool> struct M;
       template<> struct M<true> { int large[100]; };
       template<> struct M<false> { char small; };
       struct B {
-	template<bool> void maybe_throw();
-	template<> void maybe_throw<true>() noexcept(auto) { throw 0; } // deduced noexcept(false)
-	template<> void maybe_throw<false>() noexcept(auto) { } // deduced noexcept
-	void f() noexcept(auto) { maybe_throw<(sizeof(B) > 10)>(); };
-	M<noexcept(f())> data; // ill-formed because the noexcept-specification for f() is not yet deduced.
+        template<bool> void maybe_throw();
+        template<> void maybe_throw<true>() noexcept(auto) { throw 0; } // deduced noexcept(false)
+        template<> void maybe_throw<false>() noexcept(auto) { } // deduced noexcept
+        void f() noexcept(auto) { maybe_throw<(sizeof(B) > 10)>(); };
+        M<noexcept(f())> data; // ill-formed because the noexcept-specification for f() is not yet deduced
+                               // because definition of f() is not available until end of class definition.
       };
       // Definition of f() isn't available until the end of the class-definition, here.
     #+END_SRC
   - Recursion is also interesting:
     #+BEGIN_SRC c++
-      int f(int i) noexcept (auto)
+      int f(int i) noexcept(auto)
       {
-	if (i == 0)
-	  return i;
-	else
-	  return f(i-1)+i;
+        if (i == 0)
+          return i;
+        else
+          return f(i-1) + i;
       }
     #+END_SRC
-    Should in theory be deducible, but similar to mutually recursive functions
-    - What about the following:
-      #+BEGIN_SRC c++
-	int f(int i) noexcept (auto) {
-	  if constexpr (noexcept(f(i-1))) {
-	    throw X{};
-	  } else {
-	    return i;
-	  }
-	}
-      #+END_SRC
-      Such a function is self-contradicting.
-      - Could allow calls to ~f()~ but is ill-formed if you query ~noexcept(f())~?
-
+    Should in theory be deducible, but ill-formed similar to mutually recursive functions
     - Minutes:
-      - dislike of noexcept(auto) with SFINAE on exception-specifications; having only the latter without the former is ok
+      - dislike of ~noexcept(auto)~ with SFINAE on exception-specifications; having only the latter without the former is ok
       - you can't overload on exception-specifications, why do you want to SFINAE on it?
       - can delay determining exception-specification until the function was selected in overload resolution
       - Issue with non-template deduced member inside class template
-	#+BEGIN_SRC c++
-	  template<class T1, class T2>
-	  struct C {
-	    C(C&& other) noexcept(auto)
-	      : first(std::move(other)), second(std::move(other))
-	    { }
+        #+BEGIN_SRC c++
+          template<class T1, class T2>
+          struct C {
+            C(C&& other) noexcept(auto)
+            : first(std::move(other)), second(std::move(other))
+            { }
+            T1 first;
+            T2 second;
+          };
 
-	    T1 first;
-	    T2 second;
-	  };
-
-	  C<int, int> x;  // will instantiate the body of C::C(&&) right here
-	#+END_SRC
-	The implicit instantiation of the body of the move constructor should only be performed if ODR-used.
-	This would make noexcept(auto) more like explicitly enumerating the expressions.
-	Ideally, the noexcept specification shoud only be deduced if overload selected.
-	May need to be deduced even if used in unevaluated operand - e.g. ~noexcept(f())~
-      - Issue with debug builds w/ assertions that throw in move-ctor with deduced noexcept meaning that std::vector copies instead of throwing and never calls move ctor.
+          C<int, int> x;  // will instantiate the body of C::C(&&) right here
+        #+END_SRC
+        The implicit instantiation of the body of the move constructor should only be performed if ODR-used.
+        This would make ~noexcept(auto)~ more like explicitly enumerating the expressions.
+        Ideally, the noexcept specification shoud only be deduced if overload selected.
+        May need to be deduced even if used in unevaluated operand - e.g. ~noexcept(f())~
+      - Issue with debug builds w/ assertions that throw in move-ctor with deduced noexcept meaning that ~std::vector~ copies instead of throwing and never calls move ctor.
     - Paper was struck from core motions in 2010-11 Batvia meeting
-      - Why?
+      - I was unable to locate minutes indicating why this was.
 
     - Presentation Notes
-      https://wiki.edg.com/pub/Wg21batavia/Documents/noexcept_auto.pdf
-      - Lists two perils
+      [[https://wiki.edg.com/pub/Wg21batavia/Documents/noexcept_auto.pdf]]
+      Lists two perils
       - Adding print statements changes the deduced exception-specification (e.g. using cout)
-	Can workaround by adding try/catch.
+        - Can workaround by adding try/catch.
       - Adding assertions can change deduced exception-specification.
-	- An issue if assertion macro throws.
-	  Not an issue if it terminates.
+        - An issue if assertion macro throws.
+        - Not an issue if it terminates.
 
-
-- N3227 - Please reconsider noexcept (2010)
+- [[https://wg21.link/N3227][N3227]] - Please reconsider noexcept (2010)
   - Draft: https://wiki.edg.com/pub/Wg21batavia/EvolutionWorkingGroup/reconsider_noexcept.html
   - https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2010/n3227.html
   - Suggests that we should support deducing ~noexcept~-ness of a function
@@ -4916,14 +4914,14 @@ TODO: Finish writing this.
   - Not a problem if you ignore flow-analysis and just look at whether there are any potentially-throwing expressions that do not catch exceptions.
   - Has some expected objections and some counter-arguments
 
-- N3204 -  Deducing "noexcept" for destructors (2010)
+- [[https://wg21.link/N3204][N3204]] -  Deducing "noexcept" for destructors (2010)
   - Short paper
-  - Wording for  default exception-specification to be the same as for an implicit destructor.
+  - Wording for default exception-specification user-defined destructors to be the same as for an implicit destructor.
     i.e. deduced from the exception-specifications of the data-members/base-classes.
 
 - N3386 - return type deduction for normal functions (2012)
   - N3638 - Return-type deduction for normal functions (2013)
-  - maybe relevate to noexcept(auto) deduction?
+  - maybe relevant to ~noexcept(auto)~ deduction?
   - talks about deduced return types for recursive functions
     - works if there is a prior recursion-breaking return-statement by the
       time we get to the use of the recursive call.
@@ -4931,18 +4929,21 @@ TODO: Finish writing this.
     e.g. if you use it in a non-evaluated context such as ~decltype(f(1))~.
   - Proposes adding ~decltype(auto)~ as well.
 
-- [[https://wg21.link/N4473][N4473]] - noexcept(auto), again (2015) Ville
+- [[https://wg21.link/N4473][N4473]] - ~noexcept(auto)~, again (2015) (Voutilainen)
   - Tries to open up the discussion about adding ~noexcept(auto)~ again.
   - Not a lot of detail here, other than this is something that is oft-requested, and is a big pain point for some people.
   - [[https://wiki.edg.com/bin/view/Wg21lenexa/N4473][Minutes]]
     - Jason M had some proposed wording (not found/attached)
     - Had consensus in EWG in Lenexa
-- [[https://wg21.link/P0133R0][P0133R0]] -  Putting noexcept(auto) on hold, again
-  - Abandoned noexcept(auto) upon realising that you still need to duplicate the expressions
+    
+- [[https://wg21.link/P0133R0][P0133R0]] -  Putting ~noexcept(auto)~ on hold, again (2015) (Voutilainen)
+  - Abandoned ~noexcept(auto)~ upon realising that you still need to duplicate the expressions
     for SFINAE cases.
-    - Seems like there still would have been value in adding this.
+    - Concern should be reduced now that we have concepts as a nicer syntax for SFINAE
 
 ** Faster Exceptions
+
+A number of papers have explored the concept of improving the performance of exceptions.
 
 - N4049 - 0-overhead-principle violations in exception handling (2014)
 - N4234 - 0-overhead-principle violations in exception handling - part 2 (2014)
@@ -4961,10 +4962,10 @@ TODO: Finish writing this.
     - Basically baking std::expected into the language
     - Requires a new function-call ABI.
   - ~throws(cond)~ can be a bool value, or an ~except_t~ value (no_except, static_except, dynamic_except)
-  - std::error type
+  - Proposes a new ~std::error~ type
     - Tries to map error values to exception type when propagating out of a function.
       e.g. std::errc::ENOMEM <-> std::bad_alloc
-    - For types where there is no obvious standard mapping, it would just wrap an exception_ptr
+    - For types where there is no obvious standard mapping, it would just wrap an ~exception_ptr~
     - This mapping seems like it would be complicated, and difficult to specify/extend.
   - At call sites (that propagate or handle an error), a potential downside of the if-error-goto-handler
     implementation model is that it injects branches that can interfere with optimizations.
@@ -4977,14 +4978,14 @@ TODO: Finish writing this.
       now needs to be extracted again.
 
   - try expression / statement
-    - Require every potentially throwing expressions/statement to be covered by a ~try~ expression.
-
+    - Require every potentially throwing expressions/statement inside a ~throws~ function
+      to be covered by a ~try~ expression.
     - Also proposes a ~catch(E) { ... }~ without an opening ~try { ... }~ block.
       Instead, could have ~try~ expressions scattered throughout code between
       enclosing open-brace and ~catch~ clause.
       - This would have issues with the programmer determining what variables are in-scope inside
-	the ~catch~ block. Every variable whose scope beings after the first ~try~ expression
-	would potentially  not exist and not be available in the ~catch~ block.
+        the ~catch~ block. Every variable whose scope beings after the first ~try~ expression
+        would potentially not exist and not be available in the ~catch~ block.
 
   - Suggests adding a ~throws{E}~ syntax for specifying a single error type that would be thrown
     instead of ~std::error~.
@@ -5017,21 +5018,21 @@ TODO: Discuss trade-offs of allowing cast from ~throw(T1, T2)~ function-pointers
 
 TODO: Expand on these points in more detail
 
-- this was a problem with the implicit constexpr paper
+- this was a problem with the paper [P1235R0] "implicit ~constexpr~"
 
 counter points
 - this is already a problem for things with deduced return-type
   - mangled names don't include the return type
-  - std::execution / other expression template libraries can change
+  - ~std::execution~ / other expression template libraries can change
     the return-type of a function if they change the implementation
     (i.e. the type of the expression-object being returned)
-- lots of template code that wants to be noexcept transparent already has to
+- lots of template code that wants to be ~noexcept~ transparent already has to
   maintain this by hand - duplicating the body in the noexcept clause
   - if the implementation changes then so does the noexcept clause
   - this is not eliminating something
 - lots of code is currently specified as "expression equivalent to", which
   implies having the equivalent noexceptness.
-  - using throw(auto) is a more direct way of expressing that the exception
+  - using ~throw(auto)~ is a more direct way of expressing that the exception
     specification is "expression equivalent to" the function body
 
 ** How accurate does the potentially-thrown exception type calculation need to be?
@@ -5041,12 +5042,30 @@ somewhat conservative way and might include exceptions that a deeper analysis wo
 unreachable.
 
 It considers only control-flow structure of the function-body and function-signatures of called functions.
-It does not involve or require any reasoning about whether or not conditions are always true or false except for ~if constexpr~.
+It does not involve or require any reasoning about whether or not conditions are always true or false except for
+those conditions required to be constant evaluated. i.e. ~if constexpr~.
 
 There are a couple of decisions that were made in the design described in this paper which should
-be considered further
+be considered further:
 - whether to consider all identifier labels as reachable or whether to only consider an identifier
-  label reachable if there is a corresponding ~goto~ statement that is also reachable.
+  label reachable if there is a corresponding ~goto~ statement that targets the label that is also
+  reachable.
+- whether to consider sub-expressions that are sequenced after other interrupted-flow expressions
+  within the same statement as unreachable and thus not contributing to the set of potentially
+  thrown exceptions.
+  For example: What should the deduced exception specification of ~f()~ and ~g()~ be?
+  #+begin_src c++    
+    void f() throw(auto) { // deduces to throw(A) or throw(A, B)
+      (throw A{}, throw B{}); // throw B{} is unreachable
+    }
+    
+    [[noreturn]] int always_throws() throw(A);
+    void takes_an_int(int x) throw(B);
+    
+    void g() throw(auto) { // deduces to throw(A) or throw(A, B)
+      takes_an_int(never_returns()); // takes_an_int() is never invoked
+    }
+  #+end_src
 
 ** Permission to throw types derived from ~std::bad_alloc~ / ~std::bad_cast~
 
@@ -5057,7 +5076,8 @@ This allows implementations to throw types that are derived from these types.
 
 If we want to allow these expressions to have static exception specifications then we would
 need to constrain these implementations to throw types that were exactly ~std::bad_alloc~
-or ~std::bad_cast~. However, doing so is a potential breaking change for some implementations.
+or ~std::bad_cast~. However, doing so is a potential breaking change for any implementations
+that are throwing some type derived from these types.
 
 And whilst portable C++ code should not be relying on catching a particular exception-type
 derived from these classes, implementations could potentially define the semantics for their
@@ -5065,7 +5085,9 @@ implementations of these facilities to throw ~vendor::bad_alloc~ or ~vendor::bad
 
 Having these expressions actually have a static throw-specification would also introduce
 a dependency of those expressions on the corresponding library-defined types, which
-could be problematic for some implementations.
+could be problematic for some implementations. There is presumably already this dependency,
+however, since the compiler needs to generate code to throw ~std::bad_cast~ for ~dynamic_cast~
+expressions.
 
 ** Avoiding dependencies on thread-locals
 :PROPERTIES:
@@ -5101,8 +5123,9 @@ current exception object.
 When a thrown static exception object is caught by a handler, the exception object will be living
 on the stack. However, if we want a call to ~std::current_exception()~ to be able to return
 an ~exception_ptr~ that references a dynamic exception object that is a copy of the stack-allocated
-object on the stack, then the handler needs to register the address of the object, some basic
-type-information and information about how to copy that object to a new location.
+object on the stack, then the handler needs to register the address of the static exception object
+along with some basic type-information and information about how to copy that object to a new location.
+
 This then allows a subsequent call to ~std::current_exception()~ within the scope of the handler
 to find the object, allocate new storage for a dynamic-exception-object of the right size, copy
 the static-exception-object to the dynamic-exception-object and then return an ~exception_ptr~
@@ -5149,8 +5172,8 @@ handler, that:
   is undefined-behaviour (which one is TBD).
 
 Note that the handler can still rethrow the exception by evaluating a ~throw;~
-expression that is lexically within the handler - the compiler knows where to
-go to get the exception object in this case.
+expression that is lexically associated with the handler - the compiler knows
+where to go to get the exception object in this case.
 
 **** Catching ~std::exception_ptr~ as an alternative to calling ~std::current_exception()~
 
@@ -5201,19 +5224,20 @@ would now start matching all exceptions, not just a thrown ~std::exception_ptr~.
 
 Also, if we decided that, like ~catch(...)~, that a ~catch(std::exception_ptr)~ must
 appear as the last handler in the sequence of handlers for a try-block, then it may
-cause existing code to become ill-formed.
+cause existing code to become ill-formed if ~catch(std::exception_ptr)~ does not
+appear as the last handler.
 
 A quick search in https://codesearch.isocpp.org/ showed 2 matches for handlers that
 were catching a ~std::exception_ptr~.
 
 One was a unit-test[fn:pplx] in cpprestsdk that was making sure that when an ~exception_ptr~
-was being rethrown by an async tasl library that it was using ~std::rethrow_exception(eptr)~
+was being rethrown by an async task library that it was using ~std::rethrow_exception(eptr)~
 instead of ~throw eptr~ and was checking that the ~catch(std::exception_ptr)~ handler was not
 being entered when the exception was rethrown.
 
 The other was similarly for an async framework in the Ice project which was intentionally
 catching an ~exception_ptr~ and then immediately calling ~std::rethrow_exception()~ to
-propagatethe exception. Upon further investigation, I found an issue[fn:ice] that indicated
+propagate the exception. Upon further investigation, I found an issue[fn:ice] that indicated
 a desire to move away from this and a search of the latest version of the codebase
 yielded no usage.
 
@@ -5225,12 +5249,12 @@ A search of github yielded one other hit:
 Usage of this pattern in open-source projects does not seem to be wide-spread.
 While not representative of code-bases at large, it may be worth considering a syntax
 like this to both allow freestanding platforms that don't have access to thread-locals
-an alternative API for obtaining the current exception an an ~exception_ptr~.
-
+an alternative API for obtaining the current exception an an ~exception_ptr~ and also
+to simplify generic code that needs to deal both dynamic and generic exceptions by
+giving them similar forms.
 
 [fn:pplx] https://github.com/microsoft/cpprestsdk/blob/master/Release/tests/functional/pplx/pplx_test/pplx_op_test.cpp#L198
 [fn:ice] https://github.com/zeroc-ice/ice/issues/582
-
 
 *** Avoiding overhead implied by ~std::unhandled_exceptions()~
 
@@ -5258,12 +5282,11 @@ For example: A scope_failure can be used to roll back a transaction if something
   }
 #+end_src
 
-
 To make this work, however, the C++ runtime needs to store a thread-local count of the
 number of in-flight exceptions and then increment it whenever executing a ~throw~ expression
 and decrement it whenever a handler is activated.
 
-For example, on the Itanium ABI, there are the following interface:
+For example, on the Itanium ABI, there is the following interface relevant to ~std::uncaught_exceptions()~
 #+begin_src c++
   struct __cxa_eh_globals {
     __cxa_exception* caughtExceptions;
@@ -5287,8 +5310,8 @@ and then in the handler (immediately after initializing any exception-object par
 Usually the increment/decrement is wrapped up inside the ~__cxa_throw()~ and ~__cxa_begin_catch()~
 functions.
 
-The use of a thread-local here is a somewhat indirect mechanism to detect the context
-that the compiler is calling the destructor and has known deficiencies when used in
+The use of a thread-local here is a somewhat indirect mechanism to detect which context
+the compiler is calling the destructor and has known deficiencies when used in
 conjunction with coroutines or fibers which can suspend and then resume in a different
 context, potentially with a different number of in-flight exceptions.
 
@@ -5297,6 +5320,7 @@ One direction to explore, which has been previously hinted at in both P0709 and 
 exception unwind and another to execute during normal scope exits, or to pass a flag
 that indicates the disposition in which the destructor is being called.
 
+For example, the strawman syntax of a destructor that takes a parameter of type ~std::unepxect_t~:
 #+begin_src c++
   template<std::invocable F>
   struct scope_failure {
@@ -5337,7 +5361,7 @@ thus defaulting the exception-specification to ~noexcept(false)~.
 
 When a C++ program calls such functions, the compiler must assume that they could potentially
 throw an exception and so may end up generating additional code to handle the case that these
-functions throw an exception, even if the vast majority of these functions will not ever emit
+functions throw an exception, even if the vast majority of these functions will never emit
 an exception.
 
 When you call these C functions from a ~noexcept~ function then the worst you get is some
@@ -5416,11 +5440,15 @@ For example: The following would
   } }
 #+end_src
 
+One concern with this approach would be that it could transitively apply
+the ~noexcept~ qualifier to all headers included by "the_c_api.h", not necessarily
+just the APIs directly declared by that header.
+
 Another potential direction we could explore is the use of ~try~ expressions.
 For example: A ~try/else~ expression that evaluates a first sub-expression and if that exits with an exception then evaluates a second sub-expression as a fallback value.
 #+begin_src c++
   int result = try some_c_api(handle) else std::terminate();
-  int result = try some_c_api(handle) else std::unreachable(); // compiler optimizes this to be as if the function was noexcept.
+  int result = try some_c_api(handle) else nothrow_unreachable(); // compiler optimizes this to be as if the function was noexcept.
   int result = try some_c_api(handle) else -1;
 #+end_src
 
@@ -5430,7 +5458,7 @@ the programmer knows it cannot throw.
 Note that this paper does not propose either of these directions at this time, only
 list them as potential directions for further investigation.
 
-** Interaction with Contracts :noexport:
+** Interaction with Contracts
 
 The contracts proposal [P2900R6] adds the ability to add pre-conditions and post-conditions to function declarations
 and also allows adding ~contract_assert()~ expressions.
@@ -5454,13 +5482,13 @@ However, one stated design principle of the contracts facility, listed in [P2900
 of the predicate within that assertion, on a function or in a block of code would change
 when the satisfiability of a concept then a contained program could be substantially changed
 by simply using contracts in such a way. Therefore, we remove the ability to do this.
-As a corollary, the addition or removal of a ocntract assertion must not change the result
+As a corollary, the addition or removal of a contract assertion must not change the result
 of SFINAE, the result of overload resolution, the result of ~noexcept~ operator, or which
 branch is selected by an ~if constexpr~.
 #+end_quote
 
 However, this principle, in combination with potentially-throwing contract violation handlers,
-seems to be in conflict with several of the features proposed in this paper.
+seems to be incompatible with several of the features proposed in this paper.
 
 The design in P2900R6 makes ~contract_assert~ a statement so that you cannot ask the question
 whether it is ~noexcept~ or not as a ~noexcept~ expression requires its operand to also be
@@ -5468,7 +5496,7 @@ an expression. This defers needing to answer the question of whether or not ~con
 is potentially throwing.
 
 However, this question needs to be answered if we wanted to be able to use contracts in
-combination with the features proposed in this paper - something I would dearly like to support.
+combination with the features proposed in this paper - something I think we should support
 
 For example: What is the deduced exception specification of these functions?
 #+begin_src c++
@@ -5499,7 +5527,7 @@ For example: Is the call to ~set_error()~ below a discarded statement or not?
     } catch (...) {
       constexpr bool is_reachable = sizeof...(declthrow(throw)) > 0;
       if constexpr (is_reachable) {
-	set_error(std::current_exception());
+        set_error(std::current_exception());
       }
     }
   }
@@ -5508,6 +5536,8 @@ For example: Is the call to ~set_error()~ below a discarded statement or not?
 If we follow the principle that introducing contracts should not change the satisfiability
 of a concept then, for the purposes of computing the set of potentially-thrown exception types
 of a ~contract_assert~ statement, we would need to treat it as if it were non-throwing.
+Otherwise, adding a ~contract_assert~ might change the signature of a function with a deduced
+exception specification, or might make a function with a static exception specification ill-formed.
 
 However, this then seems at odds with the desire for people to make use of throwing
 violation handlers to recover from program bugs, as code surrounding contract-assertions
@@ -5521,11 +5551,8 @@ If I mark a function as ~noexcept~, does that mean that it guarantees that calli
 ever throw an exception?
 Or does it mean it will not throw /for an evaluation that does not violate any contract checks/?
 
-I don't have any answers at the moment, but I would like to try to find a solution here
-that meets the needs of both people that want to try to recover from program bugs by
-throwing exceptions, and the needs of people that want to be able to mark as many functions
-as possible with narrow throw-specifications to enable them to reason about the program
-and, with this proposal, obtain improved runtime performance for exception-handling.
+I don't have any solutions to propose here at this stage, but I would like to try to find a
+solution that allows both static exceptions and contracts to work well together.
 
 ** Standard Library Impacts
 
@@ -5551,7 +5578,7 @@ For example MS-STL, libc++ and libstdc++ all declare ~std::vector::operator[]~ a
 having a pre-condition that the index is less-than ~size()~. It is worth noting, however, the same
 standard library implementations do not mark ~std::vector<bool>::operator[]~ with ~noexcept~.
 
-With this paper and the ability to either decare a function as having a deduced throw-specification
+With this paper and the ability to either declare a function as having a deduced throw-specification
 or to call these functions from a context where the the exception-specification is checked, the
 implementation differences on ~noexcept~ qualification of these member functions can potentially
 affect the well-formedness of the program.
@@ -5605,6 +5632,10 @@ that instead of ~std::terminate()~:
   }
 #+end_src
 
+This would allow the compiler to assume that the handler is unreachable in modes where
+calling ~std::unreachable()~ does not throw an exception, and be equivalent to
+~std::terminate()~ in modes where it does throw an exception.
+
 *** Should implementations be allowed to strengthen "Throws: something" exception specification to a static exception specification?
 
 Similar to the case where a function that is specified as "Throws: Nothing", there are also functions that are
@@ -5634,7 +5665,7 @@ For example: A portable implementation would need to write an extra ~catch(...)~
     std::uint32_t current = start_at;
     try {
       while (true) {
-	current = v.at(current).value();
+        current = v.at(current).value();
       }
     }
     catch (std::out_of_range) {}
@@ -5646,10 +5677,8 @@ For example: A portable implementation would need to write an extra ~catch(...)~
 
 Having a static exception specification for functions like ~std::vector::at()~ and ~std::optional::value()~
 would actually make them more useful as their performance could now be guaranteed to be on the order of
-normal control flow you could write yourself with extra if-checks, rather than possibly many thousands
-of cycles.
-
-
+normal control flow you could write yourself with extra if-checks, rather than the many thousands of cycles
+that the current dynamic exception meachnisms would take.
 
 However, user code written assuming such narrow exception declarations were placed on the standard library functions
 would, again, be non-portable, because other implementations might not put the tighter exception declarations
@@ -5659,8 +5688,18 @@ Note that specifying that these functions must have have a static exception spec
 would likely be an ABI break for many implemenations, so we are unlikely to be able to require
 implementations to do that.
 
-
 *** Usage of the standard library in functions with static throw-specifications will be painful without more noexcept
+
+Trying to use standard library functions with pre-conditions, and thus a ~noexcept(false)~
+exception specification, or even library functions with a /Throws: some-type/ exception
+specification from within a function with a static exception specification is going to
+require callers to surround the calls in a try/catch(...) to ensure that the exception-specification
+is not violated.
+
+Thus, if this paper is adopted then there will be some pressure on vendors and on the
+standard library to provide APIs with narrower exception specifications for these
+kinds of functions to allow them to be used in contexts with static exception
+specifications without having to write ~catch(...)~ in any handlers.
 
 *** Function-wrapper types
 
@@ -5689,7 +5728,16 @@ exception-list.
 
 These types are parameterised on a function-type that inclues the exception-specification.
 
-- ~std::reference_wrapper~
+We would need to add additional partial specializations for cases where the function
+type passed as the first template argument has a non-empty static exception specification
+to have this apply that exception specification to its ~operator()~, and also to require
+that the wrapped callable has a compatible exception specification.
+
+**** ~std::reference_wrapper~
+
+This type could have its ~operator()~ modified to have a deduced exception specification
+so that if the referenced object has an ~operator()~ with a static exception specification
+then the ~reference_wrapper::operator()~ also has an equivalent exception specification.
 
 **** Function objects
 
@@ -5722,6 +5770,16 @@ Bitwise Operations
 - ~std::bit_xor~
 - ~std::bit_not~
 
+*** Algorithms
+
+We could also consider adapting algorithms that take lambdas/function-objects as parameters
+that the user provides as being transparen to exceptions such that if the user-provided
+iterators/ranges and function-objects have static exception specifications then the algorithm
+itself has a static exception specification.
+
+At the moment, algorithms tend to have ~noexcept(false)~ exception specifications and so would
+require a ~try/catch(...)~ around calls to them if used inside a function with a static exception
+specification.
 
 * Implementation Strategies
 :PROPERTIES:
@@ -6701,11 +6759,9 @@ Therefore, the use of a thunk is required to adapt between the calling conventio
 In the case that the base class signature has a dynamic exception specification and
 the derived class has a static exception specification, the thunk will need to
 allocate storage on the stack for the static exception, and call the override with
-the appropriate jump table for handling each exception type 
-
-
-*************** TODO Write about virtual function calls, thunks, etc.
-*************** END
+the appropriate jump table for handling each exception type and then if the call
+completes with an exception then rethrow the static exception object as a dynamic
+exception.
 
 ** Interaction with ~std::uncaught_exceptions()~
 
@@ -6813,7 +6869,6 @@ this paper.
   https://dl.acm.org/doi/10.1145/3302516.3307346
 
 * Paper notes                                                      :noexport:
-
 
 - Previous papers relating to exceptions
   - 2004
