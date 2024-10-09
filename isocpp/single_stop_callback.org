@@ -331,6 +331,7 @@ Proposes adding the following class and class-template definitions the ~<stop_to
       single_inplace_stop_source& operator=(const single_inplace_stop_source&) = delete;
       single_inplace_stop_source& operator=(single_inplace_stop_source&&) = delete;
 
+      bool stop_possible() const noexcept;
       bool stop_requested() const noexcept;
 
       bool request_stop() noexcept;
@@ -440,6 +441,7 @@ The synopsis for this class-template is as follows:
       finite_inplace_stop_source& operator=(const finite_inplace_stop_source&) = delete;
       finite_inplace_stop_source& operator=(finite_inplace_stop_source&&) = delete;
 
+      bool stop_possible() const noexcept;
       bool stop_requested() const noexcept;
 
       bool request_stop() noexcept;
@@ -457,8 +459,8 @@ The synopsis for this class-template is as follows:
 
       finite_inplace_stop_token() noexcept;
 
-      bool stop_requested() const noexcept;
       bool stop_possible() const noexcept;
+      bool stop_requested() const noexcept;
 
       friend bool operator==(const finite_inplace_stop_token& a,
                              const finite_inplace_stop_token& b) noexcept;
@@ -508,6 +510,42 @@ The intent here is that it would be a valid implementation of ~finite_inplace_st
 hold an array of ~single_inplace_stop_source~ objects and to have ~request_stop()~ forward to a call
 to ~request_stop()~ on all of the ~single_inplace_stop_source~ objects. However, a high QoI implementation
 may choose to use a more efficient data-structure.
+
+There is also the question of whether we should permit this class to be instantiated with a template-parameter
+of 0 or not. i.e. is it valid to write ~finite_inplace_stop_source<0>~.
+
+Such an object would not have the ability to obtain any associated stop-tokens and therefore would
+not have the ability to register any stop-callbacks. Ideally, such a type would compile out to nothing.
+
+To enable this optimization, the ~finite_inplace_stop_source<N>::stop_possible()~ method returns ~N >= 1~.
+This means that it will return ~false~ for ~N == 0~, a case when there is no possibility of obtaining
+an associated-stop token that could observe a stop-request. Such a stop-source object is already possible
+with ~std::stop_source(std::nostopstate)~ and is called a /disengaged/ stop-source.
+
+This allows implementations to provide a specialization for ~finite_inplace_stop_source<0>~ that is an
+empty class, rather than having to have an ~atomic_flag~ data-member just to make sure that ~request_stop()~
+returns ~true~ on first invocation and ~false~ on subsequent invocations.
+
+For example, a possible implementation of this specialization may be:
+#+begin_src c++
+  namespace std
+  {
+    template<>
+    class finite_inplace_stop_source<0> {
+    public:
+      finite_inplace_stop_source() noexcept = default;
+
+      finite_inplace_stop_source(const finite_inplace_stop_source&) = delete;
+      finite_inplace_stop_source(finite_inplace_stop_source&&) = delete;
+      finite_inplace_stop_source& operator=(const finite_inplace_stop_source&) = delete;
+      finite_inplace_stop_source& operator=(finite_inplace_stop_source&&) = delete;
+
+      bool stop_possible() const noexcept { return false; }
+      bool stop_requested() const noexcept { return false; }
+      bool request_stop() noexcept { return false; }
+    };
+  }
+#+end_src
 
 *** Tweaks to the ~stoppable_token~ and ~stoppable-source~ concepts
 
