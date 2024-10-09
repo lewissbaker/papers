@@ -181,23 +181,23 @@ For example, if I write a function that takes a ~std::inplace_stop_token~ then I
 this type allows an unbounded number of associated ~std::inplace_stop_callback~ objects
 and so, within the function I can safely construct multiple associated stop-callback objects.
 
-#+ begin_src c ++
+#+begin_src c++
   void func1(std::inplace_stop_token st) {
-  const auto on_stop = [] { /* do something */ };
+    const auto on_stop = [] { /* do something */ };
 
-  // Constructing multiple stop-callbacks is allowed.
-  std::inplace_stop_callback cb1{st, [&] noexcept { /* do something */ }};
-  std::inplace_stop_callback cb2{st, [&] noexcept { /* do something else */ }};
+    // Constructing multiple stop-callbacks is allowed.
+    std::inplace_stop_callback cb1{st, [&] noexcept { /* do something */ }};
+    std::inplace_stop_callback cb2{st, [&] noexcept { /* do something else */ }};
 
-  // ...
+    // ...
   }
-#+ end_src
+#+end_src
 
 However, if I were to write a function-template that could be instantiated with any type
 that satisfied ~std::stoppable_token~, then I would need to limit myself to constructing
 at most one associated stop-callback object at a time.
 
-#+ begin_src c ++
+#+begin_src c++
   template<std::stoppable_token StopToken>
   void func2(StopToken st) {
   const auto on_stop = [] { /* do something */ };
@@ -210,36 +210,35 @@ at most one associated stop-callback object at a time.
   // violation if StopToken happens to be e.g. std::single_inplace_stop_token.
   callback_t cb2{st, on_stop};
   }
-#+ end_src
+#+end_src
 
 Further, I would also be implying that my function also has a pre-condition that my caller provide me
 with a stop-token that permits me to construct at least one associated stop-callback. This would prevent
 them from passing, for example, a ~std::single_inplace_stop_token~ that already had an associated
 stop-callback object.
 
-#+ begin_src c ++
-    template<std::stoppable_token StopToken>
-    void func3(StopToken st) {
-  const auto on_stop = [] { /* do something */ };
-  using callback_t = std::stop_callback_for_t<StopToken, decltype(on_stop)>;
+#+begin_src c++
+  template<std::stoppable_token StopToken>
+  void func3(StopToken st) {
+    const auto on_stop = [] { /* do something */ };
+    using callback_t = std::stop_callback_for_t<StopToken, decltype(on_stop)>;
 
-  callback_t cb{st, on_stop};
+    callback_t cb{st, on_stop};
 
-  // ...
-    }
+    // ...
+  }
 
-    void caller() {
-  std::single_inplace_stop_source ss;
+  void caller() {
+    std::single_inplace_stop_source ss;
 
-  func3(ss.get_token());  // OK. stop-token allows constructing a stop-callback
+    func3(ss.get_token());  // OK. stop-token allows constructing a stop-callback
 
-  std::single_inplace_stop_callback cb{ss.get_token(),
-                                       [] { /* do something */ }};
+    std::single_inplace_stop_callback cb{ss.get_token(), [] { /* do something */ }};
 
-  func3(ss.get_token());  // BUG: violates func3's pre-condition.
-                          // stop-token already has an associated stop-callback.
-    }
-#+ end_src
+    func3(ss.get_token());  // BUG: violates func3's pre-condition.
+                            // stop-token already has an associated stop-callback.
+  }
+#+end_src
 
 ** Limiting when stop-callbacks can be constructed by sender algorithms
 
@@ -266,24 +265,25 @@ lifetimes.
 
 The current wording for [exec.recv.concepts] p3 states:
 
-#+ begin_quote
+#+begin_quote
 Let ~rcvr~ be a receiver and let ~op_state~ be an operation state associated with an asynchronous operation created by connecting ~rcvr~ with a sender.
 Let ~token~ be a stop token equal to ~get_stop_token(get_env(rcvr))~.
 ~token~ shall remain valid for the duration of the asynchronous operation's lifetime ([exec.async.ops]).
+
 [Note: This means that, unless it knows about further guarantees provided by the type of ~rcvr~, the implementation of ~op_state~ cannot use
 token after it executes a completion operation.
 This also implies that any stop callbacks registered on token must be destroyed before the invocation of the completion operation.
 — end note]
-#+ end_quote
+#+end_quote
 
 This references [exec.async.ops] p7 which defines "asynchronous operation lifetime":
 
-#+ begin_quote
+#+begin_quote
 The /lifetime of an asynchronous operation/, also known as the /operation's async lifetime/, begins when its start operation begins executing and ends when its completion operation begins executing.
 If the lifetime of an asynchronous operation's associated operation state ends before the lifetime of the asynchronous operation, the behavior is undefined.
 After an asynchronous operation executes a completion operation, its associated operation state is invalid.
 Accessing any part of an invalid operation state is undefined behavior.
-#+ end_quote
+#+end_quote
 
 The important parts of these two paragraphs are that the stop-token obtained from ~get_stop_token(get_env(rcvr))~
 is only required to be valid for the duration of the asynchronous operation's lifetime, and that an asynchronous
