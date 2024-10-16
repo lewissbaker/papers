@@ -1,18 +1,18 @@
 # -*- mode: org; org-html-htmlize-output-type: css -*-
-#+TITLE: D3409R0: Enabling more efficient stop-token based cancellation of senders
+#+TITLE: P3409R0: Enabling more efficient stop-token based cancellation of senders
 #+AUTHOR: Lewis Baker
 #+EMAIL: lewissbaker@gmail.com
-#+DATE: 2024-09-26
+#+DATE: 2024-10-16
 #+OPTIONS: html5-fancy
 #+OPTIONS: tasks:nil
 #+OPTIONS: html-postamble:nil
-#+EXPORT_FILE_NAME: D3409R0
+#+EXPORT_FILE_NAME: P3409R0
 #+EXPORT_EXCLUDE_TAGS: noexport,todo
 #+MACRO: ins @@html:<span style="background-color:#A0FFA0">@@$1@@html:</span>@@
 #+MACRO: del @@html:<span style="background-color:#FFA0A0; text-decoration: line-through;">@@$1@@html:</span>@@
 
-| Document | *D3409R0*                             |
-| Date     | *2024-10-08*                          |
+| Document | *P3409R0*                             |
+| Date     | *2024-10-16*                          |
 | Reply To | *Lewis Baker <lewissbaker@gmail.com>* |
 | Audience | *SG1*                                 |
 
