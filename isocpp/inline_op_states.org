@@ -1269,6 +1269,8 @@ Modify [exec.snd.expos] p24 follows:
   Original github issue describing the problem and suggested solution described
   by this paper.
 
+* NOTES :noexport:
+
 - https://godbolt.org/z/7xT4v9Yzc
   Experimental implementation of std wording with this optimisation applied.
   NOTE: Compiles, but something is inhibiting the optimisation.
