@@ -1827,6 +1827,24 @@ in time to at most one.</ins></li>
 </div>
 #+end_export
 
+** Changes to ~<version>~ header
+
+Modify [version.syn] as follows, replacing ~XXXXXX~ with the date of acceptance of this paper.
+
+#+begin_export html
+<div class="wording">
+<h3>Header <code>&lt;version&gt;</code> synopsis [version.syn]</h3>
+<p>
+<pre>
+...
+#define __cpp_lib_semaphore                         201907L // also in &lt;semaphore&gt;
+#define __cpp_lib_senders                           <del>202406L</del><ins>XXXXXXL</ins> // also in &lt;execution&gt;
+#define __cpp_lib_shared_mutex                      201505L // also in &lt;shared_mutex&gt;
+...
+</pre>
+</div>
+#+end_export
+
 * Appendix A - Benchmarks
 :PROPERTIES:
 :ID:       0693c8de-6bb5-446e-985a-28bebeb47bf3
