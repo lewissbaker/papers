@@ -1,20 +1,84 @@
 # -*- mode: org; org-html-htmlize-output-type: css -*-
-#+TITLE: P3409R0: Enabling more efficient stop-token based cancellation of senders
+#+TITLE: P3409R1: Enabling more efficient stop-token based cancellation of senders
 #+AUTHOR: Lewis Baker
 #+EMAIL: lewissbaker@gmail.com
-#+DATE: 2024-10-16
+#+DATE: 2024-11-14
 #+OPTIONS: html5-fancy
 #+OPTIONS: tasks:nil
 #+OPTIONS: html-postamble:nil
-#+EXPORT_FILE_NAME: P3409R0
+#+EXPORT_FILE_NAME: P3409R1
 #+EXPORT_EXCLUDE_TAGS: noexport,todo
 #+MACRO: ins @@html:<span style="background-color:#A0FFA0">@@$1@@html:</span>@@
 #+MACRO: del @@html:<span style="background-color:#FFA0A0; text-decoration: line-through;">@@$1@@html:</span>@@
 
-| Document | *P3409R0*                             |
-| Date     | *2024-10-16*                          |
+| Document | *P3409R1*                             |
+| Date     | *2024-11-14*                          |
 | Reply To | *Lewis Baker <lewissbaker@gmail.com>* |
 | Audience | *SG1*                                 |
+
+#+BEGIN_EXPORT html
+  <style>
+    ins { background-color:#A0FFA0 }
+    del { background-color:#FFA0A0 }
+    expos { font-style:italic }
+    exposonly {
+      content: "// exposition only";
+      font-style:italic;
+    }
+    div.section {
+      counter-reset: paragraph;
+      background-color:#A0FFA0;
+    }
+    div.wording > div.section {
+      padding: 5px;
+    }
+    div.wording > div.section > h3 {
+      margin-top: 5px;
+    }
+    div.wording {
+      counter-reset: paragraph;
+      margin-left: 50px
+    }
+    div.wording p.numbered::before {
+      position: absolute;
+      margin-left: -20px;
+      margin-top: 2px;
+      font-size: 0.75em;
+      color: #CCC;
+      content: counter(paragraph);
+      counter-increment: paragraph;
+    }
+    div.wording ul {
+      list-style-type: '\2014   ';
+      counter-reset: paragraph;
+    }
+    div.wording ul li::before {
+      position: absolute;
+      margin-left: -75px;
+      margin-top: 2px;
+      font-size: 0.75em;
+      color: #CCC;
+      content: "(" counters(paragraph, ".") ")";
+      counter-increment: paragraph;
+    }
+    div.wording ul ul li::before {
+      margin-left: -125px;
+    }
+    div.wording ul ul ul li::before {
+      margin-left: -175px;
+    }
+    div.wording ul ul ul ul li::before {
+      margin-left: -225px;
+    }
+  </style>
+#+END_EXPORT
+
+* COMMENT Export Instructions
+
+- Make sure 'DATE' field are all updated to current date.
+- Make sure 'TITLE', 'EXPORT_FILE_NAME' fields above and 'Document' field below
+- Run ~M-x org-html-export-to-html~
+  This will export to ~P3409Rx.html~ in the same directory.
 
 * Abstract
 
@@ -44,6 +108,15 @@ of cancellation of sender-based asynchronous operations. The other paper to be c
 along-side this paper is [[https://wg21.link/P3410][P3410]] "Enabling more efficient sender cancellation without stop-tokens",
 which explores a design that puts a ~request_stop()~ method on the operation-state objects
 instead of using stop-tokens to communicate stop-requests.
+
+* Revision History
+
+R1
+- Added proposed wording.
+- Changed ~single_inplace_stop_token~ and ~finite_inplace_stop_token~ equality operator
+  to be a member instead of a hidden friend to be consistent with ~inplace_stop_token~.
+- Minor fixes to reference implementation in Appendix B (add missing equality operator
+  to ~single_inplace_stop_token~, simplify some expressions).
 
 * Overview
 
@@ -355,8 +428,7 @@ Proposes adding the following class and class-template definitions the ~<stop_to
       bool stop_possible() const noexcept;
       bool stop_requested() const noexcept;
 
-      friend bool operator==(const single_inplace_stop_token& a,
-                             const single_inplace_stop_token& b) noexcept;
+      bool operator==(const single_inplace_stop_token& a) const noexcept = default;
 
     private:
       single_inplace_stop_souce* source;  // exposition only
@@ -462,8 +534,7 @@ The synopsis for this class-template is as follows:
       bool stop_possible() const noexcept;
       bool stop_requested() const noexcept;
 
-      friend bool operator==(const finite_inplace_stop_token& a,
-                             const finite_inplace_stop_token& b) noexcept;
+      bool operator==(const finite_inplace_stop_token& a) const noexcept = default,
 
      private:
       finite_inplace_stop_source<N>* source_;  // exposition-only
@@ -649,12 +720,13 @@ implementations define their own internal stop-token types equivalent to the
 types proposed here and use them instead of ~inplace_stop_token~.
 
 However, if we decide to add the ~single_inplace_stop_token~ and ~finite_inplace_stop_token~
-types into the standard library, then I don't see any significant downsides to specifying\
+types into the standard library, then I don't see any significant downsides to specifying
 that the ~split~ and ~when_all~ algorithms are defined in terms of them.
 
 * Design Discussion
 
 ** Performance Benefits
+
 *** Cost of ~inplace_stop_token~
 
 The existing ~inplace_stop_token~ facility added by P2300R10 allows registering
@@ -831,6 +903,8 @@ will perform the following (assuming no contention):
 If there is contention on the stop-source lock, then each of the lock-acquisition
 operations will enter a spin-loop with atomic-wait backoff.
 
+
+
 *** Cost of ~single_inplace_stop_token~
 
 **** Sizes of data-structure
@@ -991,7 +1065,8 @@ storage for up to 8 stop-state may be grouped together in a single cache-line, i
 potential for false-sharing.
 
 Whether this is an issue in-practice will depend on the use-case and whether, in practice, there will
-be multiple threads concurrently trying to register/unregister stop-callbacks.
+be multiple threads concurrently trying to register/unregister stop-callbacks associated with the
+same stop-source.
 
 In most cases it is expected that using less storage will result in overall better performance.
 However, there are pathological cases where overheads due to false-sharing can be significant.
@@ -1159,7 +1234,598 @@ do that is to have a single ~inplace_stop_source~ and then to just pass an assoc
 
 * Proposed Wording
 
-Proposed wording will be forthcoming in a future revision of this paper.
+** Changes to stop token concepts
+
+Modify [thread.stoptoken.intro] as follows:
+#+begin_export html
+<div class="wording" style="counter-set: paragraph 3">
+<p class="numbered">Callbacks registered via an object whose type models <code><expos>stoppable-callback-for</expos></code> are
+called when a stop request is first made by any associated <code><expos>stoppable-source</expos></code> object.</p>
+<p class="numbered">The types <code>stop_source</code> and <code>stop_token</code> and the class template <code>stop_callback</code>
+implement the semantics of shared ownership of a stop state. The last remaning owner of the stop state automatically
+releases the resources associated with stop state.</p>
+<p class="numbered">An object of type <code>inplace_stop_source</code><ins>, <code>single_inplace_stop_source</code>, or a specialization
+of <code>finite_inplace_stop_source</code></ins> is the sole owner of its stop state.
+An object of type <code>inplace_stop_token</code><ins>, <code>single_inplace_stop_token</code>,</ins> or of a specialization
+of the class template<ins>s</ins> <code>inplace_stop_callback</code><ins>, <code>single_inplace_stop_callback</code>,
+<code>finite_inplace_stop_token</code>, or <code>finite_inplace_stop_callback</code></ins> does not participate in
+ownership of its associated stop state.</p>
+<p>[<i>Note</i>: They are for use when all uses of the associated token and callback objects are known
+to nest within the lifetime of the <code>inplace_stop_source</code> object. — <i>end note</i>]</p>
+</pre>
+</div>
+#+end_export
+
+Modify [thread.stoptoken.syn] as follows:
+#+begin_export html
+<div class="wording">
+<pre>
+namespace std {
+  // [stoptoken.concepts], stop token concepts
+  template&lt;class CallbackFn, class Token, class Initializer = CallbackFn>
+    concept <expos>stoppable-callback-for</expos> = <i>see below</i>;           // <i>exposition only</i>
+
+  template&lt;class Token>
+    concept stoppable_token = <i>see below</i>;
+
+  template&lt;class Token>
+    concept unstoppable_token = <i>see below</i>;
+
+  template&lt;class Source>
+    concept <expos>stoppable-source</expos> = <i>see below</i>;                 // <i>exposition only</i>
+
+  // [stoptoken], class stop_token
+  class stop_token;
+
+  // [stopsource], class stop_source
+  class stop_source;
+
+  // no-shared-stop-state indicator
+  struct nostopstate_t {
+    explicit nostopstate_t() = default;
+  };
+  inline constexpr nostopstate_t nostopstate{};
+
+  // [stopcallback], class template stop_callback
+  template&lt;class Callback>
+    class stop_callback;
+
+  // [stoptoken.never], class never_stop_token
+  class never_stop_token;
+
+  // [stoptoken.inplace], class inplace_stop_token
+  class inplace_stop_token;
+
+  // [stopsource.inplace], class inplace_stop_source
+  class inplace_stop_source;
+
+  // [stopcallback.inplace], class template inplace_stop_callback
+  template&lt;class CallbackFn>
+    class inplace_stop_callback;
+
+<ins>  // [stoptoken.single], class single_inplace_stop_token
+  class single_inplace_stop_token;
+
+  // [stopsource.single], class single_inplace_stop_source
+  class single_inplace_stop_source;
+
+  // [stopcallback.single], class template single_inplace_stop_callback
+  template&lt;class Callback>
+    class single_inplace_stop_callback;
+
+  // [stoptoken.finite], class template finite_inplace_stop_token
+  template&lt;size_t N, size_t Idx>
+    class finite_inplace_stop_token;
+
+  // [stopsource.finite], class template finite_inplace_stop_source
+  template&lt;size_t N>
+    class finite_inplace_stop_source;
+
+  // [stopcallback.finite], class template finite_inplace_stop_callback
+  template&lt;size_t N, size_t Idx, class Callback>
+    class finite_inplace_stop_callback;</ins>
+
+  template&lt;class T, class CallbackFn>
+    using stop_callback_for_t = T::template callback_type&lt;CallbackFn>;
+}
+</pre>
+</div>
+#+end_export
+
+Modify [stoptoken.concepts] as follows:
+#+begin_export html
+<div class="wording">
+<p class="numbered">The exposition-only <code><expos>stoppable-callback-for</expos></code> concept checks for a callback
+compatible with a given <code>Token</code> type.<br/>
+<pre style="left-margin: 20px">
+template&lt;class CallbackFn, class Token, class Initializer = CallbackFn>
+  concept <expos>stoppable-callback-for</expos> =                               // <i>exposition only</i>
+    invocable&lt;CallbackFn> &amp;&amp;
+    constructible_from&lt;CallbackFn, Initializer> &amp;&amp;
+    requires { typename stop_callback_for_t&lt;Token, CallbackFn>; } &amp;&amp;
+    constructible_from&lt;stop_callback_for_t&lt;Token, CallbackFn>, const Token&amp;, Initializer>;
+</pre></p>
+<p class="numbered">Let <code>t</code> and <code>u</code> be distinct, valid objects of type <code>Token</code> that
+reference the same logical stop state; let <code>init</code> be an expression such that <code>same_as&lt;decltype(init), Initializer></code>
+is <code>true</code>; and let <code>SCB</code> denote the type <code>stop_callback_for_t&lt;Token, CallbackFn></code>.</p>
+<p class="numbered">The concept <code><expos>stoppable-callback-for</expos>&lt;CallbackFn, Token, Initializer></code> is modeled only if:</p>
+<ul class="numbered">
+<li>The following concepts are modeled:
+  <ul>
+    <li><code>constructible_from&lt;SCB, Token, Initializer></code></li>
+    <li><code>constructible_from&lt;SCB, Token&amp;, Initializer></code></li>
+    <li><code>constructible_from&lt;SCB, const Token, Initializer></code></li>
+  </ul></p>
+</li>
+<li><p>An object of type <code>SCB</code> has an associated callback function of type <code>CallbackFn</code>.
+Let <code>scb</code> be an object of type <code>SCB</code> and let <code>callback_fn</code> denote <code>scb</code>'s
+associated callback function. Direct-non-list-initializing <code>scb</code> from arguments <code>t</code> and
+<code>init</code> shall execute a <i>stoppable callback registration</i> as follows:
+<ul>
+  <li>If <code>t.stop_possible()</code> is <code>true</code>:
+    <ul>
+      <li><code>callback_fn</code> shall be direct-initialized with <code>init</code>.</li>
+      <li>Construction of <code>scb</code> shallonly throw exceptions thrown by the initialization of <code>callback_fn</code> from <code>init</code>.</li>
+      <li>The callback invocation <code>std::forward&lt;CallbackFn>(callback_fn)()</code> shall be registered
+with <code>t</code>'s associated stop state as follows:
+        <ul>
+          <li>If <code>t.stop_requested()</code> evaluates to <code>false</code> at the time of registration,
+the callback registration is added to the stop state's list of callbacks such that <code>std::forward&lt;CallbackFn>(callback_fn)()</code>
+is evaluated if a stop-request is made on the stop state.</li>
+          <li>Otherwise, <code>std::forward&lt;CallbackFn>(callback_fn)()</code> shall be immediately evaluated on
+the thread executing <code>scb</code>'s constructor, and the callback invocation shall not be added to
+the list of callback invocations.</li>
+        </ul>
+<p>If the callback invocation was added to stop state's list of callbacks, <code>scb</code> shall be associated
+with the stop state.</p></li>
+    </ul>
+  </li>
+  <li>[<i>Note</i>: If <code>t.stop_possible()</code> is <code>false</code>, there is no requirement that the initialization
+of <code>scb</code> causes the initialization of <code>callback_fn</code>. — <i>end note</i>]</li>
+  <li><ins>[<i>Note</i>: Types modelling <code><expos>stoppable-callback-for</expos>&lt;CallbackFn, Token, Initializer></code>
+may place preconditions on its stoppable callback registration that limits the number of active stop callback registrations
+associated with a stop state ([stopcallback.single], [stopcallback.finite]). — <i>end note</i>]</ins></li>
+</ul></li>
+<li>Destruction of <code>scb</code> shall execute a <i>stoppable callback deregistration</i> as follows (in order):
+<ul>
+<li>If the constructor of <code>scb</code> did not register a callback invocation with <code>t</code>'s stop state, then the stoppable
+callback deregistration shall have no effect other than destroying <code>callback_fn</code> if it was constructed.</li>
+<li>Otherwise, the invocation of <code>callback_fn</code> shall be removed from the assocaited stop state.</li>
+<li>If <code>callback_fn</code> is concurrently executing on another thread, then the stoppable callback deregistration
+shall  block ([defns.block]) until the invocation of <code>callback_fn</code> returns such that the return from the
+invocation of <code>callback_fn</code> strongly happens before ([intro.races]) the destruction of <code>callback_fn</code>.</li>
+<li>If <code>callback_fn</code> is executing on the current thread, then the destructor shall not block waiting
+for the return from the invocation of <code>callback_fn</code>.</li>
+<li>A stoppable callback deregistration shall not block on the completion of the invocation of some other callback
+registered with the same logical stop state.</li>
+<li>The stoppable callback deregistration shall destroy <code>callback_fn</code>.
+</ul>
+</li>
+<li><ins>An <i>active stop callback registration</i> is a callback invocation that has been added to a stop state's
+list of callbacks by a stoppable callback registration and that has not yet been removed from the stop state's
+list of callbacks by a stoppable callback deregistration. An active stop callback registration is associated with
+the stop state that it was registered with.</ins>
+</ul>
+</div>
+#+end_export
+
+and as follows:
+
+#+begin_export html
+<div class="wording" style="counter-set: paragraph 8">
+<p class="numbered">An object whose type models the exposition-only <code><expos>stoppable-source</expos></code>
+concept can be queried whether stop has been requested (<code>stop_requested</code>) and whether stop is possible (<code>stop_possible</code>).
+It is a factory for associated stop tokens<del> (<code>get_token</code>)</del>, and a stop request can be made on it (<code>request_stop</code>).
+It maintains a list of registered stop callback invocations that it executes when a stop request is first made.</p>
+<pre style="left-margin: 20px">
+template&lt;class Source&gt;
+  concept <expos>stoppable-source</expos> =                                    <expos>// exposition only</expos>
+    requires (Source&amp; src, const Source csrc) {         <expos>// see implicit expression variations ([concepts.equality])</expos>
+      <del>{ csrc.get_token() } -> stoppable_token;</del>
+      { csrc.stop_possible() } noexcept -> same_as&lt;bool&gt;;
+      { csrc.stop_requested() } noexcept -> same_as&lt;bool&gt;;
+      { src.request_stop() } -> same_as&lt;bool&gt;;
+    };
+</pre>
+<p class="numbered">
+<ins>It is unspecified how to obtain a <code>stoppable_token</code> associated with a given <code><expos>stoppable-source</expos></code> object
+or whether it is possible to obtain such a <code>stoppable_token</code>.</ins>
+</p>
+<p class="numbered">
+An object whose type models <code><expos>stoppable-source</expos></code> has at most one associated logical stop state.
+If it has no associated stop state, it is said to be disengaged.
+Let <code>s</code> be an object whose type models <code><expos>stoppable-source</expos></code> and that is disengaged.
+<code>s.stop_possible()</code> and <code>s.stop_requested()</code> shall be <code>false</code>.
+</p>
+<p class="numbered">
+Let <code>t</code> be an object whose type models <code><expos>stoppable-source</expos></code>.
+If <code>t</code> is disengaged, <del><code>t.get_token()</code></del><ins>obtaining a stop token from <code>t</code></ins> shall <del>return</del><ins>result in</ins> a disengaged stop token;
+otherwise, it shall <del>return</del><ins>result in</ins> a stop token that is associated with the stop state of <code>t</code>.
+</p>
+</div>
+#+end_export
+
+** Single-callback stop-token wording
+
+Insert the the following sections after [stopcallback.inplace]
+
+#+begin_export html
+<div class="wording">
+<div class="section">
+<h3>Class <code>single_inplace_stop_token</code> [stoptoken.single]</h3>
+<div class="section">
+<h4>General [stoptoken.single.general]</h4>
+<p class="numbered">The class <code>single_inplace_stop_token</code> models the concept <code>stoppable_token</code>.
+It references the stop state of its associated <code>single_inplace_stop_source</code> object ([stopsource.single]), if any.</p>
+<pre style="left-margin: 20px">
+namespace std {
+  class single_inplace_stop_token {
+  public:
+    template&lt;class Callback&gt;
+      using callback_type = single_inplace_stop_callback&lt;Callback&gt;;
+
+    single_inplace_stop_token() = default;
+    bool operator==(const single_inplace_stop_token&) const = default;
+
+    // [stoptoken.single.mem], member functions
+    bool stop_requested() const noexcept;
+    bool stop_possible() const noexcept;
+    void swap(single_inplace_stop_token&) noexcept;
+
+  private:
+    const single_inplace_stop_source* <expos>stop-source</expos> = nullptr;        <expos>// exposition only</expos>
+  };
+}
+</pre>
+</div>
+<div class="section">
+<h4>Member functions [stoptoken.single.mem]</h4>
+<pre>
+void swap(single_inplace_stop_token&amp; rhs) noexcept;
+</pre>
+<p class="numbered"><i>Effects</i>: Exchanges the values of <code><expos>stop-source</expos></code> and <code>rhs.<expos>stop-source</expos></code>.</p>
+<pre>
+bool stop_requested() const noexcept;
+</pre>
+<p class="numbered"><i>Effects</i>: Equivalent to:
+<pre style="margin-left: 20px">
+return <expos>stop-source</expos> != nullptr &amp;&amp; <expos>stop-source</expos>-&gt;stop_requested();
+</pre></p>
+<p class="numbered">[<i>Note</i>: As specified in [basic.life], the behavior of <code>stop_requested</code> is undefined unless the call strongly happens before the start of the destructor of the associated <code>single_inplace_stop_source</code> object, if any.
+— end note]</p>
+<pre>
+bool stop_possible() const noexcept;
+</pre>
+<p class="numbered"><i>Effects</i>: Equivalent to:
+<pre style="margin-left: 20px">
+return <expos>stop-source</expos> != nullptr;
+</pre>
+</p>
+</div>
+</div>
+<div class="section">
+<h3>Class <code>single_inplace_stop_source</code> [stopsource.single]</h3>
+<div class="section">
+<h4>General [stopsource.single.general]</h4>
+<p class="numbered">The class <code>single_inplace_stop_source</code> models <code><expos>stoppable-source</expos></code>.
+An object of type <code>single_inplace_stop_source</code> shall have at most one associated stop callback at a time.</p>
+<pre style="margin-left: 20px">
+namespace std {
+  class single_inplace_stop_source {
+  public:
+    // [stopsource.single.cons], constructors and destructor
+    constexpr single_inplace_stop_source() noexcept;
+    ~single_inplace_stop_source();
+
+    single_inplace_stop_source(single_inplace_stop_source&&) = delete;
+    single_inplace_stop_source(const single_inplace_stop_source&) = delete;
+    single_inplace_stop_source& operator=(single_inplace_stop_source&&) = delete;
+    single_inplace_stop_source& operator=(const single_inplace_stop_source&) = delete;
+
+    // [stopsource.single.mem], member functions
+    constexpr single_inplace_stop_token get_token() const noexcept;
+    static constexpr bool stop_possible() noexcept { return true; }
+    bool stop_requested() const noexcept;
+    void request_stop() noexcept;
+  };
+</pre>
+</div>
+<div class="section">
+<h4>Constructors [stopsource.single.cons]</h4>
+<pre>
+constexpr single_inplace_stop_source() noexcept;
+</pre>
+<p class="numbered"><i>Effects</i>: Initializes a new stop state inside <code>*this</code>.</p>
+<p class="numbered"><i>Postconditions</i>: <code>stop_requested()</code> is <code>false</code>.</p>
+<pre>
+~single_inplace_stop_source();
+</pre>
+<p class="numbered"><i>Preconditions</i>: There are no active stop callback registrations associated with <code>*this</code>.</p>
+</div>
+<div class="section">
+<h4>Member functions [stopsource.single.mem]</h4>
+<pre>
+constexpr single_inplace_stop_token get_token() const noexcept;
+</pre>
+<p class="numbered"><i>Returns</i>: A new associated <code>single_inplace_stop_token</code> object whose <code><expos>stop-source</expos></code> member is equal to <code>this</code>.</p>
+<pre>
+bool stop_requested() const noexcept;
+</pre>
+<p class="numbered"><i>Returns</i>: <code>true</code> if the stop state inside <code>*this</code> has received a stop request; otherwise <code>false</code>.</p>
+<pre>
+bool request_stop() noexcept;
+</pre>
+<p class="numbered"><i>Effects</i>: Executes a stop request operation ([stoptoken.concepts]).</p>
+<p class="numbered"><i>Postconditions</i>: <code>stop_requested()</code> is <code>true</code>.</p>
+<p class="numbered"><i>Returns</i>: <code>true</code> if this was the first call to <code>request_stop</code>; otherwise <code>false</code>.</p>
+</div>
+</div>
+<div class="section">
+<h3>Class template <code>single_inplace_stop_callback</code> [stopcallback.single]</h3>
+<div class="section">
+<h4>General [stopcallback.single.general]</h4>
+<pre>
+namespace std {
+  template&lt;class CallbackFn&gt;
+    class single_inplace_stop_callback {
+    public:
+      // [stopcallback.inplace.cons], constructors and destructor
+      template&lt;typename Initializer&gt;
+        explicit single_inplace_stop_callback(single_inplace_stop_token st, Initializer&amp;&amp; init)
+          noexcept(is_nothrow_constructible_v&lt;CallbackFn, Initializer&gt;);
+      ~single_inplace_stop_callback();
+
+      singe_inplace_stop_callback(single_inplace_stop_callback&&) = delete;
+      singe_inplace_stop_callback(const single_inplace_stop_callback&) = delete;
+      singe_inplace_stop_callback& operator=(single_inplace_stop_callback&&) = delete;
+      singe_inplace_stop_callback& operator=(const single_inplace_stop_callback&) = delete;
+
+    private:
+      CallbackFn <expos>callback-fn</expos>;                  <expos>// exposition only</expos>
+    };
+
+  template&lt;class CallbackFn&gt;
+    single_inplace_stop_callback(single_inplace_stop_token, CallbackFn)
+      -> single_inplace_stop_callback&lt;CallbackFn&gt;;
+}
+</pre>
+<p class="numbered"><i>Mandates</i>: <code>CallbackFn</code> satisfies both <code>invocable</code> and <code>destructible</code>.</p>
+<p class="numbered"><i>Remarks</i>: For a type <code>Initializer</code>, if <code><expos>stoppable-callback-for</expos>&lt;CallbackFn, single_inplace_stop_token, Initializer&gt;</code>
+is satisfied, then <code><expos>stoppable-callback-for</expos>&lt;CallbackFn, single_inplace_stop_token, Initializer&gt;</code> is modeled.
+For a <code>single_inplace_stop_callback&lt;CallbackFn&gt;</code> object, the exposition-only <code><expos>callback-fn</expos></code>
+member is its associated callback function ([stoptoken.concepts]).</p>
+</div>
+<div class="section">
+<h4>Constructors and destructor [stopcallback.single.cons]</h4>
+<pre>
+template&lt;class Initializer&gt;
+  explicit single_inplace_stop_callback(single_inplace_stop_token st, Initializer&amp;&amp; init)
+    noexcept(is_nothrow_constructible_v&lt;CallbackFn, Initializer&gt;);
+</pre>
+<p class="numbered"><i>Constraints</i>: <code>constructible_from&lt;CallbackFn, Initializer&gt;</code> is satisfied.</p>
+<p class="numbered"><i>Preconditions</i>: There are no active stop callback registrations associated with <code>st</code>.</p>
+<p class="numbered"><i>Effects</i>: Initializes <code><expos>callback-fn</expos></code> with <code>std::forward&lt;Initializer&gt;(init)</code>
+and executes a stoppable callback registration ([stoptoken.concepts]).</p>
+<pre>
+~single_inplace_stop_callback();
+</pre>
+<p class="numbered"><i>Effects</i>: Executes a stoppable callback deregistration ([stoptoken.concepts]) of <code>*this</code>.</p>
+</div>
+</div>
+</div>
+#+end_export
+
+** Finite-callback stop token wording
+
+Insert the following sections after the [stopcallback.single] section above.
+
+#+begin_export html
+<div class="wording">
+<div class="section">
+<h3>Class template <code>finite_inplace_stop_token</code> [stoptoken.finite]</h3>
+<div class="section">
+<h4>General [stoptoken.finite.general]</h4>
+<p class="numbered">Specializations of the class template <code>finite_inplace_stop_token</code> model the concept <code>stoppable_token</code>.
+Objects of types that are a specialization of <code>finite_inplace_stop_token</code> reference the stop state of its associated <code>finite_inplace_stop_source</code> object ([stopsource.finite]), if any.
+An object of type <code>finite_inplace_stop_token&lt;N, Index&gt;</code> can be used to register a stop callback in the <code>Index</code>th stop callback slot
+([stopsource.finite.general]) of the associated stop state.</p>
+<pre style="left-margin: 20px">
+namespace std {
+  template&lt;size_t N, size_t Index&gt;
+  class finite_inplace_stop_token {
+  public:
+    template&lt;class Callback&gt;
+      using callback_type = finite_inplace_stop_callback&lt;N, Index, Callback&gt;;
+
+    finite_inplace_stop_token() = default;
+    bool operator==(const finite_inplace_stop_token&) const = default;
+
+    // [stoptoken.finite.mem], member functions
+    bool stop_requested() const noexcept;
+    bool stop_possible() const noexcept;
+    void swap(finite_inplace_stop_token&) noexcept;
+
+  private:
+    const finite_inplace_stop_source&lt;N&gt;* <expos>stop-source</expos> = nullptr;        <expos>// exposition only</expos>
+  };
+}
+</pre>
+<p class="numbered"><i>Mandates</i>: <code>Index &lt; N</code> is <code>true</code>.</p>
+</div>
+<div class="section">
+<h4>Member functions [stoptoken.finite.mem]</h4>
+<pre>
+void swap(finite_inplace_stop_token&amp; rhs) noexcept;
+</pre>
+<p class="numbered"><i>Effects</i>: Exchanges the values of <code><expos>stop-source</expos></code> and <code>rhs.<expos>stop-source</expos></code>.</p>
+<pre>
+bool stop_requested() const noexcept;
+</pre>
+<p class="numbered"><i>Effects</i>: Equivalent to:
+<pre style="margin-left: 20px">
+return <expos>stop-source</expos> != nullptr &amp;&amp; <expos>stop-source</expos>-&gt;stop_requested();
+</pre></p>
+<p class="numbered">[<i>Note</i>: As specified in [basic.life], the behavior of <code>stop_requested</code> is undefined unless the call strongly happens before the start of the destructor of the associated <code>finite_inplace_stop_source</code> object, if any.
+— end note]</p>
+<pre>
+bool stop_possible() const noexcept;
+</pre>
+<p class="numbered"><i>Effects</i>: Equivalent to:
+<pre style="margin-left: 20px">
+return <expos>stop-source</expos> != nullptr;
+</pre>
+</p>
+</div>
+</div>
+<div class="section">
+<h3>Class template <code>finite_inplace_stop_source</code> [stopsource.finite]</h3>
+<div class="section">
+<h4>General [stopsource.finite.general]</h4>
+<p class="numbered">Specializations of the class template <code>finite_inplace_stop_source</code> model <code><expos>stoppable-source</expos></code>.
+The stop state of an object of type <code>finite_inplace_stop_source&lt;N&gt;</code>, has <code>N</code> <i>stop callback slots</i>.
+Each stop callback slot permits at most one associated active stop callback registration ([stoptoken.concepts]).
+A stop callback slot is identified by an index, <code>Index</code>, in the range <code>0, 1, ..., N-1</code>,
+and has a corresponding <code>stoppable_token</code> type, <code>finite_inplace_stop_token&lt;N, Index&gt;</code>.
+Performing a stoppable callback registration ([stoptoken.concepts]) using a <code>finite_inplace_stop_token&lt;N, Index&gt;</code>,
+obtained by calling <code>get_token&lt;Index&gt;()</code>, registers a stop callback in the <code>Index</code>th stop callback slot
+of the associated stop state.</p>
+<pre style="margin-left: 20px">
+namespace std {
+  template&lt;size_t N&gt;
+    class finite_inplace_stop_source {
+    public:
+      // [stopsource.finite.cons], constructors and destructor
+      constexpr finite_inplace_stop_source() noexcept;
+      ~finite_inplace_stop_source();
+
+      finite_inplace_stop_source(finite_inplace_stop_source&&) = delete;
+      finite_inplace_stop_source(const finite_inplace_stop_source&) = delete;
+      finite_inplace_stop_source& operator=(finite_inplace_stop_source&&) = delete;
+      finite_inplace_stop_source& operator=(const finite_inplace_stop_source&) = delete;
+
+      // [stopsource.finite.mem], member functions
+      template&lt;size_t Index&gt;
+        constexpr finite_inplace_stop_token&lt;N, Index&gt; get_token() const noexcept;
+      static constexpr bool stop_possible() noexcept { return true; }
+      bool stop_requested() const noexcept;
+      void request_stop() noexcept;
+    };
+</pre>
+</div>
+<div class="section">
+<h4>Constructors [stopsource.finite.cons]</h4>
+<pre>
+constexpr finite_inplace_stop_source() noexcept;
+</pre>
+<p class="numbered"><i>Effects</i>: Initializes a new stop state inside <code>*this</code>.</p>
+<p class="numbered"><i>Postconditions</i>: <code>stop_requested()</code> is <code>false</code>.</p>
+<pre>
+~finite_inplace_stop_source();
+</pre>
+<p class="numbered"><i>Preconditions</i>: There are no active associated stop callback registrations.</p>
+</div>
+<div class="section">
+<h4>Member functions [stopsource.finite.mem]</h4>
+<pre>
+template&lt;size_t Index&gt;
+constexpr finite_inplace_stop_token&lt;N, Index&gt; get_token() const noexcept;
+</pre>
+<p class="numbered"><i>Returns</i>: A new associated <code>finite_inplace_stop_token&lt;N, Index&gt;</code> object whose <code><expos>stop-source</expos></code> member is equal to <code>this</code>.</p>
+<pre>
+bool stop_requested() const noexcept;
+</pre>
+<p class="numbered"><i>Returns</i>: <code>true</code> if the stop state inside <code>*this</code> has received a stop request; otherwise <code>false</code>.</p>
+<pre>
+bool request_stop() noexcept;
+</pre>
+<p class="numbered"><i>Effects</i>: Executes a stop request operation ([stoptoken.concepts]).</p>
+<p class="numbered"><i>Postconditions</i>: <code>stop_requested()</code> is <code>true</code>.</p>
+<p class="numbered"><i>Returns</i>: <code>true</code> if this was the first call to <code>request_stop</code>; otherwise <code>false</code>.</p>
+</div>
+</div>
+<div class="section">
+<h3>Class template <code>finite_inplace_stop_callback</code> [stopcallback.finite]</h3>
+<div class="section">
+<h4>General [stopcallback.finite.general]</h4>
+<pre>
+namespace std {
+  template&lt;size_t N, size_t, Index, class CallbackFn&gt;
+    class finite_inplace_stop_callback {
+    public:
+      // [stopcallback.inplace.cons], constructors and destructor
+      template&lt;typename Initializer&gt;
+        explicit finite_inplace_stop_callback(finite_inplace_stop_token&lt;N, Index&gt; st, Initializer&amp;&amp; init)
+          noexcept(is_nothrow_constructible_v&lt;CallbackFn, Initializer&gt;);
+      ~finite_inplace_stop_callback();
+
+      finite_inplace_stop_callback(finite_inplace_stop_callback&&) = delete;
+      finite_inplace_stop_callback(const finite_inplace_stop_callback&) = delete;
+      finite_inplace_stop_callback& operator=(finite_inplace_stop_callback&&) = delete;
+      finite_inplace_stop_callback& operator=(const finite_inplace_stop_callback&) = delete;
+
+    private:
+      CallbackFn <expos>callback-fn</expos>;                  <expos>// exposition only</expos>
+    };
+
+  template&lt;size_t N, size_t Index, class CallbackFn&gt;
+    finite_inplace_stop_callback(finite_inplace_stop_token&lt;N, Index&gt;, CallbackFn)
+      -> finite_inplace_stop_callback&lt;N, Index, CallbackFn&gt;;
+}
+</pre>
+<p class="numbered"><i>Mandates</i>: <code>Index &lt; N</code> is <code>true</code> and <code>CallbackFn</code> satisfies both <code>invocable</code> and <code>destructible</code>.</p>
+<p class="numbered"><i>Remarks</i>: For type <code>Initializer</code>, if <code><expos>stoppable-callback-for</expos>&lt;CallbackFn, finite_inplace_stop_token&lt;N, Index&gt;, Initializer&gt;</code>
+is satisfied, then <code><expos>stoppable-callback-for</expos>&lt;CallbackFn, finite_inplace_stop_token&lt;N, Index&gt;, Initializer&gt;</code> is modeled.
+For a <code>finite_inplace_stop_callback&lt;N, Index, CallbackFn&gt;</code> object, the exposition-only <code><expos>callback-fn</expos></code>
+member is its associated callback function ([stoptoken.concepts]).</p>
+</div>
+<div class="section">
+<h4>Constructors and destructor [stopcallback.finite.cons]</h4>
+<pre>
+template&lt;class Initializer&gt;
+  explicit finite_inplace_stop_callback(finite_inplace_stop_token&lt;N, Index&gt; st, Initializer&amp;&amp; init)
+    noexcept(is_nothrow_constructible_v&lt;CallbackFn, Initializer&gt;);
+</pre>
+<p class="numbered"><i>Constraints</i>: <code>constructible_from&lt;CallbackFn, Initializer&gt;</code> is satisfied.</p>
+<p class="numbered"><i>Preconditions</i>: Either <code>st</code> is disengaged ([stoptoken.concepts]),
+or there are no active stop callback registrations associated with <code>st</code> for the <code>Index</code>th stop callback slot of <code>st</code>'s associated stop state.</p>
+<p class="numbered"><i>Effects</i>: Initializes <code><expos>callback-fn</expos></code> with <code>std::forward&lt;Initializer&gt;(init)</code>
+and executes a stoppable callback registration ([stoptoken.concepts]).
+If a stop callback is added to <code>st</code>'s associated stop state, it is added to the <code>Index</code>th stop callback slot of that stop state.</p>
+<pre>
+~inplace_stop_callback();
+</pre>
+<p class="numbered"><i>Effects</i>: Executes a stoppable callback deregistration ([stoptoken.concepts]) of <code>*this</code>.</p>
+</div>
+</div>
+</div>
+#+end_export
+
+** Changes to ~receiver~ concept
+
+Modify [exec.recv.concepts] p3 as follows:
+
+#+begin_export html
+<div class="wording" style="counter-set: paragraph 2">
+<h4>Receiver concepts [exec.recv.concepts]</h4>
+<p>...</p>
+<p class="numbered">Let <code>rcvr</code> be a receiver and let <code>op_state</code> be an operation state associated with
+ana asynchronous operation created by connecting <code>rcvr</code> with a sender. Let <code>token</code> be a stop token
+equal to <code>get_stop_token(get_env(rcvr))</code>. <code>token</code> shall remain valid for the duration of the asynchronous
+operation's lifetime ([exec.async.ops]). <ins><code>token</code> shall allow creating at least one associated active stop callback
+registration ([stoptoken.concepts]) at a time during <code>op_state</code>'s asynchronous operation's lifetime.</ins></p>
+<p>[<i>Note</i>: This means that, unless it knows about further guarantees provided by the type of <code>rcvr</code>, the
+implementation of <code>op_state</code> cannot use <code>token</code> after it executes a completion operation. This also implies
+that<del> any stop callbacks registered on a token must be destroyed before the invocation of the completion operation.</del><ins>:</ins>
+<ul class="numbered">
+<li><ins>any stop callbacks registered on a token by <code>op_state</code> must be created after the beginning of the invocation of <code>start(op_state)</code>
+and destroyed before the invocation of the completion operation; and</ins></li>
+<li><ins>unless it knows about further guarantees provided by the type of <code>token</code>, the implementation of <code>op_state</code>
+must limit the maximum number of active stop callback registrations associated with <code>token</code> that it creates at any point
+in time to at most one.</ins></li>
+</ul>
+— <i>end note</i>]</p>
+</div>
+#+end_export
 
 * Appendix A - Benchmarks
 :PROPERTIES:
@@ -1400,14 +2066,14 @@ For a full implementation of ~finite_inplace_stop_source~, see the source code f
       }
       static void* no_callback_state() noexcept { return nullptr; }
       bool is_stop_requested_state(void* state) const noexcept {
-        return (state == stop_requested_state()) |
+        return (state == stop_requested_state()) ||
                (state == stop_requested_callback_done_state());
       }
 
-      // nullptr                 - no stop-request or stop-callback
-      // &state_                 - stop-requested
-      // &thread_requesting_stop - stop-requested, callback-done
-      // other                   - pointer to callback_base
+      // nullptr                  - no stop-request or stop-callback
+      // &state_                  - stop-requested
+      // &thread_requesting_stop_ - stop-requested, callback-done
+      // other                    - pointer to callback_base
       mutable atomic<void*> state_;
       mutable atomic<thread::id> thread_requesting_stop_;
     };
@@ -1420,8 +2086,7 @@ For a full implementation of ~finite_inplace_stop_source~, see the source code f
     inline bool single_inplace_stop_source::request_stop() noexcept {
       void* old_state = state_.load(std::memory_order_relaxed);
       do {
-        if (old_state == stop_requested_state() ||
-            old_state == stop_requested_callback_done_state()) {
+        if (is_stop_requested_state(old_state)) {
           return false;
         }
       } while (!state_.compare_exchange_weak(old_state, stop_requested_state(),
@@ -1445,8 +2110,7 @@ For a full implementation of ~finite_inplace_stop_source~, see the source code f
     inline bool single_inplace_stop_source::try_register_callback(
         callback_base * base) const noexcept {
       void* old_state = state_.load(memory_order_acquire);
-      if (old_state == stop_requested_state() ||
-          old_state == stop_requested_callback_done_state()) {
+      if (is_stop_requested_state(old_state)) {
         return false;
       }
 
@@ -1514,6 +2178,8 @@ For a full implementation of ~finite_inplace_stop_source~, see the source code f
         return source_ != nullptr && source_->stop_requested();
       }
 
+      bool operator==(const single_inplace_stop_token& a) const noexcept = default;
+
      private:
       friend single_inplace_stop_source;
       template <typename CB>
@@ -1571,7 +2237,7 @@ For a full implementation of ~finite_inplace_stop_source~, see the source code f
       static void execute_impl(
           single_inplace_stop_source::callback_base* base) noexcept {
         auto& self = *static_cast<single_inplace_stop_callback*>(base);
-        std::move(self.callback_)();
+        std::forward<CB>(self.callback_)();
       }
 
       const single_inplace_stop_source* source_;
@@ -1579,8 +2245,7 @@ For a full implementation of ~finite_inplace_stop_source~, see the source code f
     };
 
     template <typename CB>
-    single_inplace_stop_callback(single_inplace_stop_token,
-                                 CB) -> single_inplace_stop_callback<CB>;
-
+    single_inplace_stop_callback(single_inplace_stop_token, CB)
+      -> single_inplace_stop_callback<CB>;
   }
 #+end_src
