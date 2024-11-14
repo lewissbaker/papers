@@ -1526,7 +1526,7 @@ namespace std {
     constexpr single_inplace_stop_token get_token() const noexcept;
     static constexpr bool stop_possible() noexcept { return true; }
     bool stop_requested() const noexcept;
-    void request_stop() noexcept;
+    bool request_stop() noexcept;
   };
 </pre>
 </div>
@@ -1708,7 +1708,7 @@ namespace std {
         constexpr finite_inplace_stop_token&lt;N, Index&gt; get_token() const noexcept;
       static constexpr bool stop_possible() noexcept { return true; }
       bool stop_requested() const noexcept;
-      void request_stop() noexcept;
+      bool request_stop() noexcept;
     };
 </pre>
 </div>
