@@ -364,7 +364,7 @@ operation's lifetime starts at the beginning of the call to ~start()~ on the ope
 beginning of the call to a completion-function.
 
 This implies that, unless you have additional information about the validity of a stop-token provided in the
-environment, you should not assume that it is valid to construct a stop-callback assocated with that stop-token
+environment, you should not assume that it is valid to construct a stop-callback associated with that stop-token
 (or indeed do anything else you can't do with an invalid stop-token) until the ~start()~ operation on the
 operation-state is called.
 
@@ -378,7 +378,7 @@ operation. In particular it should call out that stop-callbacks should not be co
 the beginning of the invocation of the ~start()~ method on the operation-state.
 
 A parent operation only needs to introduce a new stop-source and give separate stop-tokens to child operations
-if both of the following are true:
+if all of the following are true:
 - we don't know that the stop-token can support multiple stop-callbacks at the same time; and
 - the child operations have overlapping asynchronous operation lifetimes; and
 - the parent operation wants to forward stop-requests to child operations
@@ -1390,7 +1390,7 @@ associated with a stop state ([stopcallback.single], [stopcallback.finite]). —
 <ul>
 <li>If the constructor of <code>scb</code> did not register a callback invocation with <code>t</code>'s stop state, then the stoppable
 callback deregistration shall have no effect other than destroying <code>callback_fn</code> if it was constructed.</li>
-<li>Otherwise, the invocation of <code>callback_fn</code> shall be removed from the assocaited stop state.</li>
+<li>Otherwise, the invocation of <code>callback_fn</code> shall be removed from the associated stop state.</li>
 <li>If <code>callback_fn</code> is concurrently executing on another thread, then the stoppable callback deregistration
 shall  block ([defns.block]) until the invocation of <code>callback_fn</code> returns such that the return from the
 invocation of <code>callback_fn</code> strongly happens before ([intro.races]) the destruction of <code>callback_fn</code>.</li>
