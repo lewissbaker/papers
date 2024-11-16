@@ -2,7 +2,7 @@
 #+TITLE: P3409R1: Enabling more efficient stop-token based cancellation of senders
 #+AUTHOR: Lewis Baker
 #+EMAIL: lewissbaker@gmail.com
-#+DATE: 2024-11-14
+#+DATE: 2024-11-17
 #+OPTIONS: html5-fancy
 #+OPTIONS: tasks:nil
 #+OPTIONS: html-postamble:nil
@@ -12,7 +12,7 @@
 #+MACRO: del @@html:<span style="background-color:#FFA0A0; text-decoration: line-through;">@@$1@@html:</span>@@
 
 | Document | *P3409R1*                             |
-| Date     | *2024-11-14*                          |
+| Date     | *2024-11-17*                          |
 | Reply To | *Lewis Baker <lewissbaker@gmail.com>* |
 | Audience | *SG1*                                 |
 
@@ -1706,7 +1706,7 @@ namespace std {
       // [stopsource.finite.mem], member functions
       template&lt;size_t Index&gt;
         constexpr finite_inplace_stop_token&lt;N, Index&gt; get_token() const noexcept;
-      static constexpr bool stop_possible() noexcept { return true; }
+      static constexpr bool stop_possible() noexcept { return N != 0; }
       bool stop_requested() const noexcept;
       bool request_stop() noexcept;
     };
