@@ -2,7 +2,7 @@
 #+TITLE: P3409R1: Enabling more efficient stop-token based cancellation of senders
 #+AUTHOR: Lewis Baker
 #+EMAIL: lewissbaker@gmail.com
-#+DATE: 2024-11-17
+#+DATE: 2024-11-18
 #+OPTIONS: html5-fancy
 #+OPTIONS: tasks:nil
 #+OPTIONS: html-postamble:nil
@@ -12,7 +12,7 @@
 #+MACRO: del @@html:<span style="background-color:#FFA0A0; text-decoration: line-through;">@@$1@@html:</span>@@
 
 | Document | *P3409R1*                             |
-| Date     | *2024-11-17*                          |
+| Date     | *2024-11-18*                          |
 | Reply To | *Lewis Baker <lewissbaker@gmail.com>* |
 | Audience | *SG1*                                 |
 
@@ -1827,6 +1827,114 @@ in time to at most one.</ins></li>
 </div>
 #+end_export
 
+** Changes to ~when_all~
+
+Modify [exec.when.all] p6 as follows:
+
+#+begin_export html
+<div class="wording" style="counter-set: paragraph 5">
+<p class="numbered">
+The member <code><expos>impls-for</expos>&lt;when_all_t&gt;::<expos>get-env</expos></code> is initialized with
+a callable object equivalent to the following lambda expression:
+<pre>
+[]&lt;class State, class Rcvr<ins>, size_t Idx</ins>&gt;(<del>auto&amp;&amp;</del><ins>integral_constant&lt;size_t, Idx&gt;</ins>, State&amp; state, const Receiver&amp; rcvr) noexcept {
+  return <expos>JOIN-ENV</expos>(
+    <expos>MAKE-ENV</expos>(get_stop_token, state.<expos>stop_src</expos>.<ins>template </ins>get_token<ins>&lt;Idx&gt;</ins>()), get_env(rcvr));
+}
+</pre>
+</p>
+</div>
+#+end_export
+
+Modify [exec.when.all] p7 as follows:
+
+#+begin_export html
+<div class="wording" style="counter-set: paragraph 6">
+<p class="numbered">The member <code><expos>impls-for</expos>&lt;when_all_t&gt;::<expos>get-state</expos></code>
+is initialized with a callable object equivalent to the following lambda expression:
+<pre style="margin-left: 20px">
+[]&lt;class Sndr, class Rcvr&gt;(Sndr&amp;&amp; sndr, Rcvr&amp; rcvr) noexcept(<i>e</i>) -&gt; decltype(<i>e</i>) {
+  return <i>e</i>;
+}
+</pre>
+where <code><i>e</i></code> is the expression
+<pre style="margin-left: 20px">
+std::forward&lt;Sndr&gt;(sndr).apply(<expos>make-state</expos>&lt;Rcvr&gt;())
+</pre>
+and where <code><expos>make-state</expos></code> is the following exposition-only class template:
+<pre style="margin-left: 20x">
+template&lt;class Sndr, class Env&gt;
+concept <expos>max-1-sender-in</expos> = sender_in&lt;Sndr, Env&gt; &amp;&amp;                <expos>// exposition only</expos>
+  (tuple_size_v&lt;value_types_of_t&lt;Sndr, Env, tuple, tuple&gt;&gt; &lt;= 1);
+
+enum class <expos>disposition</expos> { <expos>started</expos>, <expos>error</expos>, <expos>stopped</expos> };             <expos>// exposition only</expos>
+
+template&lt;class Rcvr&gt;
+struct <expos>make-state</expos> {
+  template&lt;<expos>max-1-sender-in</expos>&lt;env_of_t&lt;Rcvr&gt;&gt;... Sndrs&gt;
+  auto operator()(auto, auto, Sndrs&amp;&amp;... sndrs) const {
+    using values_tuple = <i>see below</i>;
+    using errors_variant = <i>see below</i>;
+    <ins>using stop_source = finite_inplace_stop_source&lt;sizeof...(sndrs)&gt;;
+    struct <expos>forward-stop-request</expos> {
+      stop_source& <expos>stop-source</expos>;
+      void operator()() noexcept { <expos>stop-source</expos>.request_stop(); }
+    };</ins>
+    using stop_callback = stop_callback_for_t&lt;stop_token_of_t&lt;env_of_t&lt;Rcvr&gt;&gt;, <expos><del>on</del><ins>forward</ins>-stop-request</expos>&gt;;
+
+    struct <expos>state-type</expos> {
+      void <expos>arrive</expos>(Rcvr&amp; rcvr) noexcept {                        <expos>// exposition only</expos>
+        if (0 == --<expos>count</expos>) {
+          <expos>complete</expos>(rcvr);
+        }
+      }
+
+      <ins>void <expos>register-stop-callback</expos>(stop_token_of_t&lt;env_of_t&lt;Rcvr&gt&gt; st) noexcept { <expos>// exposition only</expos>
+        <expos>on_stop</expos>.emplace(std::move(st), <expos>forward-stop-request</expos>{<expos>stop_src</expos>});
+      }</ins>
+
+      void <expos>complete</expos>(Rcvr& rcvr) noexcept;                       <expos>// exposition only</expos>
+
+      atomic&lt;size_t&gt; <expos>count</expos>{sizeof...(sndrs)};                   <expos>// exposition only</expos>
+      <del>inplace_</del>stop_source <expos>stop_src</expos>{};                           <expos>// exposition only</expos>
+      atomic&lt;<expos>disposition</expos>&gt; <expos>disp</expos>{<expos>disposition</expos>::<expos>started</expos>};           <expos>// exposition only</expos>
+      errors_variant <expos>errors</expos>{};                                  <expos>// exposition only</expos>
+      values_tuple <expos>values</expos>{};                                    <expos>// exposition only</expos>
+      optional&lt;stop_callback&gt; <expos>on_stop</expos>{nullopt};                 <expos>// exposition only</expos>
+    };
+
+    return <expos>state-type</expos>{};
+  }
+};
+</pre></p>
+</div>
+#+end_export
+
+Modify [exec.when.all] p12 as follows:
+
+#+begin_export html
+<div class="wording" style="counter-set: paragraph 11">
+<p class="numbered">
+The member <code><expos>impls-for</expos>&lt;when_all_t&gt;::<expos>start</expos> is initialized with a callable
+object equivalent to the following lambda expression:
+<pre style="margin-left: 20px">
+[]&lt;class State, class Rcvr, class... Ops&gt;(
+    State&amp; state, Rcvr&amp; rcvr, Ops&amp;... ops) noexcept -&gt; void {
+  <del>state.<expos>on_stop</expos>.emplace(
+  </del><ins>state.<expos>register-stop-callback</expos>(</ins>get_stop_token(get_env(rcvr))<ins>);</ins><del>,
+    <expos>on-stop-request</expos>{state.<expos>stop_src</expos>});</del>
+  if (state.<expos>stop_src</expos>.stop_requested()) {
+    state.<expos>on_stop</expos>.reset();
+    set_stopped(std::move(rcvr));
+  } else {
+    (start(ops), ...);
+  }
+}
+</pre></p>
+</div>
+#+end_export
+
+
 ** Changes to ~<version>~ header
 
 Modify [version.syn] as follows, replacing ~XXXXXX~ with the date of acceptance of this paper.
@@ -1841,7 +1949,7 @@ Modify [version.syn] as follows, replacing ~XXXXXX~ with the date of acceptance 
 #define __cpp_lib_senders                           <del>202406L</del><ins>XXXXXXL</ins> // also in &lt;execution&gt;
 #define __cpp_lib_shared_mutex                      201505L // also in &lt;shared_mutex&gt;
 ...
-</pre>
+</pre></p>
 </div>
 #+end_export
 
