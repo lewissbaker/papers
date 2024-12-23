@@ -1,26 +1,73 @@
 # -*- mode: org; org-html-htmlize-output-type: css -*-
-#+TITLE: P3425R0: Reducing operation-state sizes for subobject child operations
+#+TITLE: D3425R1: Reducing operation-state sizes for subobject child operations
 #+AUTHOR: Lewis Baker
 #+EMAIL: lewissbaker@gmail.com
 #+DATE: 2024-10-16
 #+OPTIONS: html5-fancy
 #+OPTIONS: tasks:nil
 #+OPTIONS: html-postamble:nil
-#+EXPORT_FILE_NAME: P3425R0
+#+EXPORT_FILE_NAME: D3425R1
 #+EXPORT_EXCLUDE_TAGS: noexport,todo
-#+MACRO: ins @@html:<span style="background-color:#A0FFA0">@@$1@@html:</span>@@
-#+MACRO: del @@html:<span style="background-color:#FFA0A0; text-decoration: line-through;">@@$1@@html:</span>@@
 
 #+BEGIN_EXPORT html
   <style>
     ins { background-color:#A0FFA0 }
     del { background-color:#FFA0A0 }
     expos { font-style:italic }
+    exposonly {
+      content: "// exposition only";
+      font-style:italic;
+    }
+    div.section {
+      counter-reset: paragraph;
+      background-color:#A0FFA0;
+    }
+    div.wording > div.section {
+      padding: 5px;
+    }
+    div.wording > div.section > h3 {
+      margin-top: 5px;
+    }
+    div.wording {
+      counter-reset: paragraph;
+      margin-left: 50px
+    }
+    div.wording p.numbered::before {
+      position: absolute;
+      margin-left: -20px;
+      margin-top: 2px;
+      font-size: 0.75em;
+      color: #CCC;
+      content: counter(paragraph);
+      counter-increment: paragraph;
+    }
+    div.wording ul {
+      list-style-type: '\2014   ';
+      counter-reset: paragraph;
+    }
+    div.wording ul li::before {
+      position: absolute;
+      margin-left: -75px;
+      margin-top: 2px;
+      font-size: 0.75em;
+      color: #CCC;
+      content: "(" counters(paragraph, ".") ")";
+      counter-increment: paragraph;
+    }
+    div.wording ul ul li::before {
+      margin-left: -125px;
+    }
+    div.wording ul ul ul li::before {
+      margin-left: -175px;
+    }
+    div.wording ul ul ul ul li::before {
+      margin-left: -225px;
+    }
   </style>
 #+END_EXPORT
 
-| Document | *P3410R0*                             |
-| Date     | *2024-10-16*                          |
+| Document | *D3424R1*                             |
+| Date     | *2024-11-15*                          |
 | Reply To | *Lewis Baker <lewissbaker@gmail.com>* |
 | Audience | *LEWG*                                |
 
@@ -37,7 +84,7 @@ through successive parent-operation-state pointers into a series of constant-off
 operation-state address, allowing compilers to constant-fold such queries into a single pointer-dereference,
 reducing code size and improving runtime performance.
 
-Which such protocol is purely additive and could theoretically be added later, there are advantages to
+While such a protocol is purely additive and could theoretically be added later, there are advantages to
 adding it now as it permits us to specify that default implementations of standard-library algorithms
 added by P2300 must incorporate this protocol in their implementation - something that may be difficult
 to retrofit later, due to the potential for this causing breaking changes in type-layout.
@@ -157,7 +204,7 @@ in the receiver held by when_all_op).
 
 Together, these contribute at least 64-72-bytes in total across the whole
 operation-state hierarchy - possibly more depending on the size/alignment
-of the function-objects passed to ~then()~ if padding is required.
+of the function-objects passed to ~then()~. e.g. if padding is required.
 
 *Cost of Environment Queries*
 
@@ -856,7 +903,8 @@ to be able to participate in this optimisation.
 
 However, such a facility would also be largely just an implementation detail for
 sender algorithms. The majority of users of the sender/receiver framework should be just
-composing those algorithms and, other than 
+composing those algorithms and, other than
+TODO: Fix this
 
 As long as the implementers of sender-algorithms implement the protocol proposed by
 this paper in /some/ way then users will benefit from the optimisations that are
@@ -976,28 +1024,31 @@ it ~receiver_holder_base<Op, Rcvr>~, or similar.
 
 * Proposed Wording
 
+** ~inlinable_receiver~ concept wording
+
 Modify [execution.syn] as follows:
 
 #+BEGIN_EXPORT html
+<div class="wording">
 <pre>
   ...
-  template&lt;class Sch>
-    concept scheduler = see below;
+  template&lt;class Sch&gt;
+    concept scheduler = <i>see below</i>;
 
   // [exec.recv], receivers
   struct receiver_t {};
 
-  template&lt;class Rcvr>
-    concept receiver = see below;
+  template&lt;class Rcvr&gt;
+    concept receiver = <i>see below</i>;
 
-  template&lt;class Rcvr, class Completions>
-    concept receiver_of = see below;
+  template&lt;class Rcvr, class Completions&gt;
+    concept receiver_of = <i>see below</i>;
   <ins>
-  template&lt;class Rcvr, class ChildOp>
+  template&lt;class Rcvr, class ChildOp&gt;
     concept inlinable_receiver =
-      receiver&lt;Rcvr> &amp;&amp;
+      receiver&lt;Rcvr&gt; &amp;&amp;
       requires (ChildOp* child) {
-        { Rcvr::make_receiver_for(child) } noexcept -> same_as&lt;Rcvr>;
+        { Rcvr::make_receiver_for(child) } noexcept -> same_as&lt;Rcvr&gt;;
       };
   </ins>
   struct set_value_t { unspecified };
@@ -1012,22 +1063,385 @@ Modify [execution.syn] as follows:
   struct operation_state_t {};
   ...
 </pre>
+</div>
 #+END_EXPORT
 
 Add the following paragraph to [exec.recv.concepts] between p1 and p2:
 
 #+BEGIN_EXPORT html
-<blockquote>
-<p><ins>The <code>inlinable_receiver</code> concept defines the requirements for a receiver that can be
+<div class="wording" style="counter-set: paragraph 1">
+<p class="numbered"><ins>The <code>inlinable_receiver</code> concept defines the requirements for a receiver that can be
 reconstructed on-demand from a pointer to the operation-state object created when
 the receiver was connected to a sender. Given a receiver object, <code>rcvr</code>, of type, <code>Rcvr</code>,
 which was connected to a sender, producing an operation-state object, <code>op</code>, of type <code>Op</code>,
 and where <code>Rcvr</code> models <code>inlinable_receiver&lt;Op></code>, then the expression,
 <code>Rcvr::make_receiver_for(addressof(op))</code>, evaluates to a receiver that is equal to <code>rcvr</code>.</ins></p>
-<p><ins><i>[Note: Such a receiver does not need to be stored as a data-member of <code>op</code> as it
+<p class="numbered"><ins><i>[Note: Such a receiver does not need to be stored as a data-member of <code>op</code> as it
 can be recreated on demand - end note]</i></ins></p>
-</blockquote>
+</div>
 #+END_EXPORT
+
+** Changes to /~basic-operation~/ 
+
+Modify the synopsis in [exec.snd.expos] as follows:
+
+#+begin_export html
+<div class="wording">
+<pre>
+namespace std::execution {
+  template&lt;class Tag&gt;
+  concept <expos>completion-tag</expos> =                                      <expos>// exposition only</expos>
+    same_as&lt;Tag, set_value_t&gt; || same_as&lt;Tag, set_error_t&gt; || same_as&lt;Tag, set_stopped_t&gt;;
+
+  template&lt;template&lt;class...&gt; class T, class... Args&gt;
+  concept <expos>valid-specialization</expos> =                                <expos>// exposition only</expos>
+    requires { typename T&lt;Args...&gt;; };
+
+  <ins>template&lt;size_t Id&gt;
+  using <expos>indexed-tag</expos> = integral_constant&lt;size_t, Id&gt;;            <expos>// exposition only</expos></ins>
+    
+  struct <expos>default-<ins>state-</ins>impls</expos> {                                        <expos>// exposition only</expos>
+    <del>static constexpr auto <expos>get-attrs</expos> = <i>see below</i>;              <expos>// exposition only</expos></del>
+    static constexpr auto <expos>get-env</expos> = <i>see below</i>;                <expos>// exposition only</expos>
+    <del>static constexpr auto <expos>get-state</expos> = <i>see below</i>;              <expos>// exposition only</expos></del>
+    static constexpr auto <expos>start</expos> = <i>see below</i>;                  <expos>// exposition only</expos>
+    static constexpr auto <expos>complete</expos> = <i>see below</i>;               <expos>// exposition only</expos>
+  };
+
+  template&lt;class Tag&gt;
+  struct <expos><ins>state-</ins>impls-for</expos> : <expos>default-<ins>state-</ins>impls</expos> {};       <expos>// exposition only</expos>
+
+  <ins>template&lt;class Tag, class Data&gt;
+  struct <expos>default-state</expos> : <expos>state-impls-for</expos>&lt;Tag&gt { <expos> // exposition only</expos>
+    Data <expos>data</expos>;       <expos>// exposition only</expos>
+  };
+
+  template&lt;class Sndr&gt;
+  decltype(auto) <expos>get-data</expos>(Sndr&amp;&amp; sndr) noexcept {        <expos>// exposition only</expos>
+    auto&amp; [tag, data, ...children] = sndr;
+    return std::forward_like&lt;Sndr&gt;(data);
+  };
+
+  template&lt;class Sndr&gt;
+  using <expos>data-type-t</expos> = decltype(<expos>get-data</expos>(declval&lt;Sndr&gt()));
+
+  template&lt;T&gt;
+  inline constexpr bool <expos>is-nothrow-decay-copyable-v</expos> =      <expos>// exposition only</expos>
+      is_nothrow_constructible_v&lt;decay_t&lt;T&gt;, T&gt;;
+
+  template&lt;class Sndr, class Rcvr&gt;
+  inline constexpr bool <expos>is-nothrow-connectable-v</expos> =         <expos>// exposition only</expos>
+      noexcept(execution::connect(declval<Sndr>(), declval<Rcvr>()));
+
+  struct <expos>default-sender-impls</expos> {                          <expos>// exposition only</expos>
+    template&lt;class Data, class... Children&gt;
+    static decltype(auto) <expos>get-attrs</expos>(const Data& data,
+                                    const Children&... children) noexcept <expos>// exposition only</expos>
+      if constexpr (sizeof...(children) == 1) {
+        return <expos>fwd-env</expos>(execution::get_env(children...[0]));
+      } else {
+        return empty_env{};
+      }
+    }
+
+    template&lt;class Self&gt;
+    <expos>default-state</expos>&lt;tag_of_t<Self>, decay_t&lt;<expos>data-type-t</expos>&lt;Self&gt;&gt;&gt; <expos>get-state</expos>(this Self&amp;&amp; self) <expos>// exposition only</expos>
+        noexcept(<expos>is-nothrow-decay-copyable-v</expos>&lt;<expos>data-type-t</expos>&lt;Self&gt;&gt;) {
+      return {{}, <expos>get-data</expos>(std::forward&lt;Self&gt;(self))};
+    }
+  };
+
+  template&lt;class Tag&gt;
+  struct <expos>sender-impls-for</expos> : <expos>default-sender-impls</expos> {}; <expos>// exposition only</expos>
+  </ins>
+
+  template&lt;class Sndr, class Rcvr&gt;                              <expos>// exposition only</expos>
+  using <expos>state-type</expos> = decay_t&lt;<expos>call-result-t</expos>&lt;
+    decltype(<expos><ins>sender-</ins>impls-for</expos>&lt;tag_of_t&lt;Sndr&gt;&gt;::<expos>get-state</expos>), Sndr, Rcvr&amp;&gt;&gt;;
+
+  <del>template&lt;class Index, class Sndr, class Rcvr&gt;                 <expos>// exposition only</expos>
+  using <expos>env-type</expos> = <expos>call-result-t</expos>&lt;
+    decltype(<expos>impls-for</expos>&lt;tag_of_t&lt;Sndr&gt;&gt;::<expos>get-env</expos>), Index,
+    <expos>state-type</expos>&lt;Sndr, Rcvr&gt;&amp;, const Rcvr&amp;&gt;;
+
+  template&lt;class Sndr, size_t I = 0&gt;
+  using <expos>child-type</expos> = decltype(declval&lt;Sndr&gt;().template get&lt;I+2&gt;());     <expos>// exposition only</expos>
+
+  template&lt;class Sndr&gt;
+  using <expos>indices-for</expos> = remove_reference_t&lt;Sndr&gt;::<expos>indices-for</expos>;           <expos>// exposition only</expos>
+
+  template&lt;class Sndr, class Rcvr&gt;
+  struct <expos>basic-state</expos> {                                          <expos>// exposition only</expos>
+    <expos>basic-state</expos>(Sndr&amp;&amp; sndr, Rcvr&amp;&amp; rcvr) noexcept(see below)
+      : <expos>rcvr</expos>(std::move(rcvr))
+      , <expos>state</expos>(<expos>impls-for</expos>&lt;tag_of_t&lt;Sndr&gt;&gt;::<expos>get-state</expos>(std::forward&lt;Sndr&gt;(sndr), <expos>rcvr</expos>)) { }
+
+    Rcvr <expos>rcvr</expos>;                                                  <expos>// exposition only</expos>
+    <expos>state-type</expos>&lt;Sndr, Rcvr&gt; <expos>state</expos>;                               <expos>// exposition only</expos>
+  };
+
+  template&lt;class Sndr, class Rcvr, class Index&gt;
+    requires <expos>valid-specialization</expos>&lt;env-type, Index, Sndr, Rcvr&gt;
+  struct <expos>basic-receiver</expos> {                                       <expos>// exposition only</expos>
+    using receiver_concept = receiver_t;
+
+    using <expos>tag-t</expos> = tag_of_t&lt;Sndr&gt;;                               <expos>// exposition only</expos>
+    using <expos>state-t</expos> = <expos>state-type</expos>&lt;Sndr, Rcvr&gt;;                     <expos>// exposition only</expos>
+    static constexpr const auto&amp; <expos>complete</expos> = <expos>impls-for</expos>&lt;<expos>tag-t</expos>&gt;::<expos>complete</expos>;   <expos>// exposition only</expos>
+
+    template&lt;class... Args&gt;
+      requires <expos>callable</expos>&lt;decltype(<expos>complete</expos>), Index, <expos>state-t</expos>&amp;, Rcvr&amp;, set_value_t, Args...&gt;
+    void set_value(Args&amp;&amp;... args) &amp;&amp; noexcept {
+      <expos>complete</expos>(Index(), <expos>op</expos>-&gt;<expos>state</expos>, <expos>op</expos>-&gt;<expos>rcvr</expos>, set_value_t(), std::forward&lt;Args&gt;(args)...);
+    }
+
+    template&lt;class Error&gt;
+      requires <expos>callable</expos>&lt;decltype(<expos>complete</expos>), Index, <expos>state-t</expos>&amp;, Rcvr&amp;, set_error_t, Error&gt;
+    void set_error(Error&amp;&amp; err) &amp;&amp; noexcept {
+      <expos>complete</expos>(Index(), <expos>op</expos>-&gt;<expos>state</expos>, <expos>op</expos>-&gt;<expos>rcvr</expos>, set_error_t(), std::forward&lt;Error&gt;(err));
+    }
+
+    void set_stopped() &amp;&amp; noexcept
+      requires <expos>callable</expos>&lt;decltype(<expos>complete</expos>), Index, <expos>state-t</expos>&amp;, Rcvr&amp;, set_stopped_t&gt; {
+      <expos>complete</expos>(Index(), <expos>op</expos>-&gt;<expos>state</expos>, <expos>op</expos>-&gt;<expos>rcvr</expos>, set_stopped_t());
+    }
+
+    auto get_env() const noexcept -&gt; <expos>env-type</expos>&lt;Index, Sndr, Rcvr&gt; {
+      return <expos>impls-for</expos>&lt;<expos>tag-t</expos>&gt;::<expos>get-env</expos>(Index(), <expos>op</expos>-&gt;<expos>state</expos>, <expos>op</expos>-&gt;<expos>rcvr</expos>);
+    }
+
+    <expos>basic-state</expos>&lt;Sndr, Rcvr&gt;* <expos>op</expos>;                           <expos>// exposition only</expos>
+  };
+
+  constexpr auto <expos>connect-all</expos> = <i>see below</i>;                         <expos>// exposition only</expos>
+
+  template&lt;class Sndr, class Rcvr&gt;
+  using <expos>connect-all-result</expos> = <expos>call-result-t</expos>&lt;                     <expos>// exposition only</expos>
+    decltype(<expos>connect-all</expos>), <expos>basic-state</expos>&lt;Sndr, Rcvr&gt;*, Sndr, <expos>indices-for</expos>&lt;Sndr&gt;&gt;;</del>
+
+<ins>  template&lt;class Op, class Rcvr&gt;
+  struct <expos>inlinable-operation-state</expos> {      <expos>// exposition only</expos>
+    explicit <expos>inlinable-operation-state</expos>(Rcvr&& r) noexcept(is_nothrow_move_constructible_v&lt;Rcvr&gt;)
+      : <expos>rcvr</expos>(std::move(r))
+    {}
+
+    Rcvr& <expos>get-receiver</expos>() noexcept { return rcvr; }      <expos>// exposition only</expos>
+
+    Rcvr <expos>rcvr</expos>;   <expos>// exposition only</expos>
+  };
+
+  template&lt;class Op, class Rcvr&gt;
+    requires inlinable_receiver&lt;Rcvr, Op&gt;
+  struct <expos>inlinable-operation-state</expos>&lt;Op, Rcvr&gt; {    <expos>// exposition only</expos>
+    explicit <expos>inlinable-operation-state</expos>(Rcvr&&) noexcept {}
+
+    Rcvr <expos>get-receiver</expos>() noexcept {    <expos>// exposition only</expos>
+      return Rcvr::make_receiver_for(static_cast<Op*>(this));
+    }
+  };
+
+  template&lt;class ParentOp, class ChildTag, class ChildEnv, class ChildSndr&gt;
+  class <expos>manual-child-operation</expos> {       <expos>// exposition only</expos>
+    struct <expos>child-receiver</expos> {         <expos>// exposition only</expos>
+      using receiver_concept = receiver_t;
+
+      template&lt;class ChildOp&gt;
+      static <expos>child-receiver</expos> make_receiver_for(ChildOp* child) noexcept {
+        auto* parent = static_cast&lt;ParentOp*&gt;(
+                         reinterpret_cast&lt;<expos>manual-child-operation</expos>*&gt(
+                           reinterpret_cast&lt;<expos>storage-t</expos>*&gt;(child)));
+        return <expos>child-receiver</expos>{parent};
+      }
+
+      ChildEnv get_env() const noexcept {
+        return <expos>parent</expos>-&gt;<expos>get-env</expos>(ChildTag{});
+      }
+
+      template&lt;class... Vs&gt;
+      void set_value(Vs&amp;&amp;... vs) && noexcept {
+        <expos>parent</expos>-&gt;<expos>complete</expos>(ChildTag{}, set_value_t{}, std::forward&lt;Vs&gt;(vs)...);
+      }
+
+      template&lt;class E&gt;
+      void set_error(E&amp;&amp; e) && noexcept {
+        <expos>parent</expos>-&gt;<expos>complete</expos>(ChildTag{}, set_error_t{}, std::forward&lt;E&gt;(e));
+      }
+
+      void set_stopped() && noexcept {
+        <expos>parent</expos>-&gt;<expos>complete</expos>(ChildTag{}, set_stopped_t{});
+      }
+
+    private:
+      friend <expos>manual-child-operation</expos>;
+      
+      explicit <expos>child-receiver</expos>(ParentOp* p) noexcept
+      : <expos>parent</expos>(p) {}
+
+      ParentOp* <expos>parent</expos>;      <expos>// exposition only</expos>
+    };
+
+    using <expos>child-op</expos> = connect_result_t&lt;ChildSndr, <expos>child-receiver</expos>&gt;; <expos>//exposition only</expos>
+
+  protected:
+    <expos>manual-child-operation</expos>() noexcept {}
+    ~<expos>manual-child-operation</expos>() {}
+
+  public:
+    using <expos>is-nothrow-connectable</expos> =     <expos>// exposition only</expos>
+        <expos>is-nothrow-connectable-v&lt;ChildSndr, <expos>child-receiver</expos>&gt;
+
+    void <expos>start-child</expos>() noexcept { <expos>// exposition only</expos>
+      execution::start(this-&gt;<expos>get</expos>());
+    }
+
+    void <expos>construct</expos>(ChildSndr&amp;&amp; child) noexcept { <expos>// exposition only</expos>
+      ::new (static_cast<void*>(addressof(<expos>storage</expos>))) <expos>child-op</expos>(
+        execution::connect(std::forward&lt;ChildSndr&gt;(child),
+                           <expos>child-receiver</expos>(static_cast&lt;ParentOp*&gt;(this))));
+    }
+
+    void <expos>destruct</expos>() noexcept {
+      this-&gt;<expos>get</expos>().~<expos>child-op</expos>();
+    }
+
+  private:
+    <expos>child-op</expos>&amp; <expos>get</expos>() noexcept {  <expos>// exposition only</expos>
+      return *launder(reinterpret_cast&lt;<expos>child-op</expos>*&gt;(addressof(<expos>storage</expos>)));
+    }
+    
+    using <expos>storage-t</expos> =     <expos>// exposition only</expos>
+      conditional_t&lt;
+        is_empty_v&lt;<expos>child-op</expos>&gt; &amp;&amp; is_standard_layout_v&lt;<expos>child-op</expos>&gt;,
+        <expos>child-op</expos>,
+        unsigned char[sizeof(<expos>child-op</expos>)]&gt;;
+
+    union {
+      alignas(<expos>child-op</expos>) <expos>storage-t</expos> <expos>storage</expos>;  <expos>// exposition only</expos>
+    };
+  };
+
+  template&lt;class ParentOp, class ChildTag, class ChildEnv, class ChildSndr&gt;
+  class <expos>child-operation</expos>        <expos>// exposition only</expos>
+      : public <expos>manual-child-operation</expos>&lt;ParentOp, ChildTag, ChildEnv, ChildSndr&gt; {
+    using <expos>base-t</expos> = <expos>manual-child-operation</expos>&lt;ParentOp, ChildTag, ChildEnv, ChildSndr&gt;
+    using <expos>base-t</expos>::<expos>construct</expos>;
+    using <expos>base-t</expos>::<expos>destruct</expos>;
+
+  protected:
+    explicit <expos>child-operation</expos>(ChildSndr&amp;&amp; child)    <expos>// exposition only</expos>
+        noexcept(<expos>base-t</expos>::<expos>is-nothrow-connectable</expos>) {
+      <expos>base-t</expos>::<expos>construct</expos>(std::forward&lt;ChildSndr&gt;(child));
+    }
+
+    ~<expos>child-operation</expos>() {
+      <expos>base-t</expos>::<expos>destruct</expos>();
+    }
+  };
+
+  template&lt;
+    class ParentOp,
+    class ParentEnv,
+    template&lt;class, size_t&gt; class ChildEnv,
+    class Indices,
+    class... Children&gt;
+  class <expos>child-operations</expos>;    <expos>// exposition only</expos>
+
+  template&lt;
+    class ParentOp,
+    class ParentEnv,
+    template&lt;class, size_t&gt; class ChildEnv,
+    size_t... Indices,
+    class... Children&gt;
+  class <expos>child-operations</expos>&lt;ParentOp, ParentEnv, ChildEnv, index_sequence&lt;Indices...&gt;, Children&gt;   <expos>// exposition only</expos>
+    : public <expos>child-operation</expos>&lt;ParentOp, <expos>indexed-tag</expos>&lt;Indices&gt;, ChildEnv&lt;ParentEnv, Indicies&gt;, Children&gt;... {
+  protected:
+    template&lt;size_t Id&gt;
+      using <expos>child-t</expos> =    <expos>//exposition only</expos>
+        <expos>child-operation</expos>&lt;ParentOp, <expos>indexed-tag</expos>&lt;Id&gt;, ChildEnv&lt;ParentEnv, Id&gt;, Children...[Id]&gt;
+
+    explicit <expos>child-operations</expos>(Children&amp;&amp;... children)
+      : <expos>child-t</expos>&lt;Indices&gt;(std::forward&lt;Children&gt;(children))...
+    {}
+
+    void <expos>start-all</expos>() noexcept {     <expos>// exposition only</expos>
+      (<expos>child-t&lt;Indices&gt;::<expos>start-child</expos>(), ...);
+    }
+  };
+</ins>
+  template&lt;class Sndr, class Rcvr&gt;
+    <del>requires <expos>valid-specialization</expos>&lt;<expos>state-type</expos>, Sndr, Rcvr&gt; &amp;&amp;
+             <expos>valid-specialization</expos>&lt;<expos>connect-all-result</expos>, Sndr, Rcvr&gt;</del>
+  struct <expos>basic-operation</expos><del> : <expos>basic-state</expos>&lt;Sndr, Rcvr&gt; {</del>                <expos>// exposition only</expos>
+    <ins>: <expos>inlinable-operation-state</expos>&lt;<expos>basic-operation</expos>&lt;Sndr, Rcvr&gt;, Rcvr&gt;
+    , State
+    , <expos>child-operations</expos>&lt;
+        <expos>basic-operation</expos>&lt;Tag, Rcvr, State, Children...&gt;,
+        env_of_t&lt;Rcvr&gt;,
+        State::template <expos>env-type</expos>,
+        index_sequence_for&lt;Children...&gt;,
+        Children...&gt; {</ins>
+    using operation_state_concept = operation_state_t;
+    <ins>using <expos>rcvr-base</expos> = <expos>inlinable-operation-state</expos>&lt;<expos>basic-operation</expos>, Rcvr&gt;   <expos>// exposition only</expos>
+    using <expos>children-base</expos> =    <expos>//exposition only</expos>
+      <expos>child-operations</expos>&lt;
+        <expos>basic-operation</expos>,
+        env_ov_t&lt;Rcvr&gt;,
+        State::template <expos>env-type</expos>,
+        index_sequence_for&lt;Children...&gt;,
+        Children...&gt;</ins>
+    <del>using <expos>tag-t</expos> = tag_of_t&lt;Sndr&gt;;                               <expos>// exposition only</expos>
+
+    <expos>connect-all-result</expos>&lt;Sndr, Rcvr&gt; <expos>inner-ops</expos>;              <expos>// exposition only</expos>
+
+    <expos>basic-operation</expos>(Sndr&amp;&amp; sndr, Rcvr&amp;&amp; rcvr) noexcept(<i>see below</i>)  <expos>// exposition only</expos>
+      : <expos>basic-state</expos>&lt;Sndr, Rcvr&gt;(std::forward&lt;Sndr&gt;(sndr), std::move(rcvr)),
+        <expos>inner-ops</expos>(<expos>connect-all</expos>(this, std::forward&lt;Sndr&gt;(sndr), <expos>indices-for</expos>&lt;Sndr&gt;()))
+    {}</del>
+
+    <ins>template&lt;class Data&gt;
+    <expos>basic-operation</expos>(Rcvr&amp;&amp; rcvr, Data&amp;&amp; data, Children&&... children) noexcept(<i>see below</i>)
+      : <expos>rcvr-base</expos>(std::move(rcvr))
+      , State(std::forward&lt;Data&gt;(data))
+      , <expos>children-base</expos>(std::forward&lt;Children&gt;(children))
+    {}</ins>
+
+    void start() &amp; noexcept {
+      <del>auto&amp; [...ops] = <expos>inner-ops</expos>;
+      <expos>impls-for</expos>&lt;<expos>tag-t</expos>&gt;::<expos>start</expos>(this-&gt;<expos>state</expos>, this-&gt;<expos>rcvr</expos>, ops...);</del>
+      <ins>this-&gt;State::<expos>start</expos>();</ins>
+    }
+  };
+
+  template&lt;class Sndr, class Env&gt;
+  using <expos>completion-signatures-for</expos> = <i>see below</i>;                   <expos>// exposition only</expos>
+
+  template&lt;class Tag, class Data, class... Child&gt;
+  struct <expos>basic-sender</expos> : <expos>product-type</expos>&lt;Tag, Data, Child...&gt; {    <expos>// exposition only</expos>
+    using sender_concept = sender_t;
+    <del>using <expos>indices-for</expos> = index_sequence_for&lt;Child...&gt;;       <expos>// exposition only</expos></del>
+
+    decltype(auto) get_env() const noexcept {
+      auto&amp; [_, data, ...child] = *this;
+      return <expos><ins>sender-</ins>impls-for</expos>&lt;Tag&gt;::<expos>get-attrs</expos>(data, child...);
+    }
+
+    template&lt;<expos>decays-to</expos>&lt;<expos>basic-sender</expos>&gt; Self, receiver Rcvr&gt;
+    auto connect(this Self&amp;&amp; self, Rcvr rcvr) noexcept(<i>see below</i>)
+      -&gt; <expos>basic-operation</expos>&lt;Self, Rcvr&gt; {
+      return {std::forward&lt;Self&gt;(self), std::move(rcvr)};
+    }
+
+    template&lt;<expos>decays-to</expos>&lt;<expos>basic-sender</expos>&gt; Self, class Env&gt;
+    auto get_completion_signatures(this Self&amp;&amp; self, Env&amp;&amp; env) noexcept
+      -&gt; <expos>completion-signatures-for</expos>&lt;Self, Env&gt; {
+      return {};
+    }
+  };
+}
+</pre>
+</div>
+#+end_export
+
 
 NOTE: The rest of the wording changes necessary for having the standard library async algorithms
 implement the optimisation will need some significant refactoring to remove some assumptions
@@ -1120,7 +1534,7 @@ Modify [exec.snd.expos] p24 follows:
 #+END_EXPORT
 
 
-#+begin_src c++
+#+begin_src
   namespace std::execution {
     template<class Tag>
     concept completion-tag =                                      // exposition only
@@ -1130,107 +1544,242 @@ Modify [exec.snd.expos] p24 follows:
     concept valid-specialization =                                // exposition only
       requires { typename T<Args...>; };
 
-    struct default-impls {                                        // exposition only
-      static constexpr auto get-attrs = see below;              // exposition only
-      static constexpr auto get-env = see below;                // exposition only
-      static constexpr auto get-state = see below;              // exposition only
-      static constexpr auto start = see below;                  // exposition only
-      static constexpr auto complete = see below;               // exposition only
+    template<size_t Id>
+    using indexed-tag = integral_constant<size_t, Id>; // exposition only
+
+    struct default-state-impls { // exposition only
+      template<class ParentEnv, std::size_t Id>
+      using child-env-type = ParentEnv; // exposition only
+
+      template<class Self, std::size_t Id>
+      decltype(auto) get-env(this Self& self, indexed-tag<Id>) noexcept { //exposition only
+        return execution::get_env(self.get-receiver());
+      }
+
+      template<class Self>
+      void start(this Self& self) noexcept { // exposition only
+        self.start-all();
+      }
+
+      template<class Self, std::size_t Id, class CompletionTag, class... Datums>
+      void complete(this Self& self, indexed-tag<Id>, CompletionTag, Datums&&... Datums) noexcept { // exposition only
+        return CompletionTag{}(std::move(self.get_receiver()), std::forward<Datums>(datums)...);
+      }
     };
 
     template<class Tag>
-    struct impls-for : default-impls {};       // exposition only
+    struct state-impls-for : default-state-impls {};      // exposition only
 
-    template<class Sndr, class Rcvr>                              // exposition only
-    using state-type = decay_t<call-result-t<
-      decltype(impls-for<tag_of_t<Sndr>>::get-state), Sndr, Rcvr&>>;
-
-    template<class Index, class Sndr, class Rcvr>                 // exposition only
-    using env-type = call-result-t<
-      decltype(impls-for<tag_of_t<Sndr>>::get-env), Index,
-      state-type<Sndr, Rcvr>&, const Rcvr&>;
-
-    template<class Sndr, size_t I = 0>
-    using child-type = decltype(declval<Sndr>().template get<I+2>());     // exposition only
+    template<class Tag, class Data>
+    struct default-state : state-impls-for<Tag> {         // exposition only
+      Data data; // exposition only
+    };
 
     template<class Sndr>
-    using indices-for = remove_reference_t<Sndr>::indices-for;           // exposition only
+    decltype(auto) get-data(Sndr&& sndr) noexcept { // exposition only
+      auto&& [tag, data, ...children] = std::forward<Sndr>(sndr);
+      return std::forward_like<Sndr>(data);
+    }
+
+    template<class Sndr>
+    using data-type-t = decltype(get-data(std::declval<Sndr>())); // exposition-only
+
+    template<class T>
+    inline constexpr bool is-nothrow-decay-copyable-v = // exposition-only
+      is_nothrow_constructible_v<decay_t<T>, T>;
 
     template<class Sndr, class Rcvr>
-    struct basic-state {                                          // exposition only
-      basic-state(Sndr&& sndr, Rcvr&& rcvr) noexcept(see below)
-        : rcvr(std::move(rcvr))
-        , state(impls-for<tag_of_t<Sndr>>::get-state(std::forward<Sndr>(sndr), rcvr)) { }
+    inline constexpr bool is-nothrow-connectable-v = // exposition-only
+      noexcept(execution::connect(std::declval<Sndr>(), std::declval<Rcvr>()));
 
-      Rcvr rcvr;                                                  // exposition only
-      state-type<Sndr, Rcvr> state;                               // exposition only
+    struct default-sender-impls {                                 // exposition only
+
+      template<class Self>
+      static decltype(auto) <expos>get-attrs(this const Self& self) noexcept { // exposition-only
+        auto& [tag, data, ...children] = self;
+        if constexpr (sizeof...(children) == 1) {
+          return fwd-env(execution::get_env(children...[0]));
+        } else {
+          return empty_env{};
+        }
+      }
+
+      template<class Self>
+      default-state<tag_of_t<Self>, decay_t<data-type-t<Self>>> get-state(this Self&& self) // exposition-only
+          noexcept(is-nothrow-decay-copyable-v<data-type-t<Self>>) {
+        return {{}, get-data(std::forward<Self>(self))};
+      }
     };
 
-    template<class Sndr, class Rcvr>
-    struct basic-operation;
+    template<class Tag>
+    struct sender-impls-for : default-sender-impls {}; // exposition only
 
-    template<class Sndr, class Rcvr>
-    requires inlinable_receiver<Rcvr, basic-operation<Sndr, Rcvr>>
-    struct basic-state<Sndr, Rcvr> {
-      basic-state(
-
-
-    template<class Sndr, class Rcvr, class Index>
-      requires valid-specialization<env-type, Index, Sndr, Rcvr>
-    struct basic-receiver {                                       // exposition only
-      using receiver_concept = receiver_t;
-
-      using tag-t = tag_of_t<Sndr>;                               // exposition only
-      using state-t = state-type<Sndr, Rcvr>;                     // exposition only
-      static constexpr const auto& complete = impls-for<tag-t>::complete;   // exposition only
-
-      template<class... Args>
-        requires callable<decltype(complete), Index, state-t&, Rcvr&, set_value_t, Args...>
-      void set_value(Args&&... args) && noexcept {
-        complete(Index(), op->state, op->rcvr, set_value_t(), std::forward<Args>(args)...);
-      }
-
-      template<class Error>
-        requires callable<decltype(complete), Index, state-t&, Rcvr&, set_error_t, Error>
-      void set_error(Error&& err) && noexcept {
-        complete(Index(), op->state, op->rcvr, set_error_t(), std::forward<Error>(err));
-      }
-
-      void set_stopped() && noexcept
-        requires callable<decltype(complete), Index, state-t&, Rcvr&, set_stopped_t> {
-        complete(Index(), op->state, op->rcvr, set_stopped_t());
-      }
-
-      auto get_env() const noexcept -> env-type<Index, Sndr, Rcvr> {
-        return impls-for<tag-t>::get-env(Index(), op->state, op->rcvr);
-      }
-
-      basic-state<Sndr, Rcvr>* op;                           // exposition only
-    };
-
-    constexpr auto connect-all = see below;                         // exposition only
-
-    template<class Sndr, class Rcvr>
-    using connect-all-result = call-result-t<                     // exposition only
-      decltype(connect-all), basic-state<Sndr, Rcvr>*, Sndr, indices-for<Sndr>>;
-
-    template<class Sndr, class Rcvr>
-      requires valid-specialization<state-type, Sndr, Rcvr> &&
-               valid-specialization<connect-all-result, Sndr, Rcvr>
-    struct basic-operation : basic-state<Sndr, Rcvr> {                // exposition only
-      using operation_state_concept = operation_state_t;
-      using tag-t = tag_of_t<Sndr>;                               // exposition only
-
-      connect-all-result<Sndr, Rcvr> inner-ops;              // exposition only
-
-      basic-operation(Sndr&& sndr, Rcvr&& rcvr) noexcept(see below)  // exposition only
-        : basic-state<Sndr, Rcvr>(std::forward<Sndr>(sndr), std::move(rcvr)),
-          inner-ops(connect-all(this, std::forward<Sndr>(sndr), indices-for<Sndr>()))
+    template<class Op, class Rcvr>
+    struct inlinable-operation-state {  // exposition only
+      explicit inlinable-operation-state(Rcvr&& r) noexcept(is_nothrow_move_constructible_v<Rcvr>)
+        : rcvr(std::move(r))
       {}
 
-      void start() & noexcept {
-        auto& [...ops] = inner-ops;
-        impls-for<tag-t>::start(this->state, this->rcvr, ops...);
+      Rcvr& get-receiver() noexcept { return rcvr; } // exposition only
+
+      Rcvr rcvr; // exposition-only
+    };
+
+    template<class Op, class Rcvr>
+      requires inlinable_receiver<Rcvr, Op>
+    struct inlinable-operation-state<Op, Rcvr> { // exposition only
+      explicit inlinable-operation-state(Rcvr&&) noexcept {}
+
+      Rcvr get-receiver() noexcept { // exposition only
+        return Rcvr::make_receiver_for(static_cast<Op*>(this));
+      }
+    };
+
+    template<class ParentOp, class ChildTag, class ChildEnv, class ChildSndr>
+    class manual-child-operation { // exposition-only
+      struct child-receiver { // exposition-only
+        using receiver_concept = receiver_t;
+
+        template<class ChildOp>
+        static child-receiver make_receiver_for(ChildOp* child) noexcept {
+          auto* parent = static_cast<ParentOp*>(
+                           reinterpret_cast<manual-child-operation*>(
+                             reinterpret_cast<storage-t*>(child)));
+          return child-receiver{parent};
+        }
+
+        Env get_env() const noexcept {
+          return parent->get-env(ChildTag{});
+        }
+
+        template<class... Vs>
+        void set_value(Vs&&... vs) noexcept {
+          parent->complete(ChildTag{}, set_value_t{}, std::forward<Vs>(vs)...);
+        }
+
+        template<class E>
+        void set_error(E&& e) noexcept {
+          parent->complete(ChildTag{}, set_error_t{}, std::forward<E>(e));
+        }
+
+        void set_stopped() noexcept {
+          parent->complete(ChildTag{}, set_stopped_t{});
+        }
+
+      private:
+        child-receiver(ParentOp* p) noexcept : parent(p) {}
+
+        ParentOp* parent; // exposition-only
+      };
+
+      using child-op = connect_result_t<ChildSndr, child-receiver>;
+
+    protected:
+      static constexpr bool is-nothrow-connectable = is-nothrow-connectable-v<ChildSndr, child-receiver>;
+
+      manual-child-operation() noexcept {}
+      ~manual-child-operation() {}
+
+      void start() noexcept { // exposition-only
+        execution::start(get());
+      }
+
+      void construct(ChildSndr&& child) noexcept(is-nothrow-connectable) {   // exposition-only
+        ::new (static_cast<void*>(addressof(storage))) child-op(
+          execution::connect(std::forward<ChildSndr>(child), child-receiver{static_cast<ParentOp*>(this)}));
+      }
+
+      void destruct() noexcept { // exposition-only
+        get().~child-op();
+      }
+
+    private:
+      child-op& get() noexcept {
+        return *launder(reinterpret_cast<child-op*>(addressof(storage)));
+      }
+
+      using storage-t = conditional_t<
+        is_empty_v<child-op> && is_standard_layout_v<child-op>,
+        child-op,
+        unsigned char[sizeof(child-op)]>; //exposition-only
+
+      union {
+        [[no_unique_address]] storage_t storage; // exposition-only
+      };
+    };
+
+    template<class ParentOp, class ChildTag, class ChildEnv, class ChildSndr>
+    class child-operation : public manual-child-operation<ParentOp, ChildTag, Env, Child> {
+      using base-t = manual-child-operation<ParentOp, ChildTag, Env, Child>;
+      using base-t::construct;
+      using base-t::destruct;
+
+    protected:
+      child-operation(Child&& child) noexcept(base-t::is-nothrow-connectable) {
+        base-t::construct(std::forward<Child>(child));
+      }
+
+      ~child-operation() {
+        base-t::destruct();
+      }
+    };
+
+    template<
+      class ParentOp,
+      class ParentEnv,
+      template<class, size_t> class ChildEnv,
+      class Indices,
+      class... Children>
+    class child-operations; // exposition-only
+
+    template<
+      class ParentOp,
+      class ParentEnv,
+      template<class, size_t> class ChildEnv,
+      size_t... Indices,
+      class... Children>
+    class child-operations<ParentOp, ParentEnv, ChildEnv, index_sequence<Indices...>, Children...>
+      : public child-operation<ParentOp, indexed-tag<Ids>, ChildEnv<ParentEnv, Ids>, Children>... {
+    protected:
+      template<size_t Id>
+        using child-t = child-operation<ParentOp, indexed-tag<Id>, ChildEnv<ParentEnv, Id>, Children...[Id]>;
+
+      explicit child-operations(Children&&... children)
+        : child-t<Indices>(std::forward<Children>(children))...
+      {}
+  
+      void start-all() noexcept {
+        (child_t<Ids>::start(), ...);
+      }
+    };
+
+    template<class Tag, class Rcvr, class State, class... Children>
+    struct basic-operation  // exposition-only
+      : inlinable-operation-state<basic-operation<Tag, Rcvr, State, Children...>, Rcvr>
+      , State
+      , child-operations<
+          basic-operation<Tag, Rcvr, State, Children...>,
+          env_of_t<Rcvr>,
+          State::template env-type,
+          index_sequence_for<Children...>,
+          Children...> {
+      using rcvr-base = inlinable-operation-state<basic-operation, Rcvr; // exposition-only
+      using children-base = child-operations<
+        basic-operation,
+        env_of_t<Rcvr>,
+        State::template env-type,
+        index_sequence_for<Children...>,
+        Children...>; // exposition-only
+
+      template<class Data>
+      basic-operation(Rcvr rcvr, Data&& data, Children&&... children)
+        : rcvr-base(std::move(rcvr))
+        , State(std::forward<Data>(data))
+        , children-base(std::forward<Children>(children)...)
+      {}
+  
+      void start() &  noexcept {
+        this->State::start();
       }
     };
 
@@ -1244,7 +1793,7 @@ Modify [exec.snd.expos] p24 follows:
 
       decltype(auto) get_env() const noexcept {
         auto& [_, data, ...child] = *this;
-        return impls-for<Tag>::get-attrs(data, child...);
+        return sender-impls-for<Tag>::get-attrs(data, child...);
       }
 
       template<decays-to<basic-sender> Self, receiver Rcvr>
