@@ -161,7 +161,7 @@ following operation-state layout:
   | - rcvr (parent_op*) --'  |              |
   | - ref_count              |              |
   | - stop_source            |              |
-  | - stop_callback          |              |        
+  | - stop_callback          |              |
   | - result_tuple           |              |
   | +------------------------|------------+ |
   | | then_op#3              | A          | |
@@ -295,9 +295,9 @@ If we look at the above example, but this time with the optimisations proposed i
 being applied, then the resulting operation-state will, instead, look something like this:
 
 #+begin_src
-                                              
-                     A              
-  +------------------|---+------A-----------+ 
+
+                     A
+  +------------------|---+------A-----------+
   | when_all_op      |   |      |           |
   | - (maybe?) rcvr -'   |      |           |
   | - ref_count          |      |           |
@@ -638,7 +638,7 @@ Two objects are "pointer-interconvertible" only if:
   data-member of the parent-object or any base-class sub-object of the parent-object
 - there exists an intermediate sub-object, ~C~, such that the parent-object is pointer-interconvertible
   with ~C~ and ~C~ is pointer-interconvertible with the sub-object (i.e. the relationship is transitive)
-  
+
 Note that there are a number of rules for types that are considered "standard layout" class types ([[https://eel.is/c++draft/class.prop#3][[class.prop] p3]]).
 I won't go into particular details here but, among other things, this doesn't allow types with virtual methods,
 virtual base-classes, types with non-static data-members with different access control, or data-members
@@ -909,7 +909,7 @@ TODO: Fix this
 As long as the implementers of sender-algorithms implement the protocol proposed by
 this paper in /some/ way then users will benefit from the optimisations that are
 enabled by the protocol. Different libraries can use their own helper classes to
-implement the protocol - we do not need to standardise 
+implement the protocol - we do not need to standardise
 
 ** Applying this optimisation to standard-library sender algorithms
 
@@ -1081,7 +1081,7 @@ can be recreated on demand - end note]</i></ins></p>
 </div>
 #+END_EXPORT
 
-** Changes to /~basic-operation~/ 
+** Changes to /~basic-operation~/
 
 Modify the synopsis in [exec.snd.expos] as follows:
 
@@ -1099,13 +1099,26 @@ namespace std::execution {
 
   <ins>template&lt;size_t Id&gt;
   using <expos>indexed-tag</expos> = integral_constant&lt;size_t, Id&gt;;            <expos>// exposition only</expos></ins>
-    
+
   struct <expos>default-<ins>state-</ins>impls</expos> {                                        <expos>// exposition only</expos>
     <del>static constexpr auto <expos>get-attrs</expos> = <i>see below</i>;              <expos>// exposition only</expos></del>
-    static constexpr auto <expos>get-env</expos> = <i>see below</i>;                <expos>// exposition only</expos>
+    <del>static constexpr auto <expos>get-env</expos> = <i>see below</i>;                <expos>// exposition only</expos></del>
+    <ins>template&lt;class Self, size_t Id&gt;
+    constexpr decltype(auto) <expos>get-env</expos>(this Self& self, <expos>indexed-tag</expos>&lt;Id&gt;) noexcept { // exposition only
+      return get_env(self.get_receiver());
+    }</ins>
     <del>static constexpr auto <expos>get-state</expos> = <i>see below</i>;              <expos>// exposition only</expos></del>
-    static constexpr auto <expos>start</expos> = <i>see below</i>;                  <expos>// exposition only</expos>
-    static constexpr auto <expos>complete</expos> = <i>see below</i>;               <expos>// exposition only</expos>
+    <del>static constexpr auto <expos>start</expos> = <i>see below</i>;                  <expos>// exposition only</expos></del>
+    <ins>template&lt;class Self&gt;
+    constexpr void <expos>start</expos>(this Self& self) noexcept { // exposition only
+      self.<expos>start-all</expos>();
+    }</ins>
+    <del>static constexpr auto <expos>complete</expos> = <i>see below</i>;               <expos>// exposition only</expos></del>
+    <ins>template&lt;class Self, size_t Id, class CompletionTag, class... Datums&gt;
+    constexpr void <expos>complete</expos>(this Self& self, <expos>indexed-tag</expos>&lt;Id&gt;,
+        CompletionTag, Datums&&... datums) noexcept { //exposition only
+      return CompletionTag()(self.get_receiver(), std::forward<Datums>(datums)...);
+    }</ins>
   };
 
   template&lt;class Tag&gt;
@@ -1273,7 +1286,7 @@ namespace std::execution {
 
     private:
       friend <expos>manual-child-operation</expos>;
-      
+
       explicit <expos>child-receiver</expos>(ParentOp* p) noexcept
       : <expos>parent</expos>(p) {}
 
@@ -1308,7 +1321,7 @@ namespace std::execution {
     <expos>child-op</expos>&amp; <expos>get</expos>() noexcept {  <expos>// exposition only</expos>
       return *launder(reinterpret_cast&lt;<expos>child-op</expos>*&gt;(addressof(<expos>storage</expos>)));
     }
-    
+
     using <expos>storage-t</expos> =     <expos>// exposition only</expos>
       conditional_t&lt;
         is_empty_v&lt;<expos>child-op</expos>&gt; &amp;&amp; is_standard_layout_v&lt;<expos>child-op</expos>&gt;,
@@ -1461,8 +1474,8 @@ Modify [exec.snd.expos] p24 follows:
   struct <expos>receiver-holder</expos> {                                       // <expos>exposition only</expos>
     <expos>receiver-holder</expos>(Rcvr&& rcvr2) noexcept(is_nothrow_move_constructible_v&lt;Rcvr>)
     : <expos>rcvr</expos>(std::forward&lt;Rcvr>(rcvr2)) { }
-    
-    Rcvr& <expos>get-receiver</expos>() noexcept { return <expos>rcvr</expos>; }               // <expos>exposition only</expos> 
+
+    Rcvr& <expos>get-receiver</expos>() noexcept { return <expos>rcvr</expos>; }               // <expos>exposition only</expos>
 
     Rcvr <expos>rcvr</expos>;                                                   // <expos>exposition only</expos>
   };
@@ -1488,7 +1501,7 @@ Modify [exec.snd.expos] p24 follows:
       , <expos>state</expos>(<ins>[&amp;] {
           decltype(auto) rcvr2 =
           <expos>impls-for</expos>&lt;tag_of_t&lt;Sndr>>::<expos>get-state</expos>(std::forward&lt;Sndr>(sndr), <expos>rcvr</expos>)) { }
-      
+
   <del>  Rcvr <expos>rcvr</expos>;                                                  // <expos>exposition only</expos></del>
     <expos>state-type</expos>&lt;Sndr, Rcvr> <expos>state</expos>;                               // <expos>exposition only</expos>
   };
@@ -1529,7 +1542,7 @@ Modify [exec.snd.expos] p24 follows:
 
     <expos>basic-state</expos>&lt;Sndr, Rcvr>* <expos>op</expos>;                           // <expos>exposition only</expos>
   };
-  
+
 </pre>
 #+END_EXPORT
 
@@ -1747,7 +1760,7 @@ Modify [exec.snd.expos] p24 follows:
       explicit child-operations(Children&&... children)
         : child-t<Indices>(std::forward<Children>(children))...
       {}
-  
+
       void start-all() noexcept {
         (child_t<Ids>::start(), ...);
       }
@@ -1777,7 +1790,7 @@ Modify [exec.snd.expos] p24 follows:
         , State(std::forward<Data>(data))
         , children-base(std::forward<Children>(children)...)
       {}
-  
+
       void start() &  noexcept {
         this->State::start();
       }
@@ -1808,7 +1821,7 @@ Modify [exec.snd.expos] p24 follows:
         return {};
       }
     };
-  }  
+  }
 #+end_src
 
 
