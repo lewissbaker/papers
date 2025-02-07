@@ -1130,10 +1130,19 @@ namespace std::execution {
   };
 
   template&lt;class Sndr&gt;
+  decltype(auto) <expos>get-tag</expos>(Sndr&amp;&amp; sndr) noexcept {        <expos>// exposition only</expos>
+    auto&amp; [tag, data, ...children] = sndr;
+    return std::forward_like&lt;Sndr&gt;(tag);
+  };
+
+  template&lt;class Sndr&gt;
   decltype(auto) <expos>get-data</expos>(Sndr&amp;&amp; sndr) noexcept {        <expos>// exposition only</expos>
     auto&amp; [tag, data, ...children] = sndr;
     return std::forward_like&lt;Sndr&gt;(data);
   };
+
+  template&lt;class Sndr&gt;
+  using <expos>tag-type-t</expos> = decltype(<expos>get-tag</expos>(declval&lt;Sndr&gt()));
 
   template&lt;class Sndr&gt;
   using <expos>data-type-t</expos> = decltype(<expos>get-data</expos>(declval&lt;Sndr&gt()));
@@ -1157,10 +1166,10 @@ namespace std::execution {
       }
     }
 
-    template&lt;class Self&gt;
-    <expos>default-state</expos>&lt;tag_of_t<Self>, decay_t&lt;<expos>data-type-t</expos>&lt;Self&gt;&gt;&gt; <expos>get-state</expos>(this Self&amp;&amp; self) <expos>// exposition only</expos>
-        noexcept(<expos>is-nothrow-decay-copyable-v</expos>&lt;<expos>data-type-t</expos>&lt;Self&gt;&gt;) {
-      return {{}, <expos>get-data</expos>(std::forward&lt;Self&gt;(self))};
+    template&lt;class Self, class Rcvr&gt;
+    auto <expos>get-state</expos>(this Self&& s, Rcvr&& rcvr) noexcept
+      -&gt; <expos>default-state</expos>&lt;<expos>tag-type-t</expos>&lt;Self&gt;, decay_t&lt;<expos>data-type-t</expos>&lt;Self&gt;&gt;&gt;  { <expos>// exposition only</expos>
+      return {{}, std::forward_like&lt;Self&gt;(<expos>get-data</expos>(s))};
     }
   };
 
@@ -1168,9 +1177,9 @@ namespace std::execution {
   struct <expos>sender-impls-for</expos> : <expos>default-sender-impls</expos> {}; <expos>// exposition only</expos>
   </ins>
 
-  template&lt;class Sndr, class Rcvr&gt;                              <expos>// exposition only</expos>
+  <del>template&lt;class Sndr, class Rcvr&gt;                              <expos>// exposition only</expos>
   using <expos>state-type</expos> = decay_t&lt;<expos>call-result-t</expos>&lt;
-    decltype(<expos><ins>sender-</ins>impls-for</expos>&lt;tag_of_t&lt;Sndr&gt;&gt;::<expos>get-state</expos>), Sndr, Rcvr&amp;&gt;&gt;;
+    decltype(<expos>impls-for</expos>&lt;tag_of_t&lt;Sndr&gt;&gt;::<expos>get-state</expos>), Sndr, Rcvr&amp;&gt;&gt;;</del>
 
   <del>template&lt;class Index, class Sndr, class Rcvr&gt;                 <expos>// exposition only</expos>
   using <expos>env-type</expos> = <expos>call-result-t</expos>&lt;
@@ -1381,11 +1390,11 @@ namespace std::execution {
     }
   };
 </ins>
-  template&lt;class Sndr, class Rcvr&gt;
+  template&lt;class <ins>Tag</ins><del>Sndr</del>, class Rcvr<ins>, class State, class... Children</ins>&gt;
     <del>requires <expos>valid-specialization</expos>&lt;<expos>state-type</expos>, Sndr, Rcvr&gt; &amp;&amp;
              <expos>valid-specialization</expos>&lt;<expos>connect-all-result</expos>, Sndr, Rcvr&gt;</del>
   struct <expos>basic-operation</expos><del> : <expos>basic-state</expos>&lt;Sndr, Rcvr&gt; {</del>                <expos>// exposition only</expos>
-    <ins>: <expos>inlinable-operation-state</expos>&lt;<expos>basic-operation</expos>&lt;Sndr, Rcvr&gt;, Rcvr&gt;
+    <ins>: <expos>inlinable-operation-state</expos>&lt;<expos>basic-operation</expos>&lt;Tag, Rcvr, State, Children...&gt;, Rcvr&gt;
     , State
     , <expos>child-operations</expos>&lt;
         <expos>basic-operation</expos>&lt;Tag, Rcvr, State, Children...&gt;,
@@ -1429,7 +1438,7 @@ namespace std::execution {
   using <expos>completion-signatures-for</expos> = <i>see below</i>;                   <expos>// exposition only</expos>
 
   template&lt;class Tag, class Data, class... Child&gt;
-  struct <expos>basic-sender</expos> : <expos>product-type</expos>&lt;Tag, Data, Child...&gt; {    <expos>// exposition only</expos>
+  struct <expos>basic-sender</expos> : <ins><expos>sender-impls-for&lt;Tag&gt;,</ins> <expos>product-type</expos>&lt;Tag, Data, Child...&gt; {    <expos>// exposition only</expos>
     using sender_concept = sender_t;
     <del>using <expos>indices-for</expos> = index_sequence_for&lt;Child...&gt;;       <expos>// exposition only</expos></del>
 
@@ -1440,8 +1449,10 @@ namespace std::execution {
 
     template&lt;<expos>decays-to</expos>&lt;<expos>basic-sender</expos>&gt; Self, receiver Rcvr&gt;
     auto connect(this Self&amp;&amp; self, Rcvr rcvr) noexcept(<i>see below</i>)
-      -&gt; <expos>basic-operation</expos>&lt;Self, Rcvr&gt; {
-      return {std::forward&lt;Self&gt;(self), std::move(rcvr)};
+      -&gt; <expos>basic-operation</expos>&lt;<ins>Tag</ins><del>Self</del>, Rcvr<ins>, decltype(self.<expos>get-state</expos>()), <expos>member-t</expos>&lt;Self, Child&gt;...</ins>&gt; {
+      <del>return {std::forward&lt;Self&gt;(self), std::move(rcvr)};</del>
+      <ins>auto& [_, _, ...child] = self;
+      return {std::move(rcvr), self.<expos>get-state</expos>(rcvr), std::forward&lt;decltype(child)&gt;(child)...};</ins>
     }
 
     template&lt;<expos>decays-to</expos>&lt;<expos>basic-sender</expos>&gt; Self, class Env&gt;
@@ -1507,7 +1518,7 @@ Modify [exec.just] p2.3 as follows:
 #+BEGIN_EXPORT html
 <div class="wording">
 <pre>template<>
-struct <expos><ins>state-</ins>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;<expos>just-cpo</expos>&gt;&gt; : <expos>default-impls</expos> {
+struct <expos><ins>state-</ins>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;<expos>just-cpo</expos>&gt;&gt; : <expos>default-<ins>state-</ins>impls</expos> {
   <del>static constexpr auto <expos>start</expos> =
     [](auto& state, auto& rcvr) noexcept -> void {
       auto& [...ts] = state;
@@ -1529,7 +1540,7 @@ Modify [exec.read.env] p3 as follows:
 #+BEGIN_EXPORT html
 <div class="wording">
 <pre>template<>
-struct <expos><ins>state-</ins>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;read_env&gt;&gt; : <expos>default-impls</expos> {
+struct <expos><ins>state-</ins>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;read_env&gt;&gt; : <expos>default-<ins>state-</ins>impls</expos> {
   <del>static constexpr auto start =
     [](auto query, auto& rcvr) noexcept -> void {
       TRY-SET-VALUE (rcvr, query(get_env(rcvr)));
@@ -1544,7 +1555,124 @@ struct <expos><ins>state-</ins>impls-for</expos>&lt;<expos>decayed-typeof</expos
 
 ** Changes to /~schedule_from~/
 
-Forthcoming.
+Modify [exec.schedule.from] p4 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The exposition-only class template<ins>s</ins> <ins>sender-</ins>impls-for and <ins>state-impls-for</ins>
+(33.9.1) <del>is</del><ins>are</ins> specialized for schedule_from_t as follows:
+
+<pre>namespace std::execution {
+  template<>
+  struct <ins>sender-</ins>impls-for <schedule_from_t> : default-<ins>sender-</ins>impls {
+    <del>static constexpr auto get-attrs = see below ;
+    static constexpr auto get-state = see below ;
+    static constexpr auto complete = see below ;</del>
+    <ins>template<class Data, class... Children>
+    static decltype(auto) get-attrs(const Data& data,
+                                    const Children&... children) noexcept; // exposition only
+    template<class Self, class Rcvr>
+    auto get-state(this Self&& s, Rcvr&& rcvr) noexcept; // exposition only</ins>
+  };
+  <ins>template<>
+  struct state-impls-for <schedule_from_t> : default-state-impls {
+    template&lt;class Self, size_t Id, class CompletionTag, class... Datums&gt;
+      constexpr void complete(this Self& self, indexed-tag&lt;Id&gt;,
+        CompletionTag, Datums&&... datums) noexcept;
+  };</ins>
+}</pre>
+</div>
+#+END_EXPORT
+
+Modify [exec.schedule.from] p5 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>sender-</ins>impls-for&lt;schedule_from_t&gt;::get-attrs is <del>initialized with a callable object</del> equivalent to
+the following <del>lambda</del>:
+
+<pre><del>[](const auto& data, const auto& child) noexcept -> decltype(auto) {</del>
+return JOIN-ENV(SCHED-ATTRS(data), FWD-ENV(get_env(children...[0])));
+<del>}</del></pre>
+</div>
+#+END_EXPORT
+
+Modify [exec.schedule.from] p6 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>sender-</ins>impls-for<schedule_from_t>::get-state is <del>initialized with a callable object</del> equivalent to
+the following<del> lambda</del>:
+
+<pre><del>[]&lt;class Sndr, class Rcvr&gt;(Sndr&& sndr, Rcvr& rcvr) noexcept(see below )
+    requires sender_in&lt;child-type&lt;Sndr&gt;, env_of_t&lt;Rcvr&gt;&gt; {
+  auto& [_, sch, child] = sndr;
+  using sched_t = decltype(auto(sch));
+  using variant_t = see below ;
+  using receiver_t = see below ;
+  using operation_t = connect_result_t&lt;schedule_result_t&lt;sched_t&gt;, receiver_t&gt;;
+  constexpr bool nothrow = noexcept(connect(schedule(sch), receiver_t{nullptr}));
+  struct state-type {
+    Rcvr& rcvr ; // exposition only
+    variant_t async-result ; // exposition only
+    operation_t op-state ; // exposition only
+    explicit state-type (sched_t sch, Rcvr& rcvr) noexcept(nothrow)
+      : rcvr (rcvr), op-state (connect(schedule(sch), receiver_t{this})) {}
+  };
+  return state-type {sch, rcvr};
+}</del>
+<ins>auto& [_, sch, child] = sndr;
+using sched_t = decltype(auto(sch));
+using variant_t = see below ;
+using receiver_t = see below ;
+using operation_t = connect_result_t&lt;schedule_result_t&lt;sched_t&gt;, receiver_t&gt;;
+constexpr bool nothrow = noexcept(connect(schedule(sch), receiver_t{nullptr}));
+struct state-type {
+  Rcvr& rcvr ; // exposition only
+  variant_t async-result ; // exposition only
+  operation_t op-state ; // exposition only
+  explicit state-type (sched_t sch, Rcvr& rcvr) noexcept(nothrow)
+    : rcvr (rcvr), op-state (connect(schedule(sch), receiver_t{this})) {}
+};
+return state-type {sch, rcvr};</ins></pre>
+</div>
+#+END_EXPORT
+
+Modify [exec.schedule.from] p11 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>state-</ins>impls-for&lt;schedule_from_t&gt;::complete is <del>initialized with a callable object</del>
+equivalent to <del>the following lambda</del>:
+
+<pre><del>[]&lt;class Tag, class... Args&gt;(auto, auto& state, auto& rcvr, Tag, Args&&... args) noexcept
+-&gt; void {
+  using result_t = decayed-tuple&lt;Tag, Args...&gt;;
+  constexpr bool nothrow = is_nothrow_constructible_v&lt;result_t, Tag, Args...&gt;;
+  try {
+    state.async-result .template emplace&lt;result_t&gt;(Tag(), std::forward&lt;Args&gt;(args)...);
+  } catch (...) {
+    if constexpr (!nothrow) {
+      set_error(std::move(rcvr), current_exception());
+      return;
+    }
+  }
+  start(state.op-state );
+}</del>
+<ins>using result_t = decayed-tuple&lt;CompletionTag, Datums...&gt;;
+constexpr bool nothrow = is_nothrow_constructible_v&lt;result_t, CompletionTag, Datums...&gt;;
+try {
+  state.async-result .template emplace&lt;result_t&gt;(CompletionTag(), std::forward&lt;Datums&gt;(datums)...);
+} catch (...) {
+  if constexpr (!nothrow) {
+    set_error(std::move(self.get_receiver()), current_exception());
+    return;
+  }
+}
+start(get-data(self).op-state);</ins></pre>
+</div>
+#+END_EXPORT
+
 
 ** Changes to /~then~/, /~upon_error~/, /~upon_stopped~/
 
@@ -1553,7 +1681,7 @@ Modify [exec.then] p4 as follows:
 #+BEGIN_EXPORT html
 <div class="wording">
 <pre>template<>
-struct <expos><ins>state-</ins>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;<expos>then-cpo</expos>&gt;&gt; : <expos>default-impls</expos> {
+struct <expos><ins>state-</ins>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;<expos>then-cpo</expos>&gt;&gt; : <expos>default-<ins>state-</ins>impls</expos> {
   <del>static constexpr auto <expos>complete</expos> =
     []&lt;class Tag, class... Args&gt;
       (auto, auto& fn, auto& rcvr, Tag, Args&&... args) noexcept -> void {
@@ -1580,7 +1708,96 @@ struct <expos><ins>state-</ins>impls-for</expos>&lt;<expos>decayed-typeof</expos
 
 ** Changes to /~let_value~/, /~let_error~/, /~let_stopped~/
 
-Forthcoming.
+Modify [exec.let] p5 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The exposition-only class template<ins>s state-impls-for and sender-</ins>impls-for (33.9.1) <del>is</del><ins>are</ins> specialized for let-cpo as follows:
+
+<pre>namespace std::execution {
+  template&lt;class State, class Rcvr, class... Args&gt;
+  void let-bind(State& state, Rcvr& rcvr, Args&&... args); // exposition only
+
+  <del>template&lt;&gt;
+  struct impls-for&lt;decayed-typeof&lt;let-cpo&gt;&gt; : default-impls {
+    static constexpr auto get-state = see below;
+    static constexpr auto complete = see below;
+  };</del>
+  <ins>template&lt;&gt;
+  struct state-impls-for&lt;decayed-typeof&lt;let-cpo&gt;&gt; : default-state-impls {
+    template&lt;class Self, size_t Id, class CompletionTag, class... Datums&gt;
+      constexpr void complete(this Self& self, indexed-tag&lt;Id&gt;,
+        CompletionTag, Datums&&... datums) noexcept;
+  };
+  template&lt;&gt;
+  struct sender-impls-for&lt;decayed-typeof&lt;let-cpo&gt;&gt; : default-sender-impls {
+    template&lt;class Self, class Rcvr&gt;
+    auto get-state(this Self&& self, Rcvr& rcvr) // exposition only
+      requires see-below;
+  };</ins>
+}</pre>
+</div>
+#+END_EXPORT
+
+Modify [exec.let] p7 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+<ins>sender-</ins>impls-for&lt;decayed-typeof&lt;let-cpo&gt;&gt;::get-state is <del>initialized with a callable object</del> equivalent to the
+following:
+
+<pre><del>[]&lt;class Sndr, class Rcvr&gt;(Sndr&& sndr, Rcvr& rcvr) requires see below {
+  auto& [_, fn, child] = sndr;
+  using fn_t = decay_t&lt;decltype(fn)&gt;;
+  using env_t = decltype(let-env(child));
+  using args_variant_t = see below;
+  using ops2_variant_t = see below;
+  struct state-type {
+    fn_t fn; // exposition only
+    env_t env; // exposition only
+    args_variant_t args; // exposition only
+    ops2_variant_t ops2; // exposition only
+  };
+  return state-type{std::forward_like&lt;Sndr&gt;(fn), let-env(child), {}, {}};
+}</del>
+<ins>auto& [_, fn, child] = sndr;
+  using fn_t = decay_t&lt;decltype(fn)&gt;;
+  using env_t = decltype(let-env(child));
+  using args_variant_t = see below;
+  using ops2_variant_t = see below;
+  struct state-type {
+    fn_t fn; // exposition only
+    env_t env; // exposition only
+    args_variant_t args; // exposition only
+    ops2_variant_t ops2; // exposition only
+  };
+  return state-type{std::forward_like&lt;Sndr&gt;(fn), let-env(child), {}, {}};
+}</ins></pre>
+</div>
+#+END_EXPORT
+
+Modify [exec.let] p12 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+<ins>state-</ins>impls-for&lt;decayed-typeof&lt;let-cpo&gt;&gt;::complete is <del>initialized with a callable object</del> equivalent to the
+following:
+
+<pre><del>[]&lt;class Tag, class... Args&gt;
+  (auto, auto& state, auto& rcvr, Tag, Args&&... args) noexcept -> void {
+    if constexpr (same_as&lt;Tag, decayed-typeof&lt;set-cpo&gt;&gt;) {
+      TRY-EVAL(rcvr, let-bind(state, rcvr, std::forward&lt;Args&gt;(args)...));
+    } else {
+      Tag()(std::move(rcvr), std::forward&lt;Args&gt;(args)...);
+    }
+  }</del>
+<ins>if constexpr (same_as&lt;Tag, decayed-typeof&lt;set-cpo&gt;&gt;) {
+  TRY-EVAL(self.get_receiver(), let-bind(self.data, self.get_receiver(), std::forward&lt;Args&gt;(args)...));
+} else {
+  Tag()(std::move(self.get_receiver()), std::forward&lt;Args&gt;(args)...);
+}</ins></pre>
+</div>
+#+END_EXPORT
 
 ** Changes to /~bulk~/
 
@@ -1589,7 +1806,7 @@ Modify [exec.bulk] p3 as follows:
 #+BEGIN_EXPORT html
 <div class="wording">
 <pre>template<>
-struct <expos><ins>state-</ins>impls-for</expos>&lt;bulk_t&gt; : <expos>default-impls</expos> {
+struct <expos><ins>state-</ins>impls-for</expos>&lt;bulk_t&gt; : <expos>default-<ins>state-</ins>impls</expos> {
   <del>static constexpr auto <expos>complete</expos> = see below;</del>
   <ins>template&lt;class Self, size_t Id, class CompletionTag, class... Datums&gt;
   constexpr void <expos>complete</expos>(this Self& self, <expos>indexed-tag</expos>&lt;Id&gt;,
@@ -1637,33 +1854,365 @@ The member <expos><ins>state-</ins>impls-for</expos>&lt;bulk_t&gt;::<expos>compl
 
 ** Changes to /~split~/
 
-Forthcoming
+Working on this guy next.
 
-** Changes to /~when_all~/
-
-Forthcoming.
-
-** Changes to /~into_variant~/
-
-Forthcoming.
-
-** TODO Changes to /~into_variant~/ :noexport:
-
-TODO: Change
+Modify [exec.split] p21 as follows:
 
 #+BEGIN_EXPORT html
 <div class="wording">
-<pre>template<>
-struct <ins>sender-</ins>impls-for&lt;into_variant_t&gt; : default-<ins>sender-</ins>impls {
-  <del>static constexpr auto get-state = see below ;
-  static constexpr auto complete = see below ;</del>
-  <ins>template&lt;class Self&gt;
-  default-state&lt;tag_of_t, decay_t&lt;data-type-t&lt;Self&gt;&gt;&gt;
-    get-state(this Self&& self) // exposition only
-      noexcept(is-nothrow-decay-copyable-v&lt;data-type-t&lt;Self&gt;&gt;);</ins>
+The exposition-only class template impls-for (33.9.1) is specialized for split-impl-tag as follows:
+
+<pre>namespace std::execution {
+  <del>template&lt;&gt;
+  struct impls-for&lt;split-impl-tag&gt; : default-impls {
+    static constexpr auto get-state = see below ;
+    static constexpr auto start = see below ;
+  };</del>
+  <ins>template&lt;&gt;
+  struct sender-impls-for&lt;split-impl-tag&gt; : default-sender-impls {
+    template&lt;class Self, class Rcvr&gt;
+    auto get-state(this Self&& s, Rcvr&& rcvr) noexcept;
+  };
+  template&lt;&gt;
+  struct state-impls-for&lt;split-impl-tag&gt; : default-state-impls {
+    template&lt;class Self&gt;
+    constexpr void start(this Self& self) noexcept;
+  };</ins>
+}</pre>
+</div>
+#+END_EXPORT
+
+
+Modify [exec.split] p22 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>sender-</ins>impls-for&lt;split-impl-tag&gt;::get-state is <del>initialized with a callable object</del> equivalent to
+the following<del> lambda expression</del>:
+
+<pre><del>[]&lt;class Sndr&gt;(Sndr&& sndr, auto& rcvr) noexcept {</del>
+  return local-state {std::forward&lt;Self&gt;(self), rcvr};
+<del>}</del></pre>
+</div>
+#+END_EXPORT
+
+
+Modify [exec.split] p23 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>state-</ins>impls-for&lt;split-impl-tag&gt;::start is <del>initialized with a callable object that has a function
+call operator</del> equivalent to the following:
+
+<pre><del>template&lt;class Sndr, class Rcvr&gt;
+void operator()(local-state&lt;Sndr, Rcvr&gt;&amp; state, Rcvr& rcvr) const noexcept;</del></pre>
+
+Effects: If state.sh_state-&gt;completed is true, evaluates state.notify() and returns. Otherwise, does
+the following in order:
+
+<ul>
+<li>Evaluates state.on_stop.emplace(get_stop_token(get_env(<ins>state.</ins>rcvr)),
+      on-stop-request {state.sh_state ->stop_src });</li>
+<li>Then atomically does the following:
+<ul>
+<li>Reads the value c of state.sh_state-&gt;completed , and</li>
+<li>Inserts addressof(state) into state.sh_state-&gt;waiting_states if c is false.</li>
+<li>If c is true, calls state.notify () and returns.</li>
+<li>Otherwise, if addressof(state) is the first item added to state.sh_state-&gt;waiting_states , eval-
+uates state.sh_state-&gt;start-op ().</li>
+</ul>
+</li>
+</ul>
+</div>
+#+END_EXPORT
+
+
+** Changes to /~when_all~/
+
+Modify [exec.when.all] p4 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The exposition-only class template<ins>s</ins> <ins>sender-</ins>impls-for and <ins>state-impls-for</ins>
+ (33.9.1) <del>is</del><ins>are</ins> specialized for when_all_t as follows:
+
+<pre>namespace std::execution {
+  <del>template&lt;&gt;
+  struct impls-for&lt;when_all_t&gt; : default-impls {
+    static constexpr auto get-attrs = see below ;
+    static constexpr auto get-env = see below ;
+    static constexpr auto get-state = see below ;
+    static constexpr auto start = see below ;
+    static constexpr auto complete = see below ;
+  };</del>
+  <ins>template&lt;&gt;
+  struct sender-impls-for&lt;when_all_t&gt; : default-sender-impls {
+    template&lt;class Data, class... Children&gt;
+    static decltype(auto) get-attrs(const Data& data,
+                                    const Children&... children) noexcept;
+    template&lt;class Self, class Rcvr&gt;
+    auto get-state(this Self&& s, Rcvr&& rcvr) noexcept;
+  };
+
+  template&lt;&gt;
+  struct state-impls-for&lt;when_all_t&gt; : default-state-impls {
+    template&lt;class Self, size_t Id&gt;
+    constexpr decltype(auto) get-env(this Self& self, indexed-tag&lt;Id&gt;) noexcept;
+    template&lt;class Self&gt;
+    constexpr void start(this Self& self) noexcept ;
+    template&lt;class Self, size_t Id, class CompletionTag, class... Datums&gt;
+    constexpr void complete(this Self& self, indexed-tag&lt;Id&gt;,
+        CompletionTag, Datums&&... datums) noexcept;
+  };</ins>
+}</pre>
+</div>
+#+END_EXPORT
+
+
+
+Modify [exec.when.all] p5 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>sender-</ins>impls-for&lt;when_all_t&gt;::get-attrs is <del>initialized with a callable object</del> equivalent to the
+following<del> lambda expression</del>:
+
+<pre><del>[](auto&&, auto&&... child) noexcept {</del>
+if constexpr (same_as&lt;CD, default_domain&gt;) {
+  return env&lt;&gt;();
+} else {
+  return MAKE-ENV(get_domain, CD());
+}
+<del>}</del></pre>
+</div>
+#+END_EXPORT
+
+Modify [exec.when.all] p6 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>state-</ins>impls-for&lt;when_all_t&gt;::get-env is <del>initialized with a callable object</del> equivalent to the
+following<del> lambda expression</del>:
+
+<pre><del>[]<class State, class Rcvr>(auto&&, State& state, const Receiver& rcvr) noexcept {</del>
+<ins>auto& [_, state, children...] = self;</ins>
+return see below ;
+<del>}</del></pre>
+
+Returns an object e such that
+
+<ul>
+<li>decltype(e) models queryable , and</li>
+<li>e.query(get_stop_token) is expression-equivalent to state.stop-src .get_token(), and</li>
+<li>given a query object q with type other than cv stop_token_t, e.query(q) is expression-equivalent to
+get_env(<del>rcvr</del><ins>self.get_receiver()</ins>).query(q).</li>
+</ul>
+</div>
+#+END_EXPORT
+
+
+
+Modify [exec.when.all] p7 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>sender-</ins>impls-for&lt;when_all_t&gt;::get-state is <del>initialized with a callable object</del> equivalent to the
+following<del> lambda expression</del>:
+
+<pre><del>[]<class Sndr, class Rcvr>(Sndr&& sndr, Rcvr& rcvr) noexcept(e) -> decltype(e) {</del>
+  return e;
+<del>}</del></pre>
+
+where e is the expression
+
+<pre>std::forward&lt;<del>Sndr</del><ins>Self</ins>&gt;(<del>sndr</del><ins>self</ins>).apply(make-state&lt;Rcvr&gt;())</pre>
+
+and where make-state is the following exposition-only class template:
+
+<pre>template&lt;class Sndr, class Env&gt;
+concept max-1-sender-in = sender_in&lt;Sndr, Env&gt; && // exposition only
+  (tuple_size_v&lt;value_types_of_t&lt;Sndr, Env, tuple, tuple&gt;&gt; &lt;= 1);
+
+enum class disposition { started , error , stopped }; // exposition only
+
+template&lt;class Rcvr&gt;
+struct make-state {
+  template&lt;max-1-sender-in &lt;env_of_t&lt;Rcvr&gt;&gt;... Sndrs&gt;
+  auto operator()(auto, auto, Sndrs&&... sndrs) const {
+    using values_tuple = see below ;
+    using errors_variant = see below ;
+    using stop_callback = stop_callback_for_t&lt;stop_token_of_t&lt;env_of_t&lt;Rcvr&gt;&gt;, on-stop-request&gt;;
+    struct state-type {
+      void arrive (Rcvr& rcvr) noexcept { // exposition only
+        if (0 == --count) {
+          complete (rcvr);
+        }
+      }
+      void complete (Rcvr& rcvr) noexcept; // exposition only
+      atomic&lt;size_t&gt; count {sizeof...(sndrs)}; // exposition only
+      inplace_stop_source stop_src {}; // exposition only
+      atomic&lt;disposition&gt; disp{disposition::started}; // exposition only
+      errors_variant errors {}; // exposition only
+      values_tuple values {}; // exposition only
+      optional&lt;stop_callback&gt; on_stop {nullopt}; // exposition only
+    };
+    return state-type {};
+  }
 };</pre>
 </div>
 #+END_EXPORT
+
+
+
+Modify [exec.when.all] p12 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>state-</ins>impls-for&lt;when_all_t&gt;::start is <del>initialized with a callable object</del> equivalent to the following
+<del>lambda expression</del>:
+
+<pre><del>[]&lt;class State, class Rcvr, class... Ops&gt;(
+  State& state, Rcvr& rcvr, Ops&... ops) noexcept -&gt; void {</del>
+<ins>auto& [_, state, child...] = self;</ins>
+state.on_stop.emplace(
+  get_stop_token(get_env(<del>rcvr</del><ins>self.get_receiver()</ins>)),
+  on-stop-request{state.stop_src});
+if (state.stop_src.stop_requested()) {
+  state.on_stop.reset();
+  set_stopped(<del>std::move(rcvr)</del><ins>self.get_receiver()</ins>);
+} else {
+  (start(child), ...);
+}
+<del>}</del></pre>
+</div>
+#+END_EXPORT
+
+
+Modify [exec.when.all] p13 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>state-</ins>impls-for&lt;when_all_t&gt;::complete is <del>initialized with a callable object</del> equivalent to the
+following<del> lambda expression</del>:
+
+<pre><del>[]&lt;class Index, class State, class Rcvr, class Set, class... Args&gt;(
+    this auto& complete, Index, State& state, Rcvr& rcvr, Set, Args&&... args) noexcept -&gt; void {</del>
+  <ins>auto& [_, state, child...] = self;</ins>
+  if constexpr (same_as&lt;<del>Set</del><ins>CompletionTag</ins>, set_error_t&gt;) {
+    if (disposition::error != state.disp.exchange(disposition ::error)) {
+      state.stop_src.request_stop();
+      TRY-EMPLACE-ERROR(state.errors, std::forward&lt;<del>Args</del><ins>Datums</ins>&gt;(<del>args</del><ins>datums</ins>)...);
+    }
+  } else if constexpr (same_as&lt;<del>Set</del><ins>CompletionTag</ins>, set_stopped_t&gt;) {
+    auto expected = disposition::started;
+    if (state.disp.compare_exchange_strong(expected, disposition::stopped )) {
+      state.stop_src.request_stop();
+    }
+  } else if constexpr (!same_as&lt;decltype(<del>State::values</del><ins>state.values</ins>), tuple&lt;&gt;&gt;) {
+    if (state.disp == disposition::started ) {
+      auto& opt = get&lt;Id&gt;(state.values);
+      TRY-EMPLACE-VALUE (complete, opt, std::forward&lt;<del>Args</del><ins>Datums</ins>&gt;(<del>args</del><ins>datums</ins>)...);
+    }
+  }
+  state.arrive (<del>rcvr</del><ins>self.get_receiver()</ins>);
+<del>}</del></pre>
+
+where TRY-EMPLACE-ERROR (v, e), for subexpressions v and e, is equivalent to:
+
+<pre>try {
+  v.template emplace&lt;decltype(auto(e))&gt;(e);
+} catch (...) {
+  v.template emplace&lt;exception_ptr&gt;(current_exception());
+}</pre>
+
+if the expression decltype(auto(e))(e) is potentially throwing; otherwise,
+v.template emplace&lt;decltype(auto(e))&gt;(e); and where TRY-EMPLACE-VALUE (c, o, as...),
+for subexpressions c, o, and pack of subexpressions as, is equivalent to:
+
+<pre>try {
+  o.emplace(as...);
+} catch (...) {
+  c(Index(), state, <del>rcvr</del><ins>self.get_receiver()</ins>, set_error, current_exception());
+  return;
+}</pre>
+
+if the expression decayed-tuple&lt;decltype(as)...&gt;{as...} is potentially throwing; otherwise,
+o.emplace(as...).
+</div>
+#+END_EXPORT
+
+
+** Changes to /~into_variant~/
+
+Modify [exec.into.variant] p4 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The exposition-only class template<ins>s</ins> <ins>state-</ins>impls-for <ins>and sender-impls-for</ins> (33.9.1) is specialized for into_variant as follows:
+
+<pre>namespace std::execution {
+  <del>template<>
+  struct impls-for <into_variant_t> : default-impls {
+    static constexpr auto get-state = see below ;
+    static constexpr auto complete = see below ;
+  };</del>
+  <ins>template&lt;&gt;
+  struct state-impls-for&lt;into_variant_t&gt; : default-state-impls {
+    template&lt;class Self, size_t Id, class CompletionTag, class... Datums&gt;
+      constexpr void complete(this Self& self, indexed-tag&lt;Id&gt;,
+        CompletionTag, Datums&&... datums) noexcept;
+  };
+  <ins>template&lt;&gt;
+  struct sender-impls-for&lt;into_variant_t&gt; : default-sender-impls {
+    template&lt;class Self, class Recr&gt;
+    auto get-state(this Self&& self, Rcvr& rcvr) // exposition only
+      requires see-below;
+  };</ins>
+}</pre>
+</div>
+#+END_EXPORT
+
+Modify [exec.into.variant] p5 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>sender-</ins>impls-for&lt;into_variant_t&gt;::get-state is <del>initialized with a callable object</del> equivalent to
+<del>the following lambda</del>:</del>
+
+<pre><del>[]&lt;class Sndr, class Rcvr&gt;(Sndr&& sndr, Rcvr& rcvr) noexcept
+  -&gt; type_identity&lt;value_types_of_t&lt;child-type&lt;Sndr&gt;, env_of_t&lt;Rcvr&gt;&gt;&gt; {
+  return {};
+}</del>
+<ins>return type_identity&lt;value_types_of_t&lt;child-type&lt;Self&gt;, env_of_t&lt;Rcvr&gt;&gt;&gt{};</ins></pre>
+</div>
+#+END_EXPORT
+
+Modify [exec.into.variant] p6 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>state-</ins>impls-for&lt;into_variant_t&gt;::complete is <del>initialized with a callable object</del> equivalent to<del> the
+following lambda</del>:
+
+<pre><del>[]&lt;class State, class Rcvr, class Tag, class... Args&gt;(
+    auto, State, Rcvr& rcvr, Tag, Args&&... args) noexcept -&gt; void {
+  if constexpr (same_as&lt;Tag, set_value_t&gt;) {
+    using variant_type = typename State::type;
+    TRY-SET-VALUE (rcvr, variant_type(decayed-tuple&lt;Args...&gt;{std::forward&lt;Args&gt;(args)...}));
+  } else {
+    Tag()(std::move(rcvr), std::forward&lt;Args&gt;(args)...);
+  }
+}</del>
+<ins>if constexpr (same_as&lt;CompletionTag, set_value_t&gt;) {
+    using variant_type = value_types_of&lt;child-type&lt;Self&gt;, env_of_t&lt;decltype(auto(self.get_receiver()))&gt;&gt;;
+    TRY-SET-VALUE(self.get_receiver(), variant_type(decayed-tuple&lt;Args...&gt;{std::forward&lt;Args&gt;(args)...}));
+  } else {
+    Tag()(std::move(self.get_receiver()), std::forward&lt;Args&gt;(args)...);
+  }
+}</ins></pre>
+</div>
+#+END_EXPORT
+
 
 ** Changes to /~run_loop::run-loop-sender~/
 
