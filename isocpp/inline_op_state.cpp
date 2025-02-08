@@ -9,6 +9,8 @@
 #include <condition_variable>
 #include <cassert>
 #include <exception>
+#include <variant>
+#include <coroutine>
 
 namespace std {
   class single_inplace_stop_token;
@@ -224,6 +226,9 @@ namespace std {
 
 namespace std
 {
+    template<class T, class U>
+    concept _same_unqualified = same_as<remove_cvref_t<T>, remove_cvref_t<U>>;
+
     template<template<class> class>
     struct _check_type_alias_exists;
 
@@ -273,6 +278,19 @@ namespace std
             { static_cast<T&&>(obj).query(Query{}) } noexcept;
         };
 
+  template<class T, class Query, class Fallback>
+  requires _has_query<T, Query>
+  constexpr decltype(auto) _query_or_default(Query, T&& obj, Fallback)
+    noexcept(noexcept(std::forward<T>(obj).query(Query{}))) {
+    return std::forward<T>(obj).query(Query{});
+  }
+
+  template<class T, class Query, class Fallback>
+  constexpr Fallback _query_or_default(Query, T&& obj, Fallback fallback)
+    noexcept(is_nothrow_move_constructible_v<Fallback>) {
+    return std::move(fallback);
+  }
+
     struct never_stop_token {
         struct stop_callback {
             stop_callback(never_stop_token, auto&&) noexcept {}
@@ -310,35 +328,99 @@ namespace std
 
 namespace std::execution
 {
-    struct empty_env {};
+  // [exec.prop]
+    template<typename Query, typename Value>
+    struct prop {
+        Query _query;
+        Value _value;
+
+        constexpr const Value& query(Query) const noexcept {
+            return _value;
+        }
+    };
+
+    template<class Query, class Value>
+    prop(Query, Value) -> prop<Query, unwrap_reference_t<Value>>;
+
+  // [exec.env]
+    template<queryable... Env>
+    struct env;
+
+    template<class... Envs>
+    env(Envs...) -> env<unwrap_reference_t<Envs>...>;
+
+    template<>
+    struct env<> {};
+
+    template<queryable E0>
+    struct env<E0> {
+        E0 _e0;
+
+        template<class Query>
+        requires _has_query<const E0&, Query>
+        constexpr decltype(auto) query(Query q) const noexcept(_has_nothrow_query<const E0&, Query>) {
+            return _e0.query(q);
+        }
+    };
+
+    template<queryable E0, queryable E1>
+    struct env<E0, E1> {
+        E0 _e0;
+        E1 _e1;
+
+        template<class Query>
+        requires _has_query<const E0&, Query>
+        constexpr decltype(auto) query(Query q) const noexcept(_has_nothrow_query<const E0&, Query>) {
+            return _e0.query(q);
+        }
+
+        template<class Query>
+        requires (!_has_query<const E0&, Query>) && _has_query<const E1&, Query>
+        constexpr decltype(auto) query(Query q) const noexcept(_has_nothrow_query<const E1&, Query>) {
+            return _e1.query(q);
+        }
+    };
+
+    // TODO: support env<> with more than two child envs.
+
+  // [exec.get.env]
 
     struct get_env_t {
         template<typename Obj>
         requires requires (const Obj& obj) {
-            { obj.get_env() } -> queryable;
+          obj.get_env();
         }
-        static decltype(auto) operator()(const Obj& obj) noexcept {
-            return obj.get_env();
+        static queryable decltype(auto) operator()(const Obj& obj) noexcept {
+          static_assert(noexcept(obj.get_env()), "get_env() method must be noexcept");
+          return obj.get_env();
         }
 
         template<typename Obj>
-        static empty_env operator()(const Obj&) noexcept {
+        static env<> operator()(const Obj&) noexcept {
             return {};
         }
     };
     inline constexpr get_env_t get_env{};
+
+    template<typename T>
+    concept _env_provider =
+        requires(const T& obj) {
+          execution::get_env(obj);
+        };
+
+    template<typename T>
+    using env_of_t = decltype(execution::get_env(std::declval<T>()));
 
     struct receiver_t {};
 
     template<class Rcvr>
     concept receiver =
       derived_from<typename remove_cvref_t<Rcvr>::receiver_concept, receiver_t> &&
-      requires(const remove_cvref_t<Rcvr>& rcvr) {
-        { get_env(rcvr) } -> queryable;
-      } &&
+      _env_provider<Rcvr> &&
       move_constructible<remove_cvref_t<Rcvr>> &&       // rvalues are movable, and
       constructible_from<remove_cvref_t<Rcvr>, Rcvr>;   // lvalues are copyable
 
+  // New concept proposed by P3425
     template<class Rcvr, class ChildOp>
     concept inlinable_receiver =
         receiver<Rcvr> &&
@@ -368,8 +450,6 @@ namespace std::execution
     };
 #endif
 
-    template<typename T>
-    using env_of_t = decltype(execution::get_env(std::declval<T>()));
 
     template<queryable Env>
     auto _fwd_env(Env&& env) {
@@ -380,11 +460,20 @@ namespace std::execution
     struct set_value_t {
         template<typename Rcvr, typename... Vs>
         requires requires(Rcvr rcvr, Vs... vs) {
+          // NOTE: According to current spec we shouldn't be constraining set_value() to return void here
+          // but should rather just return whatever the member-function returns.
+          // See https://github.com/cplusplus/sender-receiver/issues/323
             { std::forward<Rcvr>(rcvr).set_value(std::forward<Vs>(vs)...) } -> same_as<void>;
         }
         static void operator()(Rcvr&& rcvr, Vs&&... vs) noexcept {
+            static_assert(noexcept(std::forward<Rcvr>(rcvr).set_value(std::forward<Vs>(vs)...)));
             std::forward<Rcvr>(rcvr).set_value(std::forward<Vs>(vs)...);
         }
+
+        template<typename Rcvr, typename... Vs>
+        static void operator()(Rcvr&, Vs&&...) = delete;
+        template<typename Rcvr, typename... Vs>
+        static void operator()(const Rcvr&&, Vs&&...) = delete;
     };
     inline constexpr set_value_t set_value{};
 
@@ -394,8 +483,14 @@ namespace std::execution
             { std::forward<Rcvr>(rcvr).set_error(std::forward<E>(e)) } -> same_as<void>;
         }
         static void operator()(Rcvr&& rcvr, E&& e) noexcept {
+            static_assert(noexcept(std::forward<Rcvr>(rcvr).set_error(std::forward<E>(e))));
             std::forward<Rcvr>(rcvr).set_error(std::forward<E>(e));
         }
+
+        template<typename Rcvr, typename E>
+        static void operator()(Rcvr&, E&&) = delete;
+        template<typename Rcvr, typename E>
+        static void operator()(const Rcvr&&, E&&) = delete;
     };
     inline constexpr set_error_t set_error{};
 
@@ -405,59 +500,321 @@ namespace std::execution
             { std::forward<Rcvr>(rcvr).set_stopped() } -> same_as<void>;
         }
         static void operator()(Rcvr&& rcvr) noexcept {
+            static_assert(noexcept(std::forward<Rcvr>(rcvr).set_stopped()));
             std::forward<Rcvr>(rcvr).set_stopped();
         }
+
+        template<typename Rcvr, typename E>
+        static void operator()(Rcvr&, E&&) = delete;
+        template<typename Rcvr, typename E>
+        static void operator()(const Rcvr&&, E&&) = delete;
     };
     inline constexpr set_stopped_t set_stopped{};
 
-    struct start_t {
-        template<typename Op>
-        requires requires(Op& op) {
-            { op.start() } noexcept -> same_as<void>;
+    template<typename T>
+    inline constexpr bool _is_completion_signature_v = false;
+    template<typename... Vs>
+    requires ((std::is_object_v<Vs> || std::is_reference_v<Vs>) && ...)
+    inline constexpr bool _is_completion_signature_v<set_value_t(Vs...)> = true;
+    template<typename E>
+    requires std::is_object_v<E> || std::is_reference_v<E>
+    inline constexpr bool _is_completion_signature_v<set_error_t(E)> = true;
+    template<>
+    inline constexpr bool _is_completion_signature_v<set_stopped_t()> = true;
+
+    template<typename T>
+    concept _completion_signature = _is_completion_signature_v<T>;
+
+    template<_completion_signature... Fns>
+    struct completion_signatures {};
+
+    template<typename T>
+    inline constexpr bool _is_completion_signatures_v = false;
+    template<typename... Fns>
+    inline constexpr bool _is_completion_signatures_v<completion_signatures<Fns...>> = true;
+
+    template<typename T>
+    concept _valid_completion_signatures = _is_completion_signatures_v<T>;
+
+  template<typename T, typename Sigs>
+  struct _completion_signatures_contains;
+
+  template<typename T, typename... Sigs>
+  struct _completion_signatures_contains<T, completion_signatures<Sigs...>>
+    : bool_constant<(same_as<T, Sigs> || ...)>
+  {};
+
+  template<typename T, typename Sigs>
+  inline constexpr bool _completion_signatures_contains_v = _completion_signatures_contains<T, Sigs>::value;
+
+    template<class Tag, class Sigs, class AppendTo = completion_signatures<>>
+    struct _filter_completion_signatures;
+
+    template<class Tag, class... Datums, class... Sigs, class... ResultSigs>
+    struct _filter_completion_signatures<Tag, completion_signatures<Tag(Datums...), Sigs...>, completion_signatures<ResultSigs...>>
+    : _filter_completion_signatures<Tag, completion_signatures<Sigs...>, completion_signatures<ResultSigs..., Tag(Datums...)>>
+    {};
+
+    template<class Tag, class Sig, class... Sigs, class... ResultSigs>
+    struct _filter_completion_signatures<Tag, completion_signatures<Sig, Sigs...>, completion_signatures<ResultSigs...>>
+    : _filter_completion_signatures<Tag, completion_signatures<Sigs...>, completion_signatures<ResultSigs...>>
+    {};
+
+    template<class Tag, class AppendTo>
+    struct _filter_completion_signatures<Tag, completion_signatures<>, AppendTo> {
+        using type = AppendTo;
+    };
+
+    template<class Tag, class Sigs>
+    using _filter_completion_signatures_t = typename _filter_completion_signatures<Tag, Sigs>::type;
+
+    template<class Sig>
+    struct _apply_completion_signature;
+    template<class Tag, class... Datums>
+    struct _apply_completion_signature<Tag(Datums...)> {
+        template<template<class...> class Tuple>
+        using _apply = Tuple<Datums...>;
+    };
+
+    template<class Completions>
+    struct _gather_signatures_impl;
+
+    template<class... Sigs>
+    struct _gather_signatures_impl<completion_signatures<Sigs...>> {
+        template<
+          template<class...> class Tuple,
+          template<class...> class Variant>
+        using _apply = Variant<typename _apply_completion_signature<Sigs>::template _apply<Tuple>...>;
+    };
+
+    template<
+        class Tag,
+        _valid_completion_signatures Completions,
+        template<class...> class Tuple,
+        template<class...> class Variant>
+    using _gather_signatures = _gather_signatures_impl<
+        _filter_completion_signatures_t<Tag, Completions>
+        >::template _apply<Tuple, Variant>;
+
+    struct sender_t {};
+
+    template<class Sndr>
+    concept _is_sender =
+        derived_from<typename Sndr::sender_concept, sender_t>;
+
+    template<typename T>
+    inline constexpr bool _is_coroutine_handle_v = false;
+    template<typename P>
+    inline constexpr bool _is_coroutine_handle_v<coroutine_handle<P>> = true;
+
+    template<typename T>
+    concept _await_suspend_result =
+        same_as<T, void> ||
+        same_as<T, bool> ||
+        _is_coroutine_handle_v<T>;
+
+    template<class A, class Promise>
+    concept _is_awaiter =
+        requires (A& a, coroutine_handle<Promise> h) {
+            a.await_ready() ? 1 : 0;
+            { a.await_suspend(h) } -> _await_suspend_result;
+            a.await_resume();
+        };
+
+    template<typename T>
+    concept _has_member_co_await =
+        requires (T&& t) {
+            std::forward<T>(t).operator co_await();
+        };
+
+    template<typename T>
+    concept _has_non_member_co_await =
+        requires (T&& t) {
+            operator co_await(std::forward<T>(t));
+        };
+
+    // NOTE: _get_awaiter() implementation here will break for types that have both member and non-member co_await.
+    // We need compiler magic to allow us to perform overload resolution between the two here.
+    template<class T>
+    requires _has_member_co_await<T>
+    decltype(auto) _get_awaiter(T&& t) noexcept(noexcept(std::forward<T>(t).operator co_await())) {
+        return std::forward<T>(t).operator co_await();
+    }
+
+    template<class T>
+    requires _has_non_member_co_await<T>
+    decltype(auto) _get_awaiter(T&& t) noexcept(noexcept(operator co_await(std::forward<T>(t)))) {
+        return operator co_await(std::forward<T>(t));
+    }
+
+    template<class T>
+    requires (!_has_non_member_co_await<T> && !_has_member_co_await<T>)
+    T&& _get_awaiter(T&& t) noexcept {
+        return std::forward<T>(t);
+    }
+
+    template<class C, class Promise>
+    concept _is_awaitable =
+        requires (C(*fc)() noexcept, Promise& p) {
+            { execution::_get_awaiter(fc(), p) } -> _is_awaiter<Promise>;
+        };
+
+    template<class C, class Promise>
+    using _await_result_type = decltype(execution::_get_awaiter(std::declval<C>(), std::declval<Promise&>()).await_resume());
+
+    template<class T, class Promise>
+    concept _has_as_awaitable =
+        requires (T&& t, Promise& p) {
+            { std::forward<T>(t).as_awaitable(p) } -> _is_awaitable<Promise&>;
+        };
+
+    template<class Derived>
+    struct _with_await_transform {
+        template<class T>
+        static T&& await_transform(T&& value) noexcept {
+            return std::forward<T>(value);
         }
-        static void operator()(Op& op) noexcept {
-            op.start();
+
+        template<_has_as_awaitable<Derived> T>
+        decltype(auto) await_transform(T&& value)
+            noexcept(noexcept(std::forward<T>(value).as_awaitable(std::declval<Derived&>()))) {
+            return std::forward<T>(value).as_awaitable(static_cast<Derived&>(*this));
         }
     };
-    inline constexpr start_t start{};
 
-    template<typename Op>
-    concept operation_state =
-        destructible<Op> &&
-        std::invocable<start_t, Op&>;
-
-    struct connect_t {
-        template<class Sndr, class Rcvr>
-        requires requires(Sndr&& sndr, Rcvr&& rcvr) {
-            std::forward<Sndr>(sndr).connect(std::forward<Rcvr>(rcvr));
-        }
-        static operation_state auto operator()(Sndr&& sndr, Rcvr&& rcvr)
-            noexcept(noexcept(std::forward<Sndr>(sndr).connect(std::forward<Rcvr>(rcvr)))) {
-            return std::forward<Sndr>(sndr).connect(std::forward<Rcvr>(rcvr));
-        }
+    template<class Env>
+    struct _env_promise : _with_await_transform<_env_promise<Env>> {
+        void get_return_object() noexcept;
+        suspend_always initial_suspend() noexcept;
+        suspend_always final_suspend() noexcept;
+        void unhandled_exception() noexcept;
+        void return_void() noexcept;
+        coroutine_handle<> unhandled_stopped() noexcept;
+        const Env& get_env() const noexcept;
     };
-    inline constexpr connect_t connect{};
+
+    template<class Sndr>
+    concept _enable_sender =
+        _is_sender<Sndr> ||
+        _is_awaitable<Sndr, _env_promise<env<>>>;
 
     template<typename Sndr>
     concept sender =
-        move_constructible<Sndr>;
+        bool(_enable_sender<remove_cvref_t<Sndr>>) &&
+        _env_provider<Sndr> &&
+        move_constructible<remove_cvref_t<Sndr>> &&
+        constructible_from<remove_cvref_t<Sndr>, Sndr>;
 
-    template<typename Sndr, typename Rcvr>
-    concept sender_to =
-        sender<Sndr> &&
-        receiver<Rcvr> &&
-        _callable<connect_t, Sndr, Rcvr>;
+    template<typename T>
+    concept _tuple_like =
+        requires {
+            typename std::tuple_size<T>;
+        };
 
-    template<typename Sndr, typename Rcvr>
-    using connect_result_t = decltype(execution::connect(std::declval<Sndr>(), std::declval<Rcvr>()));
+    template<typename T, size_t Index>
+    concept _has_tuple_member_get =
+        requires(T&& t) {
+            std::forward<T>(t).template get<Index>();
+        };
 
-    template<typename Sndr, typename Rcvr>
-    inline constexpr bool is_nothrow_connectable_v = false;
+    template<typename T, size_t Index>
+    concept _has_tuple_non_member_get =
+        requires(T&& t) {
+            get<Index>(std::forward<T>(t));
+        };
 
-    template<typename Sndr, typename Rcvr>
-    requires sender_to<Sndr, Rcvr>
-    inline constexpr bool is_nothrow_connectable_v<Sndr, Rcvr> =
-        noexcept(execution::connect(std::declval<Sndr>(), std::declval<Rcvr>()));
+    template<typename T, size_t Index>
+    concept _has_tuple_element =
+        _tuple_like<T> &&
+        (_has_tuple_member_get<T, Index> || _has_tuple_non_member_get<T, Index>);
+
+    template<typename T>
+    concept _has_tag = _has_tuple_element<T, 0>;
+
+  template<typename T>
+  concept _has_data = _has_tuple_element<T, 1>;
+
+  template<size_t Idx, _tuple_like T>
+  requires _has_tuple_member_get<T, Idx>
+  constexpr decltype(auto) _tuple_get(T&& obj)
+    noexcept(noexcept(std::forward<T>(obj).template get<Idx>())) {
+    return std::forward<T>(obj).template get<Idx>();
+  }
+
+  template<size_t Idx, _tuple_like T>
+  requires (!_has_tuple_member_get<T, Idx>) && _has_tuple_non_member_get<T, Idx>
+  constexpr decltype(auto) _tuple_get(T&& obj)
+    noexcept(noexcept(get<Idx>(std::forward<T>(obj)))) {
+    return get<Idx>(std::forward<T>(obj));
+  }
+
+  template<_has_tag T>
+  constexpr auto _get_tag(T&& obj) noexcept {
+    return execution::_tuple_get<0>(std::forward<T>(obj));
+  }
+
+  template<_has_data T>
+  constexpr decltype(auto) _get_data(T&& obj) noexcept {
+    return execution::_tuple_get<1>(std::forward<T>(obj));
+  }
+
+  template<_has_tag T>
+  using tag_of_t = decltype(execution::_get_tag(std::declval<T>()));
+
+  template<_has_data T>
+  using _data_of_t = decltype(execution::_get_data(std::declval<T>()));
+
+    template<typename Tag, typename Sndr, typename... Env>
+    concept _tag_can_transform_sender =
+      requires(Sndr&& sndr, const Env&... env) {
+        Tag{}.transform_sender(std::forward<Sndr>(sndr), env...);
+      };
+
+  template<class Sndr, class Tag>
+  concept _sender_for = sender<Sndr> && same_as<tag_of_t<Sndr>, Tag>;
+
+  // [exec.domain.default]
+
+    template<typename... Ts>
+    concept _at_most_one = (sizeof...(Ts) <= 1);
+
+    struct default_domain {
+        template<sender Sndr, queryable... Env>
+        requires
+          _at_most_one<Env...> &&
+          _has_tag<Sndr> &&
+          _tag_can_transform_sender<tag_of_t<Sndr>, Sndr, Env...>
+        static constexpr sender decltype(auto) transform_sender(Sndr&& sndr, const Env&... env)
+          noexcept(noexcept(tag_of_t<Sndr>{}.transform_sender(std::forward<Sndr>(sndr), env...))) {
+          return tag_of_t<Sndr>{}.transform_sender(std::forward<Sndr>(sndr), env...);
+        }
+
+        template<sender Sndr, queryable... Env>
+        requires _at_most_one<Env...>
+        static constexpr Sndr&& transform_sender(Sndr&& sndr, const Env&...) noexcept {
+          return std::forward<Sndr>(sndr);
+        }
+    };
+
+  // [exec.get.domain]
+
+  struct get_domain_t {
+    template<_has_query<get_domain_t> Env>
+    static constexpr decltype(auto) operator()(const Env& env) noexcept {
+      static_assert(noexcept(env.query(get_domain_t{})), "MANDATE-NOTHROW");
+      return env.query(get_domain_t{});
+    }
+  };
+
+  inline constexpr get_domain_t get_domain{};
+
+  template<typename T>
+  concept _has_domain = _has_query<T, get_domain_t>;
+
+  template<_has_domain T>
+  using _domain_of_t = decltype(auto(get_domain(std::declval<T>())));
+
+  // TODO: implement forwarding_query(get_domain)
 
     struct schedule_t {
         template<typename Scheduler>
@@ -472,7 +829,7 @@ namespace std::execution
 
     template<typename T>
     concept scheduler =
-        requires(const T sched) {
+        requires(T sched) {
             execution::schedule(std::forward<T>(sched));
         } &&
         copy_constructible<T> &&
@@ -487,6 +844,265 @@ namespace std::execution
     };
     inline constexpr get_scheduler_t get_scheduler{};
 
+  // [exec.snd.expos] p14 - get-domain-late()
+
+  struct continues_on_t;
+
+  template<class Sndr, class Env>
+  requires _sender_for<Sndr, continues_on_t>
+  constexpr auto _get_domain_late(const Sndr& sndr, const Env& env) noexcept {
+    using scheduler_t = _data_of_t<Sndr>;
+    static_assert(scheduler<scheduler_t>, "Data of a continues_on sender must be a scheduler");
+    if constexpr (_has_domain<scheduler_t>) {
+      return _domain_of_t<scheduler_t>{};
+    } else {
+      return default_domain{};
+    }
+  }
+
+  template<class Sndr, class Env>
+  constexpr auto _get_domain_late(const Sndr& sndr, const Env& env) noexcept {
+    // TODO: Add support for completion-domain in here.
+    if constexpr (_has_domain<env_of_t<Sndr>>) {
+      return _domain_of_t<env_of_t<Sndr>>{};
+    } else if constexpr (_has_domain<Env>) {
+      return _domain_of_t<Env>{};
+    } else if constexpr (_has_query<Env, get_scheduler_t>) {
+      using scheduler_t = decltype(auto(get_scheduler(env)));
+      if constexpr (_has_domain<scheduler_t>) {
+        return _domain_of_t<scheduler_t>{};
+      } else {
+        return default_domain{};
+      }
+    } else {
+      return default_domain{};
+    }
+  }
+
+  // [exec.snd.transform]
+
+  // Helpers to compute the 'transformed-sndr' part
+
+    template<class Domain, class Sndr, class... Env>
+    concept _has_transform_sender =
+        requires(Domain dom, Sndr&& sndr, const Env&... env) {
+            dom.transform_sender(std::forward<Sndr>(sndr), env...);
+        };
+
+    template<class Domain, class Sndr, class... Env>
+    requires _has_transform_sender<Domain, Sndr, Env...>
+    constexpr sender decltype(auto) _transformed_sender(Domain dom, Sndr&& sndr, const Env&... env)
+        noexcept(noexcept(dom.transform_sender(std::forward<Sndr>(sndr), env...))) {
+        return dom.transform_sender(std::forward<Sndr>(sndr), env...);
+    }
+
+    template<class Domain, class Sndr, class... Env>
+    requires
+        (!_has_transform_sender<Domain, Sndr, Env...>) &&
+        _has_transform_sender<default_domain, Sndr, Env...>
+    constexpr sender decltype(auto) _transformed_sender(Domain, Sndr&& sndr, const Env&... env)
+        noexcept(noexcept(default_domain{}.transform_sender(std::forward<Sndr>(sndr), env...))) {
+        return default_domain{}.transform_sender(std::forward<Sndr>(sndr), env...);
+    }
+
+  template<class Domain, class Sndr, class... Env>
+  using _transformed_sender_t = decltype(execution::_transformed_sender(std::declval<Domain>(), std::declval<Sndr>(), std::declval<const Env&>()...));
+
+  // Handle the case where _transformed_sender() returns the same type.
+  // In this case we just return _transformed_sender() and do not recurse further.
+  template<class Domain, sender Sndr, queryable... Env>
+  requires _at_most_one<Env...> && _same_unqualified<_transformed_sender_t<Domain, Sndr, Env...>, Sndr>
+  constexpr sender decltype(auto) transform_sender(Domain dom, Sndr&& sndr, const Env&... env)
+    noexcept(noexcept(execution::_transformed_sender(dom, std::forward<Sndr>(sndr), env...))) {
+    return execution::_transformed_sender(dom, std::forward<Sndr>(sndr), env...);
+  }
+
+  // Handle the case where _transformed_sender() returns a different type
+  // In this case, we call transform_sender() recursively on the new type.
+  template<class Domain, sender Sndr, queryable... Env>
+  requires _at_most_one<Env...> && (!_same_unqualified<_transformed_sender_t<Domain, Sndr, Env...>, Sndr>)
+  constexpr sender decltype(auto) transform_sender(Domain dom, Sndr&& sndr, const Env&... env)
+    noexcept(noexcept(execution::transform_sender(dom, execution::_transformed_sender(dom, std::forward<Sndr>(sndr), env...), env...))) {
+    return execution::transform_sender(dom, execution::_transformed_sender(dom, std::forward<Sndr>(sndr), env...), env...);
+  }
+
+  template<class Sndr, class Env>
+  concept _can_transform_sender_late =
+    requires(Sndr&& sndr, Env&& env) {
+      execution::transform_sender(execution::_get_domain_late(sndr, env), std::forward<Sndr>(sndr), std::forward<Env>(env));
+    };
+
+  template<class Sndr, class Env>
+  using _transform_sender_late_t = decltype(execution::transform_sender(
+                                           execution::_get_domain_late(std::declval<Sndr&>(), std::declval<Env&>()),
+                                           std::declval<Sndr>(),
+                                           std::declval<Env>()));
+
+  template<class Sndr, class Env>
+  requires _can_transform_sender_late<Sndr, Env>
+  constexpr _transform_sender_late_t<Sndr, Env> _transform_sender_late(Sndr&& sndr, Env&& env)
+    noexcept(noexcept(execution::transform_sender(execution::_get_domain_late(sndr, env), std::forward<Sndr>(sndr), std::forward<Env>(env)))) {
+    return execution::transform_sender(
+      execution::_get_domain_late(sndr, env),
+      std::forward<Sndr>(sndr),
+      std::forward<Env>(env));
+  }
+
+  // [exec.getcomplsigs]
+
+  template<class Sndr, class Env>
+  concept _has_get_completion_signatures_member_fn =
+    requires(Sndr&& sndr, Env&& env) {
+      std::forward<Sndr>(sndr).get_completion_signatures(std::forward<Env>());
+    };
+
+  template<class Sndr, class Env>
+  requires _has_get_completion_signatures_member_fn<Sndr, Env>
+  using _get_completion_signatures_of_t = decltype(std::declval<Sndr>().get_completion_signatures(std::declval<Env>()));
+
+  template<class Sndr>
+  concept _has_completion_signatures_member_type =
+    requires {
+      typename remove_cvref_t<Sndr>::completion_signatures;
+    };
+
+  template<class Sndr>
+  using _completion_signatures_of_t = typename remove_cvref_t<Sndr>::completion_signatures;
+
+    struct get_completion_signatures_t {
+        template<typename Sndr, typename Env>
+        requires _can_transform_sender_late<Sndr, Env>
+        static constexpr auto operator()(Sndr&& sndr, Env&& env) noexcept {
+          using new_sndr_t = _transform_sender_late_t<Sndr, Env>;
+          if constexpr (_has_get_completion_signatures_member_fn<new_sndr_t, Env>) {
+            return _get_completion_signatures_of_t<new_sndr_t, Env>();
+          } else if constexpr (_has_completion_signatures_member_type<new_sndr_t>) {
+            return _completion_signatures_of_t<new_sndr_t>();
+          } else if constexpr (_is_awaitable<new_sndr_t, _env_promise<Env>>) {
+            static_assert(sizeof(Env) == 0, "TODO: Support for awaitables not yet implemented");
+          } else {
+            static_assert(sizeof(Env) == 0, "Unable to compute completion signatures for sender");
+          }
+        }
+    };
+    inline constexpr get_completion_signatures_t get_completion_signatures{};
+
+   template<class Sndr, class Env = env<>>
+   using completion_signatures_of_t = decltype(get_completion_signatures(declval<Sndr>(), declval<Env>()));
+
+  // [exec.start]
+
+    struct start_t {
+        template<typename Op>
+        requires requires(Op& op) {
+          op.start();
+        }
+        static decltype(auto) operator()(Op& op) noexcept {
+          static_assert(noexcept(op.start()), "MANDATE-NOTHROW");
+          return op.start();
+        }
+
+        // start(op) is ill-formed if 'op' is an rvalue
+        template<typename Op>
+        static void operator()(Op&&) = delete;
+    };
+    inline constexpr start_t start{};
+
+  // [exec.opstate.general]
+
+    struct operation_state_t {};
+
+    template<typename Op>
+    concept operation_state =
+      derived_from<typename Op::operation_state_concept, operation_state_t> &&
+      is_object_v<Op> &&
+      requires (Op& o) {
+        { execution::start(o) } noexcept;
+      };
+
+  // [exec.connect]
+
+  template<typename Sndr, typename Rcvr>
+  concept _has_member_connect =
+    requires(Sndr&& sndr, Rcvr&& rcvr) {
+      std::forward<Sndr>(sndr).connect(std::forward<Rcvr>(rcvr));
+    };
+
+    struct connect_t {
+        template<class Sndr, class Rcvr>
+        requires _can_transform_sender_late<Sndr, env_of_t<Rcvr>> &&
+                 _has_member_connect<_transform_sender_late_t<Sndr, env_of_t<Rcvr>>, Rcvr>
+        static operation_state auto operator()(Sndr&& sndr, Rcvr&& rcvr)
+          noexcept(noexcept(execution::_transform_sender_late(std::forward<Sndr>(sndr), get_env(rcvr)).connect(std::forward<Rcvr>(rcvr)))) {
+          return execution::_transform_sender_late(std::forward<Sndr>(sndr), get_env(rcvr)).connect(std::forward<Rcvr>(rcvr));
+        }
+
+      // TODO: Add support for is-awaitable<Sndr> types.
+    };
+    inline constexpr connect_t connect{};
+
+  template<typename Sndr, class Rcvr>
+  using connect_result_t = decltype(connect(declval<Sndr>(), declval<Rcvr>()));
+
+  // [exec.snd.concepts]
+
+    template<typename Sndr, class Env = env<>>
+    concept sender_in =
+        sender<Sndr> &&
+        queryable<Env> &&
+        requires(Sndr&& sndr, Env&& env) {
+          { get_completion_signatures(std::forward<Sndr>(sndr), std::forward<Env>(env)) } -> _valid_completion_signatures;
+        };
+
+  template<class... Ts>
+  using _decayed_tuple = tuple<decay_t<Ts>...>;
+
+  struct _empty {};
+
+  template<class... Ts>
+  struct _variant_or_empty {
+    using type = variant<Ts...>;
+  };
+
+  template<>
+  struct _variant_or_empty<> {
+    using type = _empty;
+  };
+
+  template<class... Ts>
+  using _variant_or_empty_t = typename _variant_or_empty<Ts...>::type;
+
+    template<
+        class Sndr,
+        class Env = env<>,
+        template<class...> class Tuple = _decayed_tuple,
+        template<class...> class Variant = _variant_or_empty_t>
+    requires sender_in<Sndr, Env>
+    using value_types_of_t = _gather_signatures<set_value_t, completion_signatures_of_t<Sndr, Env>, Tuple, Variant>;
+
+    template<
+        class Sndr,
+        class Env = env<>,
+        template<class...> class Variant = _variant_or_empty_t>
+    requires sender_in<Sndr, Env>
+    using error_types_of_t = _gather_signatures<set_error_t, completion_signatures_of_t<Sndr, Env>, type_identity_t, Variant>;
+
+    template<
+        class Sndr,
+      class Env = env<>>
+    requires sender_in<Sndr, Env>
+    inline constexpr bool sends_stopped = _completion_signatures_contains_v<set_stopped_t(), completion_signatures_of_t<Sndr, Env>>;
+
+    template<typename Sndr, typename Rcvr>
+    inline constexpr bool is_nothrow_connectable_v = false;
+
+    template<typename Sndr, typename Rcvr>
+    requires requires(Sndr&& s, Rcvr&& r) {
+        execution::connect(std::forward<Sndr>(s), std::forward<Rcvr>(r));
+    }
+    inline constexpr bool is_nothrow_connectable_v<Sndr, Rcvr> =
+        noexcept(execution::connect(std::declval<Sndr>(), std::declval<Rcvr>()));
+
     template<typename ParentOp, typename ChildTag, typename Env, typename Child>
     struct _manual_child_operation {
         struct _child_receiver {
@@ -494,7 +1110,7 @@ namespace std::execution
 
             template<typename ChildOp>
             static _child_receiver make_receiver_for(ChildOp* child) noexcept {
-                static_assert(std::same_as<ChildOp, child_op_t>);
+                static_assert(same_as<ChildOp, child_op_t>);
                 auto* parent = static_cast<ParentOp*>(
                         reinterpret_cast<_manual_child_operation*>(
                             reinterpret_cast<storage_t*>(child)));
@@ -629,7 +1245,7 @@ namespace std::execution
     };
 
     template<class Tag, class Rcvr, class State, class... Child>
-    struct _basic_operation 
+    struct _basic_operation
         : inlinable_operation_state<_basic_operation<Tag, Rcvr, State, Child...>, Rcvr>
         , State
         , _manual_child_operations<
@@ -649,6 +1265,8 @@ namespace std::execution
         using State::_start;
 
     public:
+        using operation_state_concept = operation_state_t;
+
         friend State;
 
         template<class Data>
@@ -684,7 +1302,7 @@ namespace std::execution
 
         template<typename Self, std::size_t Id, typename CompletionTag, typename... Datums>
         void _complete(this Self& self, _indexed_tag<Id>, CompletionTag, Datums&&... datums) noexcept {
-            return CompletionTag{}(self.get_receiver(), std::forward<Datums>(datums)...);
+            return CompletionTag{}(std::move(self.get_receiver()), std::forward<Datums>(datums)...);
         }
     };
 
@@ -706,7 +1324,7 @@ namespace std::execution
             if constexpr (sizeof...(Child) == 1) {
                 return _fwd_env(execution::get_env(child...[0]));
             } else {
-                return empty_env{};
+                return env<>{};
             }
         }
 
@@ -724,6 +1342,8 @@ namespace std::execution
 
     template<class Tag, class Data, class... Child>
     struct _basic_sender {
+        using sender_concept = sender_t;
+
         [[no_unique_address]] Tag tag;
         [[no_unique_address]] Data data;
         [[no_unique_address]] std::tuple<Child...> children;
@@ -763,25 +1383,25 @@ namespace std::execution
         template<typename Self, std::size_t Id, typename CompletionTag, typename... Datums>
         void _complete(this Self& self, _indexed_tag<Id>, CompletionTag, Datums&&... datums) noexcept {
             using Func = decltype(Self::data);
-            if constexpr (std::same_as<CompletionTag, set_value_t>) {
+            if constexpr (same_as<CompletionTag, set_value_t>) {
                 using result_t = std::invoke_result_t<Func, Datums...>;
                 constexpr bool is_nothrow = std::is_nothrow_invocable_v<std::invoke_result_t<Func, Datums...>>;
                 try {
                     if constexpr (std::is_void_v<result_t>) {
                         std::invoke(std::forward<Func>(self.data), std::forward<Datums>(datums)...);
-                        execution::set_value(self.get_receiver());
+                        execution::set_value(std::move(self.get_receiver()));
                     } else {
                         execution::set_value(
-                            self.get_receiver(),
+                            std::move(self.get_receiver()),
                             std::invoke(std::forward<Func>(self.data), std::forward<Datums>(datums)...));
                     }
                 } catch (...) {
                     if constexpr (!is_nothrow) {
-                        execution::set_error(self.get_receiver(), std::current_exception());
+                        execution::set_error(std::move(self.get_receiver()), std::current_exception());
                     }
                 }
             } else {
-                return CompletionTag{}(self.get_receiver(), std::forward<Datums>(datums)...);
+                return CompletionTag{}(std::move(self.get_receiver()), std::forward<Datums>(datums)...);
             }
         }
     };
@@ -799,7 +1419,7 @@ namespace std::execution
         template<typename Self>
         void _start(this Self& self) noexcept {
             std::apply([&](auto&&... vs) noexcept {
-                execution::set_value(self.get_receiver(), static_cast<decltype(vs)>(vs)...);
+                execution::set_value(std::move(self.get_receiver()), static_cast<decltype(vs)>(vs)...);
             }, std::move(self.data));
         }
     };
@@ -817,6 +1437,9 @@ namespace std::execution
         struct _schedule_op final
                 : inlinable_operation_state<_schedule_op<Rcvr>, Rcvr>
                 , private _operation_base {
+
+            using operation_state_concept = operation_state_t;
+
             _schedule_op(run_loop* loop, Rcvr rcvr)
             : inlinable_operation_state<_schedule_op, Rcvr>(std::move(rcvr))
             , loop_(loop)
@@ -834,7 +1457,7 @@ namespace std::execution
                         state_.notify_one();
                     } else if (old_state == stop_requested_flag) {
                         stop_callback_.reset();
-                        execution::set_stopped(this->get_receiver());
+                        execution::set_stopped(std::move(this->get_receiver()));
                     }
                 } else {
                     state_.store(started_flag, std::memory_order_relaxed);
@@ -853,7 +1476,7 @@ namespace std::execution
 
                 stop_callback_.reset();
 
-                execution::set_value(this->get_receiver());
+                execution::set_value(std::move(this->get_receiver()));
             }
 
             void _request_stop() noexcept {
@@ -863,7 +1486,7 @@ namespace std::execution
                         // If we get here then we know _execute() will not be called
                         // so it is safe to destroy the callback and complete.
                         stop_callback_.reset();
-                        execution::set_stopped(this->get_receiver());
+                        execution::set_stopped(std::move(this->get_receiver()));
                     }
                 }
             }
@@ -899,7 +1522,7 @@ namespace std::execution
             }
 
             void _execute() noexcept override {
-                execution::set_value(this->get_receiver());
+                execution::set_value(std::move(this->get_receiver()));
             }
 
             run_loop* loop_;
@@ -910,6 +1533,10 @@ namespace std::execution
 
     private:
         struct schedule_sender {
+            using sender_concept = sender_t;
+            using completion_signatures = execution::completion_signatures<
+              set_value_t(), set_stopped_t()>;
+
             friend bool operator==(const schedule_sender&, const schedule_sender&) noexcept = default;
 
             template<typename Rcvr>
