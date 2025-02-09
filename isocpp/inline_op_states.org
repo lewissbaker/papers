@@ -1,12 +1,12 @@
 # -*- mode: org; org-html-htmlize-output-type: css -*-
-#+TITLE: D3425R1: Reducing operation-state sizes for subobject child operations
+#+TITLE: D3425R2: Reducing operation-state sizes for subobject child operations
 #+AUTHOR: Lewis Baker
 #+EMAIL: lewissbaker@gmail.com
 #+DATE: 2024-10-16
 #+OPTIONS: html5-fancy
 #+OPTIONS: tasks:nil
 #+OPTIONS: html-postamble:nil
-#+EXPORT_FILE_NAME: D3425R1
+#+EXPORT_FILE_NAME: D3425R2
 #+EXPORT_EXCLUDE_TAGS: noexport,todo
 
 #+BEGIN_EXPORT html
@@ -66,7 +66,7 @@
   </style>
 #+END_EXPORT
 
-| Document | *D3424R1*                             |
+| Document | *D3424R2*                             |
 | Date     | *2024-11-15*                          |
 | Reply To | *Lewis Baker <lewissbaker@gmail.com>* |
 | Audience | *LEWG*                                |
@@ -1854,8 +1854,6 @@ The member <expos><ins>state-</ins>impls-for</expos>&lt;bulk_t&gt;::<expos>compl
 
 ** Changes to /~split~/
 
-Working on this guy next.
-
 Modify [exec.split] p21 as follows:
 
 #+BEGIN_EXPORT html
@@ -2214,9 +2212,17 @@ following lambda</del>:
 #+END_EXPORT
 
 
-** Changes to /~run_loop::run-loop-sender~/
+** Changes to /~run_loop::run-loop-opstate~/
 
-Forthcoming.
+Modify [exec.run.loop.types] by inserting a new paragraph after paragraph 9:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+<ins>If Rcvr models inlinable_receiver&lt;<expos>run-loop-opstate</expos>&lt;Rcvr&gt;&gt;,
+then objects of type <expos>run-loop-opstate</expos>&lt;Rcvr&gt; do not contain
+subobjects of type Rcvr.</ins>
+</div>
+#+END_EXPORT
 
 * Proposed Wording :noexport:
 
