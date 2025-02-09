@@ -514,6 +514,10 @@ struct set_stopped_t {
 inline constexpr set_stopped_t set_stopped{};
 
 template <typename T>
+concept _completion_tag = same_as<T, set_value_t> || same_as<T, set_error_t> ||
+    same_as<T, set_stopped_t>;
+
+template <typename T>
 inline constexpr bool _is_completion_signature_v = false;
 template <typename... Vs>
   requires((std::is_object_v<Vs> || std::is_reference_v<Vs>) && ...)
@@ -766,7 +770,17 @@ using _data_of_t = decltype(execution::_get_data(std::declval<T>()));
 
 template <typename Tag, typename Sndr, typename... Env>
 concept _tag_can_transform_sender = requires(Sndr&& sndr, const Env&... env) {
-  Tag{}.transform_sender(std::forward<Sndr>(sndr), env...);
+  Tag().transform_sender(std::forward<Sndr>(sndr), env...);
+};
+
+template <typename Tag, typename Sndr, typename Env>
+concept _tag_can_transform_env = requires(Sndr&& sndr, Env&& env) {
+  Tag().transform_env(std::forward<Sndr>(sndr), std::forward<Env>(env));
+};
+
+template <typename Tag, typename Sndr, typename... Args>
+concept _tag_can_apply_sender = requires(Sndr&& sndr, Args&&... args) {
+  Tag().apply_sender(std::forward<Sndr>(sndr), std::forward<Args>(args)...);
 };
 
 template <class Sndr, class Tag>
@@ -793,6 +807,33 @@ struct default_domain {
   transform_sender(Sndr&& sndr, const Env&...) noexcept {
     return std::forward<Sndr>(sndr);
   }
+
+  template <sender Sndr, queryable Env>
+    requires _tag_can_transform_env<tag_of_t<Sndr>, Sndr, Env>
+  static constexpr queryable decltype(auto)
+  transform_env(Sndr&& sndr, Env&& env) noexcept {
+    using tag_t = tag_of_t<Sndr>;
+    static_assert(noexcept(tag_t().transform_env(
+        std::forward<Sndr>(sndr), std::forward<Env>(env))));
+    return tag_t().transform_env(
+        std::forward<Sndr>(sndr), std::forward<Env>(env));
+  }
+
+  template <sender Sndr, queryable Env>
+  static constexpr Env transform_env(Sndr&& sndr, Env&& env) noexcept {
+    static_assert(is_nothrow_move_constructible_v<Env>);
+    return static_cast<Env>(std::forward<Env>(env));
+  }
+
+  template <class Tag, sender Sndr, class... Args>
+    requires _tag_can_apply_sender<Tag, Sndr, Args...>
+  static constexpr decltype(auto)
+  apply_sender(Tag, Sndr&& sndr, Args&&... args) noexcept(
+      noexcept(Tag().apply_sender(
+          std::forward<Sndr>(sndr), std::forward<Args>(args)...))) {
+    return Tag().apply_sender(
+        std::forward<Sndr>(sndr), std::forward<Args>(args)...);
+  }
 };
 
 // [exec.get.domain]
@@ -815,6 +856,8 @@ using _domain_of_t = decltype(auto(get_domain(std::declval<T>())));
 
 // TODO: implement forwarding_query(get_domain)
 
+// [exec.schedule]
+
 struct schedule_t {
   template <typename Scheduler>
     requires requires(Scheduler sched) { sched.schedule(); }
@@ -824,10 +867,47 @@ struct schedule_t {
 };
 inline constexpr schedule_t schedule{};
 
+struct scheduler_t {};
+
+// [exec.get.compl.sched]
+
+template <class Tag>
+struct get_completion_scheduler_t {
+  template <queryable Env>
+    requires _has_query<const Env&, get_completion_scheduler_t>
+  static constexpr auto operator()(const Env& env) noexcept
+      -> decltype(env.query(declval<get_completion_scheduler_t>()));
+};
+
+template <_completion_tag Tag>
+inline constexpr get_completion_scheduler_t<Tag> get_completion_scheduler{};
+
+// TODO: customise forwarding_query(get_completion_scheduler<Tag>) to return
+// true.
+
 template <typename T>
-concept scheduler = requires(T sched) {
-  execution::schedule(std::forward<T>(sched));
-} && copy_constructible<T> && equality_comparable<T>;
+concept scheduler =
+    derived_from<typename remove_cvref_t<T>::scheduler_concept, scheduler_t> &&
+    queryable<T> && requires(T&& sched) {
+      execution::schedule(std::forward<T>(sched));
+      {
+        auto(get_completion_scheduler<set_value_t>(
+            get_env(schedule(std::forward<T>(sched)))))
+      } -> same_as<remove_cvref_t<T>>;
+    } && copyable<T> && equality_comparable<T>;
+
+template <class Tag>
+template <queryable Env>
+  requires _has_query<const Env&, get_completion_scheduler_t<Tag>>
+constexpr auto
+get_completion_scheduler_t<Tag>::operator()(const Env& env) noexcept
+    -> decltype(env.query(declval<get_completion_scheduler_t>())) {
+  static_assert(
+      noexcept(env.query(get_completion_scheduler_t{})), "MANDATE-NOTHROW");
+  using result_t = decltype(env.query(get_completion_scheduler_t{}));
+  static_assert(scheduler<result_t>);
+  return env.query(get_completion_scheduler_t{});
+}
 
 struct get_scheduler_t {
   template <queryable Env>
@@ -837,6 +917,88 @@ struct get_scheduler_t {
   }
 };
 inline constexpr get_scheduler_t get_scheduler{};
+
+// [exec.snd.expos] p8 - completion-domain()
+
+template <class Sndr, class Tag>
+concept _has_completion_domain = requires(const Sndr& sndr) {
+  get_domain(get_completion_scheduler<Tag>(get_env(std::forward<Sndr>(sndr))));
+};
+
+template <class Sndr, class Tag>
+using _completion_domain_for_t = decltype(get_domain(
+    get_completion_scheduler<Tag>(get_env(declval<const Sndr&>()))));
+
+template <
+    class Sndr,
+    class Default,
+    bool Value = _has_completion_domain<Sndr, set_value_t>,
+    bool Error = _has_completion_domain<Sndr, set_error_t>,
+    bool Stopped = _has_completion_domain<Sndr, set_stopped_t>>
+struct _common_completion_domain {
+  using type = Default;
+};
+
+template <class Sndr, class Default>
+struct _common_completion_domain<Sndr, Default, true, true, true>
+  : common_type<
+        _completion_domain_for_t<Sndr, set_value_t>,
+        _completion_domain_for_t<Sndr, set_error_t>,
+        _completion_domain_for_t<Sndr, set_stopped_t>> {};
+
+template <class Sndr, class Default>
+struct _common_completion_domain<Sndr, Default, true, true, false>
+  : common_type<
+        _completion_domain_for_t<Sndr, set_value_t>,
+        _completion_domain_for_t<Sndr, set_error_t>> {};
+
+template <class Sndr, class Default>
+struct _common_completion_domain<Sndr, Default, true, false, true>
+  : common_type<
+        _completion_domain_for_t<Sndr, set_value_t>,
+        _completion_domain_for_t<Sndr, set_stopped_t>> {};
+
+template <class Sndr, class Default>
+struct _common_completion_domain<Sndr, Default, false, true, true>
+  : common_type<
+        _completion_domain_for_t<Sndr, set_error_t>,
+        _completion_domain_for_t<Sndr, set_stopped_t>> {};
+
+template <class Sndr, class Default>
+struct _common_completion_domain<Sndr, Default, true, false, false> {
+  using type = _completion_domain_for_t<Sndr, set_value_t>;
+};
+template <class Sndr, class Default>
+struct _common_completion_domain<Sndr, Default, false, true, false> {
+  using type = _completion_domain_for_t<Sndr, set_error_t>;
+};
+template <class Sndr, class Default>
+struct _common_completion_domain<Sndr, Default, false, false, true> {
+  using type = _completion_domain_for_t<Sndr, set_stopped_t>;
+};
+
+template <class Sndr, class Default>
+using _common_completion_domain_t =
+    typename _common_completion_domain<Sndr, Default>::type;
+
+template <class Default = default_domain, class Sndr>
+constexpr auto _completion_domain(const Sndr& sndr) noexcept
+    -> _common_completion_domain_t<Sndr, Default> {
+  return _common_completion_domain_t<Sndr, Default>();
+}
+
+// [exec.snd.expos] p13 - get-domain-early()
+
+template <class Sndr>
+constexpr auto _get_domain_early(const Sndr& sndr) noexcept {
+  if constexpr (_has_domain<env_of_t<const Sndr&>>) {
+    return _domain_of_t<env_of_t<const Sndr&>>();
+  } else if constexpr (requires { execution::_completion_domain(sndr); }) {
+    return execution::_completion_domain(sndr);
+  } else {
+    return default_domain();
+  }
+}
 
 // [exec.snd.expos] p14 - get-domain-late()
 
@@ -909,7 +1071,8 @@ using _transformed_sender_t = decltype(execution::_transformed_sender(
     std::declval<const Env&>()...));
 
 // Handle the case where _transformed_sender() returns the same type.
-// In this case we just return _transformed_sender() and do not recurse further.
+// In this case we just return _transformed_sender() and do not recurse
+// further.
 template <class Domain, sender Sndr, queryable... Env>
   requires _at_most_one<Env...> &&
     _same_unqualified<_transformed_sender_t<Domain, Sndr, Env...>, Sndr>
@@ -936,6 +1099,77 @@ constexpr sender decltype(auto)
       execution::_transformed_sender(dom, std::forward<Sndr>(sndr), env...),
       env...);
 }
+
+// [exec.snd.transform.env]
+
+template <class Domain, class Sndr, class Env>
+concept _can_transform_env = requires(Domain dom, Sndr&& sndr, Env&& env) {
+  dom.transform_env(std::forward<Sndr>(sndr), std::forward<Env>(env));
+};
+
+template <class Domain, sender Sndr, queryable Env>
+  requires _can_transform_env<Domain, Sndr, Env>
+constexpr queryable decltype(auto)
+transform_env(Domain dom, Sndr&& sndr, Env&& env) noexcept {
+  static_assert(noexcept(
+      dom.transform_env(std::forward<Sndr>(sndr), std::forward<Env>(env))));
+  return dom.transform_env(std::forward<Sndr>(sndr), std::forward<Env>(env));
+}
+
+template <class Domain, sender Sndr, queryable Env>
+  requires(!_can_transform_env<Domain, Sndr, Env>)
+constexpr queryable decltype(auto)
+transform_env(Domain dom, Sndr&& sndr, Env&& env) noexcept {
+  static_assert(noexcept(default_domain().transform_env(
+      std::forward<Sndr>(sndr), std::forward<Env>(env))));
+  return default_domain().transform_env(
+      std::forward<Sndr>(sndr), std::forward<Env>(env));
+}
+
+// [exec.snd.apply]
+
+template <class Domain, class Tag, class Sndr, class... Args>
+concept _can_apply_sender = requires(Domain dom, Sndr&& sndr, Args&&... args) {
+  dom.apply_sender(
+      Tag(), std::forward<Sndr>(sndr), std::forward<Args>(args)...);
+};
+
+template <class Domain, class Tag, sender Sndr, class... Args>
+  requires _can_apply_sender<Domain, Tag, Sndr, Args...>
+constexpr decltype(auto)
+apply_sender(Domain dom, Tag, Sndr&& sndr, Args&&... args) noexcept(
+    noexcept(dom.apply_sender(
+        Tag(), std::forward<Sndr>(sndr), std::forward<Args>(args)...))) {
+}
+
+// [exec.start]
+
+struct start_t {
+  template <typename Op>
+    requires requires(Op& op) { op.start(); }
+  static decltype(auto) operator()(Op& op) noexcept {
+    static_assert(noexcept(op.start()), "MANDATE-NOTHROW");
+    return op.start();
+  }
+
+  // start(op) is ill-formed if 'op' is an rvalue
+  template <typename Op>
+  static void operator()(Op&&) = delete;
+};
+inline constexpr start_t start{};
+
+// [exec.opstate.general]
+
+struct operation_state_t {};
+
+template <typename Op>
+concept operation_state =
+    derived_from<typename Op::operation_state_concept, operation_state_t> &&
+    is_object_v<Op> && requires(Op& o) {
+      { execution::start(o) } noexcept;
+    };
+
+// [exec.getcomplsigs]
 
 template <class Sndr, class Env>
 concept _can_transform_sender_late = requires(Sndr&& sndr, Env&& env) {
@@ -964,8 +1198,6 @@ _transform_sender_late(Sndr&& sndr, Env&& env) noexcept(
       std::forward<Sndr>(sndr),
       std::forward<Env>(env));
 }
-
-// [exec.getcomplsigs]
 
 template <class Sndr, class Env>
 concept _has_get_completion_signatures_member_fn =
@@ -1011,33 +1243,6 @@ inline constexpr get_completion_signatures_t get_completion_signatures{};
 template <class Sndr, class Env = env<>>
 using completion_signatures_of_t =
     decltype(get_completion_signatures(declval<Sndr>(), declval<Env>()));
-
-// [exec.start]
-
-struct start_t {
-  template <typename Op>
-    requires requires(Op& op) { op.start(); }
-  static decltype(auto) operator()(Op& op) noexcept {
-    static_assert(noexcept(op.start()), "MANDATE-NOTHROW");
-    return op.start();
-  }
-
-  // start(op) is ill-formed if 'op' is an rvalue
-  template <typename Op>
-  static void operator()(Op&&) = delete;
-};
-inline constexpr start_t start{};
-
-// [exec.opstate.general]
-
-struct operation_state_t {};
-
-template <typename Op>
-concept operation_state =
-    derived_from<typename Op::operation_state_concept, operation_state_t> &&
-    is_object_v<Op> && requires(Op& o) {
-      { execution::start(o) } noexcept;
-    };
 
 // [exec.connect]
 
@@ -1629,19 +1834,21 @@ public:
   struct scheduler;
 
 private:
+  struct schedule_attrs;
+
   struct schedule_sender {
+  public:
     using sender_concept = sender_t;
     using completion_signatures =
         execution::completion_signatures<set_value_t(), set_stopped_t()>;
-
-    friend bool operator==(
-        const schedule_sender&, const schedule_sender&) noexcept = default;
 
     template <typename Rcvr>
     _schedule_op<Rcvr> connect(Rcvr rcvr) const noexcept {
       return _schedule_op<Rcvr>(loop_, std::move(rcvr));
       ;
     }
+
+    schedule_attrs get_env() const noexcept;
 
   private:
     friend scheduler;
@@ -1651,16 +1858,29 @@ private:
 
 public:
   struct scheduler {
+    using scheduler_concept = scheduler_t;
+
     schedule_sender schedule() const noexcept { return schedule_sender{loop_}; }
 
     friend bool operator==(scheduler a, scheduler b) noexcept = default;
 
   private:
     friend run_loop;
+    friend schedule_attrs;
     explicit scheduler(run_loop* loop) noexcept : loop_(loop) {}
     run_loop* loop_;
   };
 
+private:
+  struct schedule_attrs {
+    run_loop* loop_;
+
+    scheduler query(get_completion_scheduler_t<set_value_t>) const noexcept {
+      return scheduler{loop_};
+    }
+  };
+
+public:
   __attribute__((noinline)) run_loop() {
     head_.next = &head_;
     head_.prev = &head_;
@@ -1740,6 +1960,11 @@ private:
   _operation_node head_;
   bool finish_{false};
 };
+
+inline run_loop::schedule_attrs
+run_loop::schedule_sender::get_env() const noexcept {
+  return run_loop::schedule_attrs{loop_};
+}
 
 template <typename StopToken>
 struct _sync_wait_state_base {
