@@ -1571,29 +1571,6 @@ struct <expos>sender-impls-for</expos>&lt;<expos>let-cpo</expos>&gt; : <expos>de
 </div>
 #+END_EXPORT
 
-** Changes to /~just~/, /~just_error~/, and /~just_stopped~/ :noexport:
-
-OLD STUFF
-
-Modify [exec.just] p2.3 as follows:
-
-#+BEGIN_EXPORT html
-<div class="wording">
-<pre>template<>
-struct <expos><ins>state-</ins>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;<expos>just-cpo</expos>&gt;&gt; : <expos>default-<ins>state-</ins>impls</expos> {
-  <del>static constexpr auto <expos>start</expos> =
-    [](auto& state, auto& rcvr) noexcept -> void {
-      auto& [...ts] = state;
-      <expos>set-cpo</expos>(std::move(rcvr), std::move(ts)...);
-    };</del>
-  <ins>template &lt;class Self&gt;
-  void <expos>start</expos>(this Self& self) {
-    auto& [...ts] = self.data;
-    <expos>set-cpo</expos>(std::move(self.get_receiver()), std::move(ts)...);
-  }</ins>
-};</pre>
-</div>
-#+END_EXPORT
 
 ** Changes to /~read_env~/ :noexport:
 
@@ -1829,40 +1806,6 @@ struct <expos>sender-impls-for</expos>&lt;<expos>then-cpo</expos>&gt; : <expos>d
 </div>
 #+END_EXPORT
 
-** Changes to /~then~/, /~upon_error~/, /~upon_stopped~/ :noexport:
-
-OLD STUFF
-
-
-Modify [exec.then] p4 as follows:
-
-#+BEGIN_EXPORT html
-<div class="wording">
-<pre>template<>
-struct <expos><ins>state-</ins>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;<expos>then-cpo</expos>&gt;&gt; : <expos>default-<ins>state-</ins>impls</expos> {
-  <del>static constexpr auto <expos>complete</expos> =
-    []&lt;class Tag, class... Args&gt;
-      (auto, auto& fn, auto& rcvr, Tag, Args&&... args) noexcept -> void {
-      if constexpr (same_as&lt;Tag, <expos>decayed-typeof</expos>&lt;<expos>set-cpo</expos>&gt;&gt;) {
-        TRY-SET-VALUE (rcvr,
-          invoke(std::move(fn), std::forward&lt;Args&gt;(args)...));
-      } else {
-        Tag()(std::move(rcvr), std::forward&lt;Args&gt;(args)...);
-      }
-    };</del>
-  <ins>template&lt;class Self, size_t Id, class CompletionTag, class... Datums&gt;
-  constexpr void <expos>complete</expos>(this Self& self, <expos>indexed-tag</expos>&lt;Id&gt;,
-    CompletionTag, Datums&&... datums) noexcept { //exposition only
-      if constexpr (same_as&lt;CompletionTag, <expos>decayed-typeof</expos>&lt;<expos>set-cpo</expos>&gt;&gt;) {
-        TRY-SET-VALUE (self.get_receiver(),
-          invoke(self.data, std::forward&lt;Args&gt;(args)...));
-      } else {
-        CompletionTag()(self.get_receiver(), std::forward&lt;Args&gt;(args)...);
-      }
-  }</ins>
-};</pre>
-</div>
-#+END_EXPORT
 
 ** Changes to /~let_value~/, /~let_error~/, /~let_stopped~/
 
@@ -2042,100 +1985,6 @@ Equivalent to:
 #+END_EXPORT
 
 
-** Changes to /~let_value~/, /~let_error~/, /~let_stopped~/ :noexport:
-
-OLD STUFF BELOW
-
-Modify [exec.let] p5 as follows:
-
-#+BEGIN_EXPORT html
-<div class="wording">
-The exposition-only class template<ins>s state-impls-for and sender-</ins>impls-for (33.9.1) <del>is</del><ins>are</ins> specialized for let-cpo as follows:
-
-<pre>namespace std::execution {
-  template&lt;class State, class Rcvr, class... Args&gt;
-  void let-bind(State& state, Rcvr& rcvr, Args&&... args); // exposition only
-
-  <del>template&lt;&gt;
-  struct impls-for&lt;decayed-typeof&lt;let-cpo&gt;&gt; : default-impls {
-    static constexpr auto get-state = see below;
-    static constexpr auto complete = see below;
-  };</del>
-  <ins>template&lt;&gt;
-  struct state-impls-for&lt;decayed-typeof&lt;let-cpo&gt;&gt; : default-state-impls {
-    template&lt;class Self, size_t Id, class CompletionTag, class... Datums&gt;
-      constexpr void complete(this Self& self, indexed-tag&lt;Id&gt;,
-        CompletionTag, Datums&&... datums) noexcept;
-  };
-  template&lt;&gt;
-  struct sender-impls-for&lt;decayed-typeof&lt;let-cpo&gt;&gt; : default-sender-impls {
-    template&lt;class Self, class Rcvr&gt;
-    auto get-state(this Self&& self, Rcvr& rcvr) // exposition only
-      requires see-below;
-  };</ins>
-}</pre>
-</div>
-#+END_EXPORT
-
-Modify [exec.let] p7 as follows:
-
-#+BEGIN_EXPORT html
-<div class="wording">
-<ins>sender-</ins>impls-for&lt;decayed-typeof&lt;let-cpo&gt;&gt;::get-state is <del>initialized with a callable object</del> equivalent to the
-following:
-
-<pre><del>[]&lt;class Sndr, class Rcvr&gt;(Sndr&& sndr, Rcvr& rcvr) requires see below {
-  auto& [_, fn, child] = sndr;
-  using fn_t = decay_t&lt;decltype(fn)&gt;;
-  using env_t = decltype(let-env(child));
-  using args_variant_t = see below;
-  using ops2_variant_t = see below;
-  struct state-type {
-    fn_t fn; // exposition only
-    env_t env; // exposition only
-    args_variant_t args; // exposition only
-    ops2_variant_t ops2; // exposition only
-  };
-  return state-type{std::forward_like&lt;Sndr&gt;(fn), let-env(child), {}, {}};
-}</del>
-<ins>auto& [_, fn, child] = sndr;
-  using fn_t = decay_t&lt;decltype(fn)&gt;;
-  using env_t = decltype(let-env(child));
-  using args_variant_t = see below;
-  using ops2_variant_t = see below;
-  struct state-type {
-    fn_t fn; // exposition only
-    env_t env; // exposition only
-    args_variant_t args; // exposition only
-    ops2_variant_t ops2; // exposition only
-  };
-  return state-type{std::forward_like&lt;Sndr&gt;(fn), let-env(child), {}, {}};
-}</ins></pre>
-</div>
-#+END_EXPORT
-
-Modify [exec.let] p12 as follows:
-
-#+BEGIN_EXPORT html
-<div class="wording">
-<ins>state-</ins>impls-for&lt;decayed-typeof&lt;let-cpo&gt;&gt;::complete is <del>initialized with a callable object</del> equivalent to the
-following:
-
-<pre><del>[]&lt;class Tag, class... Args&gt;
-  (auto, auto& state, auto& rcvr, Tag, Args&&... args) noexcept -> void {
-    if constexpr (same_as&lt;Tag, decayed-typeof&lt;set-cpo&gt;&gt;) {
-      TRY-EVAL(rcvr, let-bind(state, rcvr, std::forward&lt;Args&gt;(args)...));
-    } else {
-      Tag()(std::move(rcvr), std::forward&lt;Args&gt;(args)...);
-    }
-  }</del>
-<ins>if constexpr (same_as&lt;Tag, decayed-typeof&lt;set-cpo&gt;&gt;) {
-  TRY-EVAL(self.get_receiver(), let-bind(self.data, self.get_receiver(), std::forward&lt;Args&gt;(args)...));
-} else {
-  Tag()(std::move(self.get_receiver()), std::forward&lt;Args&gt;(args)...);
-}</ins></pre>
-</div>
-#+END_EXPORT
 
 ** Changes to /~bulk~/ :noexport:
 
