@@ -1511,7 +1511,69 @@ lambda:</del>
 </div>
 #+END_EXPORT
 
+** Changes to /~just~/, /~just_error~/, and /~just_stopped~/
+
+Modify [exec.just] p2 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+
+For just, just_error, and just_stopped, let <expos>set-cpo</expos> be set_value, set_error,
+and set_stopped, respectively. The exposition-only class template
+<del><expos>impls-for</expos></del><ins><expos>basic-operation</expos></ins>
+(33.9.1) is specialized for <expos>just-cpo</expos> as follows:
+
+<pre>namespace std::execution {
+
+<del>template&lt;&gt;
+struct <expos>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;<expos>just-cpo</expos>&gt;&gt; : <expos>default-impls</expos> {
+  static constexpr auto start =
+    [](auto& state, auto& rcvr) noexcept -&gt; void {
+      auto& [...ts] = state;
+      <expos>set-cpo</expos>(std::move(rcvr), std::move(ts)...);
+    };
+};</del>
+
+<ins>template&lt;typename Rcvr, typename... Ts&gt;
+struct <expos>basic-operation</expos>&lt;<expos>just-cpo</expos>, Rcvr, Ts...&gt;
+: <expos>product-type</expos>&lt;Ts...&gt;
+, <expos>default-state-impls</expos>
+, inlinable_operation_state&lt;<expos>basic-operation</expos>&lt;just-cpo, Rcvr, Ts...&gt;, Rcvr&gt; {
+
+  <expos>basic-operation</expos>(Rcvr r, Ts&&... ts)
+  : inlinable_operation_state&lt;<expos>basic-operation</expos>, Rcvr&gt;(std::move(r))
+  , <expos>product-type</expos>(std::forward&lt;Ts&gt;(ts)...)
+  {}
+
+  void start() & noexcept {
+    auto&& [...ts] = *this;
+    <expos>set-cpo</expos>(std::move(this-&gt;get_receiver()), std::move(ts)...);
+  }
+};</ins>
+
+}</pre>
+</div>
+#+END_EXPORT
+
+Insert the following paragraph between [exec.let] p2 and p3:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+<ins>The exposition-only class template
+<expos>sender-impls-for</expos> (33.9.1) is specialized for <expos>let-cpo</expos> as follows:</ins>
+
+<pre><ins>template&lt;&gt;
+struct <expos>sender-impls-for</expos>&lt;<expos>let-cpo</expos>&gt; : <expos>default-sender-impls</expos> {
+  template&lt;class Sender, class Env&gt;
+  using <expos>completion-signatures-of-t</expos>
+    = <expos>completion-signatures-for</expos>&lt;Sender, Env&gt;;
+};</ins></pre>
+</div>
+#+END_EXPORT
+
 ** Changes to /~just~/, /~just_error~/, and /~just_stopped~/ :noexport:
+
+OLD STUFF
 
 Modify [exec.just] p2.3 as follows:
 
@@ -1804,64 +1866,180 @@ struct <expos><ins>state-</ins>impls-for</expos>&lt;<expos>decayed-typeof</expos
 
 ** Changes to /~let_value~/, /~let_error~/, /~let_stopped~/
 
-Modify [exec.just] p2 as follows:
+Modify p5 as follows:
 
 #+BEGIN_EXPORT html
 <div class="wording">
-
-For just, just_error, and just_stopped, let <expos>set-cpo</expos> be set_value, set_error,
-and set_stopped, respectively. The exposition-only class template
-<del><expos>impls-for</expos></del><ins><expos>basic-operation</expos></ins>
-(33.9.1) is specialized for <expos>just-cpo</expos> as follows:
+The exposition-only class template <del><expos>impls-for</expos></del>
+<ins><expos>basic-operation</expos></ins> (33.9.1) is specialized
+for <expos>let-cpo</expos> as follows:
 
 <pre>namespace std::execution {
 
+<del>template&lt;class State, class Rcvr, class... Args&gt;
+void <expos>let-bind</expos>(State& state, Rcvr& rcvr, Args&&... args); // <expos>exposition only</expos></del>
+
 <del>template&lt;&gt;
-struct <expos>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;<expos>just-cpo</expos>&gt;&gt; : <expos>default-impls</expos> {
-  static constexpr auto start =
-    [](auto& state, auto& rcvr) noexcept -&gt; void {
-      auto& [...ts] = state;
-      <expos>set-cpo</expos>(std::move(rcvr), std::move(ts)...);
-    };
+struct <expos>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;<expos>let-cpo</expos>&gt;&gt; : default-impls {
+  static constexpr auto <expos>get-state</expos> = see below ;
+  static constexpr auto <expos>complete</expos> = see below ;
 };</del>
 
-<ins>template&lt;typename Rcvr, typename... Ts&gt;
-struct <expos>basic-operation</expos>&lt;<expos>just-cpo</expos>, Rcvr, Ts...&gt;
-: <expos>product-type</expos>&lt;Ts...&gt;
-, <expos>default-state-impls</expos>
-, inlinable_operation_state&lt;<expos>basic-operation</expos>&lt;just-cpo, Rcvr, Ts...&gt;, Rcvr&gt; {
+<ins>struct <expos>predecessor-tag</expos> {}; // <expos>exposition only</expos>
 
-  <expos>basic-operation</expos>(Rcvr r, Ts&&... ts)
-  : inlinable_operation_state&lt;<expos>basic-operation</expos>, Rcvr&gt;(std::move(r))
-  , <expos>product-type</expos>(std::forward&lt;Ts&gt;(ts)...)
-  {}
+template&lt;size_t Index&gt;
+struct <expos>successor-tag</expos> {};  // <expos>exposition only</expos>
+
+template&lt;class Func, class ValueSig&gt;
+struct <expos>let-value-successor-for</expos>; // <expos>exposition only</expos>
+template&lt;class Func, class... Vs&gt;
+struct <expos>let-value-successor-for</expos>&lt;Func, set_value_t(Vs...)&gt; {
+  using type = invoke_result_t&lt;Func, decay_t&lt;Vs&gt;&...&gt;;
+};
+
+template&lt;class Derived, class Env, class Func, class ValueSignatures&gt;
+struct <expos>let-value-successor-child</expos>;  // <expos>exposition only</expos>
+template&lt;class Derived, class Env, class Func, class... ValueSigs&gt;
+struct <expos>let-value-successor-child</expos>&lt;Derived, Env, Func, completion_signatures&lt;ValueSigs...&gt;&gt;
+: <expos>manual-child-operation-variant</expos>&lt;
+    Derived,
+    <expos>successor-tag</expos>,
+    Env,
+    typename <expos>let-value-successor-for</expos>&lt;Func, ValueSigs&gt;::type...&gt;
+{};
+
+template&lt;class Rcvr, class Func, class Source&gt;
+struct <expos>basic-operation</expos>&lt;<expos>let-cpo</expos>, Rcvr, Func, Source&gt;
+: <expos>default-state-impls</expos>
+, inlinable_operation_state&lt;<expos>basic-operation</expos>&lt;<expos>let-cpo</expos>, Rcvr, Func, Source&gt;, Rcvr&gt;
+, <expos>manual-child-operation</expos>&lt;
+    <expos>basic-operation</expos>&lt;<expos>let-cpo</expos>, Rcvr, Func, Source&gt;,
+    <expos>predecessor_tag</expos>,
+    env_of_t&lt;Rcvr&gt;,
+    Source&gt;
+, <expos>let-value-successor-child</expos>&lt;
+    <expos>basic-operation</expos>&lt;<expos>let-cpo</expos>, Rcvr, Func, Source&gt;,
+    env_of_t&lt;Rcvr&gt;,
+    decay_t&lt;Func&gt;,
+    <expos>filter-completion-signatures-t</expos>&lt;<expos>set-cpo</expos>, completion_signatures_of_t&lt;Source, env_of_t&lt;Rcvr&gt;&gt;&gt;&gt; {
+
+  using <expos>pred-child-t</expos> = <expos>manual-child-operation</expos>&lt; // <expos>exposition only</expos>
+    <expos>basic-operation</expos>,
+    <expos>predecessor-tag</expos>,
+    env_of_t&lt;Rcvr&gt;,
+    Source&gt;;
+
+  using <expos>func-t</expos> = decay_t&lt;Func&gt;; // <expos>exposition only</expos>
+
+  using <expos>succ-child-t</expos> = <expos>let-value-successor-child</expos>&lt; // <expos>exposition only</expos>
+    <expos>basic-operation</expos>,
+    env_of_t&lt;Rcvr&gt;,
+    <expos>func-t</expos>,
+    <expos>filter-completion-signatures-t</expos>&lt;<expos>set-cpo</expos>, completion_signatures_of_t&lt;Source, env_of_t&lt;Rcvr&gt;&gt;&gt;&gt;;
+
+  using <expos>result-variant-t</expos> = // <expos>exposition only</expos>
+    value_types_of_t&lt;Source, env_of_t&lt;Rcvr&gt;, <expos>decayed-tuple</expos>, <expos>variant-with-monostate</expos>&gt;;
+
+  [[no_unique_address]] <expos>func-t</expos> <expos>func</expos>; // <expos>exposition only</expos>
+  <expos>result-variant-t</expos> <expos>result</expos>; // <expos>exposition only</expos>
+
+  <expos>basic_operation</expos>(Rcvr r, Func&& func, Source&& src)
+    noexcept(<expos>pred-child-t</expos>::<expos>is-nothrow-connectable</expos> && is_nothrow_constructible_v&lt;<expos>func-t</expos>, Func&gt;)
+  : inlinable_operation_state&lt;<expos>basic_operation</expos>, Rcvr&gt;(std::move(r))
+  , <expos>func</expos>(std::forward&lt;Func&gt;(func)) {
+    <expos>pred-child-t</expos>::<expos>construct</expos>(std::forward&lt;Source&gt;(src));
+  }
+
+  ~<expos>basic_operation</expos>();
 
   void start() & noexcept {
-    auto&& [...ts] = *this;
-    <expos>set-cpo</expos>(std::move(this-&gt;get_receiver()), std::move(ts)...);
+    <expos>pred-child-t</expos>::<expos>start</expos>();
   }
+
+  template&lt;class CPO, class... Args&gt;
+  void <expos>complete</expos>(<expos>predecessor-tag</expos>, CPO, Args&&... args) noexcept;
+
+  template&lt;class CPO, size_t Index, class... Args&gt;
+  void <expos>complete</expos>(<expos>successor-tag</expos>&lt;Index&gt;, CPO, Args&&... args) noexcept;
 };</ins>
 
 }</pre>
 </div>
 #+END_EXPORT
 
-Insert the following paragraph between [exec.let] p2 and p3:
+Remove [exec.let] p6.
+
+Remove [exec.let] p7 and replace it with the following paragraphs:
 
 #+BEGIN_EXPORT html
 <div class="wording">
-<ins>The exposition-only class template
-<expos>sender-impls-for</expos> (33.9.1) is specialized for <expos>let-cpo</expos> as follows:</ins>
 
-<pre><ins>template&lt;&gt;
-struct <expos>sender-impls-for</expos>&lt;<expos>let-cpo</expos>&gt; : <expos>default-sender-impls</expos> {
-  template&lt;class Sender, class Env&gt;
-  using <expos>completion-signatures-of-t</expos>
-    = <expos>completion-signatures-for</expos>&lt;Sender, Env&gt;;
-};</ins></pre>
+<pre>~<expos>basic_operation</expos>&lt;<expos>let-cpo</expos>&gt;()</pre>
+
+Equivalent to:
+
+<pre>if (<expos>result</expos>.index() != 0) {
+  <expos>dispatch-index</expos>&lt;(variant_size_v&lt;<expos>result-variant-t</expos>&gt; - 1)&gt;(
+    [&]&lt;size_t Index&gt;(integral_constant&lt;size_t, Index&gt;) noexcept {
+      <expos>succ-child-t</expos>::template <expos>destruct</expos>&lt;Index&gt;();
+    }, <expos>result</expos>.index() - 1);
+  <expos>result</expos>.template emplace&lt;0&gt;();
+}
+<expos>pred-child-t</expos>::_destruct();</pre>
+
 </div>
 #+END_EXPORT
 
+#+BEGIN_EXPORT html
+<div class="wording">
+
+<pre>template&lt;class CPO, class... Args&gt;
+void <expos>complete</expos>(<expos>predecessor-tag</expos>, CPO, Args&&... args) noexcept</pre>
+
+Equivalent to:
+
+<pre>if constexpr (same_as&lt;CPO, set_value_t&gt;)  {
+  using tuple_t = _decayed_tuple&lt;Args...&gt;;
+  using successor_t = invoke_result_t&lt;<expos>func-t</expos>, decay_t&lt;Args&gt;&...&gt;;
+  constexpr size_t successor_index = <expos>succ-child-t</expos>::template <expos>index-of</expos>&lt;successor_t&gt;();
+
+  constexpr bool is_nothrow =
+    (is_nothrow_constructible_v&lt;decay_t&lt;Args&gt;, Args&gt; && ...) &&
+     <expos>succ-child-t</expos>::template <expos>is-nothrow-connectable</expos>&lt;successor_index&gt; &&
+     is_nothrow_invocable_v&lt;<expos>func-t</expos>, decay_t&lt;Args&gt;&...&gt;;
+
+  try {
+    auto& t = _result.template emplace&lt;tuple_t&gt;(std::forward&lt;Args&gt;(args)...);
+    std::apply([&](decay_t&lt;Args&gt;&amp... args_copy) {
+      <expos>succ-child-t</expos>::template <expos>construct</expos>&lt;successor_index&gt;(
+        std::invoke(std::forward&lt;<expos>func-t</expos>&gt;(<expos>func</expos>), args_copy...));
+      }, t);
+    <expos>succ-child-t</expos>::template <expos>start</expos>&lt;successor_index&gt;();
+  } catch (...) {
+    if constexpr (!is_nothrow) {
+      <expos>result</expos>.template emplace&lt;0&gt;();
+      execution::set_error(std::move(this-&gt;get_receiver()), std::current_exception());
+    }
+  }
+} else {
+  CPO{}(std::move(this-&gt;get_receiver()), std::forward&lt;Args&gt;(args)...);
+}</pre>
+
+</div>
+#+END_EXPORT
+
+#+BEGIN_EXPORT html
+<div class="wording">
+
+<pre>template&lt;class CPO, size_t Index, class... Args&gt;
+void <expos>complete</expos>(<expos>successor-tag</expos>&lt;Index&gt;, CPO, Args&&... args) noexcept</pre>
+
+Equivalent to:
+
+<pre>CPO{}(std::move(this-&gt;get_receiver()), std::forward&lt;Args&gt;(args)...);</pre>
+
+</div>
+#+END_EXPORT
 
 
 ** Changes to /~let_value~/, /~let_error~/, /~let_stopped~/ :noexport:
