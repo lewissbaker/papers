@@ -1,12 +1,12 @@
 # -*- mode: org; org-html-htmlize-output-type: css -*-
-#+TITLE: D3425R2: Reducing operation-state sizes for subobject child operations
+#+TITLE: P3425R2: Reducing operation-state sizes for subobject child operations
 #+AUTHOR: Lewis Baker
 #+EMAIL: lewissbaker@gmail.com
 #+DATE: 2024-10-16
 #+OPTIONS: html5-fancy
 #+OPTIONS: tasks:nil
 #+OPTIONS: html-postamble:nil
-#+EXPORT_FILE_NAME: D3425R2
+#+EXPORT_FILE_NAME: P3425R2
 #+EXPORT_EXCLUDE_TAGS: noexport,todo
 
 #+BEGIN_EXPORT html
@@ -66,8 +66,8 @@
   </style>
 #+END_EXPORT
 
-| Document | *D3424R2*                             |
-| Date     | *2024-11-15*                          |
+| Document | *P3424R2*                             |
+| Date     | *2025-12-10*                          |
 | Reply To | *Lewis Baker <lewissbaker@gmail.com>* |
 | Audience | *LEWG*                                |
 
@@ -1511,7 +1511,7 @@ lambda:</del>
 </div>
 #+END_EXPORT
 
-** Changes to /~just~/, /~just_error~/, and /~just_stopped~/
+** Changes to /~just~/, /~just_error~/, and /~just_stopped~/ :noexport:
 
 Modify [exec.just] p2.3 as follows:
 
@@ -1533,7 +1533,7 @@ struct <expos><ins>state-</ins>impls-for</expos>&lt;<expos>decayed-typeof</expos
 </div>
 #+END_EXPORT
 
-** Changes to /~read_env~/
+** Changes to /~read_env~/ :noexport:
 
 Modify [exec.read.env] p3 as follows:
 
@@ -1553,7 +1553,7 @@ struct <expos><ins>state-</ins>impls-for</expos>&lt;<expos>decayed-typeof</expos
 </div>
 #+END_EXPORT
 
-** Changes to /~schedule_from~/
+** Changes to /~schedule_from~/ :noexport:
 
 Modify [exec.schedule.from] p4 as follows:
 
@@ -1674,7 +1674,7 @@ start(get-data(self).op-state);</ins></pre>
 #+END_EXPORT
 
 
-** Changes to /~then~/, /~upon_error~/, /~upon_stopped~/
+** Changes to /~then~/, /~upon_error~/, /~upon_stopped~/ :noexport:
 
 Modify [exec.then] p4 as follows:
 
@@ -1707,6 +1707,55 @@ struct <expos><ins>state-</ins>impls-for</expos>&lt;<expos>decayed-typeof</expos
 #+END_EXPORT
 
 ** Changes to /~let_value~/, /~let_error~/, /~let_stopped~/
+
+Modify [exec.just] p2 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+
+For just, just_error, and just_stopped, let <expos>set-cpo</expos> be set_value, set_error,
+and set_stopped, respectively. The exposition-only class template
+<del><expos>impls-for</expos></del><ins><expos>basic-operation</expos></ins>
+(33.9.1) is specialized for <expos>just-cpo</expos> as follows:
+
+<pre>namespace std::execution {
+
+<del>template&lt;&gt;
+struct <expos>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;<expos>just-cpo</expos>&gt;&gt; : <expos>default-impls</expos> {
+  static constexpr auto start =
+    [](auto& state, auto& rcvr) noexcept -&gt; void {
+      auto& [...ts] = state;
+      <expos>set-cpo</expos>(std::move(rcvr), std::move(ts)...);
+    };
+};</del>
+
+<ins>template&lt;typename Rcvr, typename... Ts&gt;
+struct <expos>basic-operation</expos>&lt;<expos>just-cpo</expos>, Rcvr, Ts...&gt;
+: <expos>product-type</expos>&lt;Ts...&gt;
+, <expos>default-state-impls</expos>
+, inlinable_operation_state&lt;<expos>basic-operation</expos>&lt;just-cpo, Rcvr, Ts...&gt;, Rcvr&gt; {
+
+  <expos>basic-operation</expos>(Rcvr r, Ts&&... ts)
+  : inlinable_operation_state&lt;<expos>basic-operation</expos>, Rcvr&gt;(std::move(r))
+  , <expos>product-type</expos>(std::forward&lt;Ts&gt;(ts)...)
+  {}
+
+  void start() & noexcept {
+    auto&& [...ts] = *this;
+    <expos>set-cpo</expos>(std::move(this-&gt;get_receiver()), std::move(ts)...);
+  }
+};</ins>
+
+}</pre>
+</div>
+#+END_EXPORT
+
+
+
+
+** Changes to /~let_value~/, /~let_error~/, /~let_stopped~/ :noexport:
+
+OLD STUFF BELOW
 
 Modify [exec.let] p5 as follows:
 
@@ -1799,7 +1848,7 @@ following:
 </div>
 #+END_EXPORT
 
-** Changes to /~bulk~/
+** Changes to /~bulk~/ :noexport:
 
 Modify [exec.bulk] p3 as follows:
 
@@ -1852,7 +1901,7 @@ The member <expos><ins>state-</ins>impls-for</expos>&lt;bulk_t&gt;::<expos>compl
 </div>
 #+END_EXPORT
 
-** Changes to /~split~/
+** Changes to /~split~/ :noexport:
 
 Modify [exec.split] p21 as follows:
 
@@ -1925,7 +1974,7 @@ uates state.sh_state-&gt;start-op ().</li>
 #+END_EXPORT
 
 
-** Changes to /~when_all~/
+** Changes to /~when_all~/ :noexport:
 
 Modify [exec.when.all] p4 as follows:
 
@@ -2140,7 +2189,7 @@ o.emplace(as...).
 #+END_EXPORT
 
 
-** Changes to /~into_variant~/
+** Changes to /~into_variant~/ :noexport:
 
 Modify [exec.into.variant] p4 as follows:
 
@@ -2212,7 +2261,7 @@ following lambda</del>:
 #+END_EXPORT
 
 
-** Changes to /~run_loop::run-loop-opstate~/
+** Changes to /~run_loop::run-loop-opstate~/ :noexport:
 
 Modify [exec.run.loop.types] by inserting a new paragraph after paragraph 9:
 
@@ -2223,6 +2272,10 @@ then objects of type <expos>run-loop-opstate</expos>&lt;Rcvr&gt; do not contain
 subobjects of type Rcvr.</ins>
 </div>
 #+END_EXPORT
+
+
+
+
 
 * Proposed Wording :noexport:
 
