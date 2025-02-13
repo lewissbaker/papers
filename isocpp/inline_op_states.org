@@ -1674,7 +1674,103 @@ start(get-data(self).op-state);</ins></pre>
 #+END_EXPORT
 
 
+** Changes to /~then~/, /~upon_error~/, /~upon_stopped~/
+
+Modify [exec.then] p4 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+For then, upon_error, and upon_stopped, let <expos>set-cpo</expos> be set_value, set_error,
+and set_stopped, respectively. The exposition-only class template
+<del><expos>impls-for</expos></del><ins><expos>basic-operation</expos></ins> (33.9.1) is specialized for <expos>then-cpo</expos> as follows:
+
+<pre>namespace std::execution {
+
+<del>template&lt;&gt;
+struct <expos>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;<expos>then-cpo</expos>&gt;&gt; : <expos>default-impls</expos> {
+  static constexpr auto <expos>complete</expos> =
+    []&lt;class Tag, class... Args&gt;
+    (auto, auto& fn, auto& rcvr, Tag, Args&&... args) noexcept -&gt; void {
+      if constexpr (same_as&lt;Tag, <expos>decayed-typeof</expos>&lt;<expos>set-cpo</expos>&gt;&gt;) {
+        TRY-SET-VALUE (rcvr,
+          invoke(std::move(fn), std::forward&lt;Args&gt;(args)...));
+      } else {
+        Tag()(std::move(rcvr), std::forward&lt;Args&gt;(args)...);
+      }
+    };
+};</del>
+
+<ins>template &lt;class Rcvr, class Data, class Child&gt;
+struct <expos>basic-operation</expos>&lt;<expos>then-cpo</expos>, Rcvr, Data, Child&gt;
+  : <expos>default-state-impls</expos>
+  , inlinable_operation_state&lt;<expos>basic-operation</expos>&lt;<expos>then-cpo</expos>, Rcvr, Data, Child&gt;, Rcvr&gt;
+  , <expos>manual-child-operation</expos>&lt;
+      <expos>basic-operation</expos>&lt;<expos>then-cpo</expos>, Rcvr, Data, Child&gt;,
+      <expos>indexed-tag</expos>&lt;0&gt;,
+      env_of_t&lt;Rcvr&gt;,
+      Child&gt; {
+
+  using <expos>child-op-t</expos> = <expos>manual-child-operation</expos>&lt; // <expos>exposition only</expos>
+      <expos>basic_operation</expos>,
+      <expos>indexed-tag</expos>&lt;0&gt;,
+      env_of_t&lt;Rcvr&gt;,
+      Child&gt;;
+
+  using <expos>func-t</expos> = decay_t&lt;Data&gt;; // <expos>exposition only</expos>
+  [[no_unique_address]] <expos>func-t</expos> <expos>func</expos>; // <expos>exposition only</expos>
+
+  <expos>basic-operation</expos>(Rcvr r, Data&& data, Child&& child)
+    noexcept(<expos>child-op-t</expos>::<expos>is-nothrow-connectable</expos> && is_nothrow_constructible_v&lt;decay_t&lt;Data&gt;, Data&gt;)
+    : inlinable_operation_state<<expos>basic-operation</expos>, Rcvr>(std::move(r))
+    , <expos>func</expos>(std::forward&lt;Data&gt;(data)) {
+     <expos>child-op-t</expos>::<expos>construct</expos>(std::forward&lt;Child&gt;(child));
+  }
+
+  ~<expos>basic-operation</expos>() {
+    <expos>child-op-t</expos>::_destruct();
+  }
+
+  void start() & noexcept {
+    <expos>child-op-t</expos>::_start();
+  }
+
+  template &lt;class Self, size_t Id, class Tag, class... Args&gt;
+  void <expos>complete</expos>(this Self& self, <expos>indexed-tag</expos>&lt;Id&gt;,
+      Tag, Args&&... args) noexcept {
+    if constexpr (same_as&lt;Tag, <expos>set-cpo</expos>&gt;) {
+      TRY-SET-VALUE(self.get_receiver(),
+        invoke(self.<expos>func</expos>, std::forward&lt;Args&gt;(args)...));
+    } else {
+      return Tag{}(
+          std::move(self.get_receiver()), std::forward&lt;Datums&gt;(args)...);
+    }
+  }
+};</ins>
+
+}</pre>
+</div>
+#+END_EXPORT
+
+Insert the following paragraph between [exec.then] p4 and p5:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+<ins>The exposition-only class template
+<expos>sender-impls-for</expos> (33.9.1) is specialized for <expos>then-cpo</expos> as follows:</ins>
+
+<pre><ins>template&lt;&gt;
+struct <expos>sender-impls-for</expos>&lt;<expos>then-cpo</expos>&gt; : <expos>default-sender-impls</expos> {
+  template&lt;class Sender, class Env&gt;
+  using <expos>completion-signatures-of-t</expos>
+    = <expos>completion-signatures-for</expos>&lt;Sender, Env&gt;;
+};</ins></pre>
+</div>
+#+END_EXPORT
+
 ** Changes to /~then~/, /~upon_error~/, /~upon_stopped~/ :noexport:
+
+OLD STUFF
+
 
 Modify [exec.then] p4 as follows:
 
@@ -1750,6 +1846,21 @@ struct <expos>basic-operation</expos>&lt;<expos>just-cpo</expos>, Rcvr, Ts...&gt
 </div>
 #+END_EXPORT
 
+Insert the following paragraph between [exec.let] p2 and p3:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+<ins>The exposition-only class template
+<expos>sender-impls-for</expos> (33.9.1) is specialized for <expos>let-cpo</expos> as follows:</ins>
+
+<pre><ins>template&lt;&gt;
+struct <expos>sender-impls-for</expos>&lt;<expos>let-cpo</expos>&gt; : <expos>default-sender-impls</expos> {
+  template&lt;class Sender, class Env&gt;
+  using <expos>completion-signatures-of-t</expos>
+    = <expos>completion-signatures-for</expos>&lt;Sender, Env&gt;;
+};</ins></pre>
+</div>
+#+END_EXPORT
 
 
 
