@@ -1555,21 +1555,6 @@ struct <expos>basic-operation</expos>&lt;<expos>just-cpo</expos>, Rcvr, Ts...&gt
 </div>
 #+END_EXPORT
 
-Insert the following paragraph between [exec.let] p2 and p3:
-
-#+BEGIN_EXPORT html
-<div class="wording">
-<ins>The exposition-only class template
-<expos>sender-impls-for</expos> (33.9.1) is specialized for <expos>let-cpo</expos> as follows:</ins>
-
-<pre><ins>template&lt;&gt;
-struct <expos>sender-impls-for</expos>&lt;<expos>let-cpo</expos>&gt; : <expos>default-sender-impls</expos> {
-  template&lt;class Sender, class Env&gt;
-  using <expos>completion-signatures-of-t</expos>
-    = <expos>completion-signatures-for</expos>&lt;Sender, Env&gt;;
-};</ins></pre>
-</div>
-#+END_EXPORT
 
 
 ** Changes to /~read_env~/ :noexport:
@@ -1986,58 +1971,67 @@ Equivalent to:
 
 
 
-** Changes to /~bulk~/ :noexport:
+** Changes to /~bulk~/
 
 Modify [exec.bulk] p3 as follows:
 
 #+BEGIN_EXPORT html
 <div class="wording">
-<pre>template<>
-struct <expos><ins>state-</ins>impls-for</expos>&lt;bulk_t&gt; : <expos>default-<ins>state-</ins>impls</expos> {
-  <del>static constexpr auto <expos>complete</expos> = see below;</del>
-  <ins>template&lt;class Self, size_t Id, class CompletionTag, class... Datums&gt;
-  constexpr void <expos>complete</expos>(this Self& self, <expos>indexed-tag</expos>&lt;Id&gt;,
-    CompletionTag, Datums&&... datums) noexcept requires see below;</ins>
-};</pre>
+The exposition-only class template <del><expos>impls-for</expos></del>
+<ins><expos>basic-operation</expos></ins> (33.9.1) is specialized for bulk_t as follows:
+
+<pre>namespace std::execution {
+
+  <del>template&lt;&gt;
+  struct <expos>impls-for</expos>&lt;bulk_t&gt; : <expos>default-impls</expos> {
+    static constexpr auto <expos>complete</expos> = <expos>see below</expos>;
+  };</del>
+
+<ins>template&lt;class Rcvr, class Shape, class F&gt;
+struct <expos>basic-operation</expos>&lt;bulk_t, Rcvr, Shape, F&gt;
+: <expos>product-type</expos>&lt;Ts...&gt;
+, <expos>default-state-impls</expos>
+, inlinable_operation_state&lt;<expos>basic-operation</expos>&lt;bulk_t, Rcvr, Shape, F&gt;, Rcvr&gt; {
+
+  <expos>basic-operation</expos>(Rcvr r, Shape shape, F f)
+  : inlinable_operation_state&lt;<expos>basic-operation</expos>, Rcvr&gt;(std::move(r))
+  , <expos>product-type</expos>(std::move(shape), std::move(f))
+  {}
+
+  template&lt;class Self, class Tag, class CPO, class... Args&gt;
+  void complete(this Self&& self, Tag, CPO, Args&&... args) noexcept;
+};</ins>
+
+}</pre>
 </div>
 #+END_EXPORT
 
-Modify [exec.bulk] p4 as follows:
+Delete [exec.bulk] p4, and replace with the following:
 
 #+BEGIN_EXPORT html
 <div class="wording">
-The member <expos><ins>state-</ins>impls-for</expos>&lt;bulk_t&gt;::<expos>complete</expos> is <del>initialized with a callable object</del> equivalent to the following
-<del>lambda</del>:
+<pre>template&lt;class Self, class Tag, class CPO, class... Args&gt;
+void complete(this Self&& self, Tag, CPO, Args&&... args) noexcept</pre>
 
-<pre><del>[]&lt;class Index, class State, class Rcvr, class Tag, class... Args&gt;
-  (Index, State& state, Rcvr& rcvr, Tag, Args&&... args) noexcept -> void requires see below {
-  if constexpr (same_as&lt;Tag, set_value_t&gt;) {
-    auto& [shape, f] = state;
-    constexpr bool nothrow = noexcept(f(auto(shape), args...));
-    TRY-EVAL (rcvr, [&]() noexcept(nothrow) {
-      for (decltype(auto(shape)) i = 0; i &lt; shape; ++i) {
-        f(auto(i), args...);
-      }
-      Tag()(std::move(rcvr), std::forward<Args>(args)...);
-    }());
-  } else {
-    Tag()(std::move(rcvr), std::forward<Args>(args)...);
-  }
-}</del>
-<ins>if constexpr (same_as&lt;Tag, set_value_t&gt;) {
-  auto& [shape, f] = self.data;
+Equivalent to:
+
+<pre>if constexpr (same_as&lt;Tag, set_value_t&gt;) {
+  auto& [shape, f] = self;
   constexpr bool nothrow = noexcept(f(auto(shape), args...));
   TRY-EVAL (self.get_receiver(), [&]() noexcept(nothrow) {
     for (decltype(auto(shape)) i = 0; i &lt; shape; ++i) {
       f(auto(i), args...);
     }
-    Tag()(self.get_receiver(), std::forward<Args>(args)...);
+    Tag()(self.get_receiver(), std::forward&lt;Args&gt;(args)...);
   }());
 } else {
-  Tag()(self.get_receiver(), std::forward<Args>(args)...);
-}</ins></pre>
+  Tag()(self.get_receiver(), std::forward&lt;Args&gt;(args)...);
+}</pre>
+
 </div>
 #+END_EXPORT
+
+Delete [exec.bulk] p5
 
 ** Changes to /~split~/ :noexport:
 
