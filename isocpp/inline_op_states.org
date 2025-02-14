@@ -1607,7 +1607,7 @@ Modify paragraph 33 from [exec.snd.expos] as follows:
 #+BEGIN_EXPORT html
 <div class="wording" style="counter-set: paragraph 32">
 <p class="numbered">
-The expression in the <code>noexcept clause of the <code>connect</code> member function of <code><expos>basic-sender</expos></code> is:
+The expression in the <code>noexcept</code> clause of the <code>connect</code> member function of <code><expos>basic-sender</expos></code> is:
 <pre>
 is_nothrow_constructible_v&lt;basic-operation&lt;<del>Self</del><ins>Tag</ins>, Rcvr<ins>, Data, Child...</ins>&gt;, <del>Self, </del>Rcvr<ins>, <expos>member-t</expos>&lt;Self, Data&gt;, <expos>member-t</expos>&lt;Self, Child&gt;...&gt;
 </pre>
@@ -1675,12 +1675,23 @@ lambda:</del>
 Modify [exec.just] p2 as follows:
 
 #+BEGIN_EXPORT html
-<div class="wording">
+<div class="wording" style="counter-set: paragraph 1">
 
-For just, just_error, and just_stopped, let <expos>set-cpo</expos> be set_value, set_error,
-and set_stopped, respectively. The exposition-only class template
-<del><expos>impls-for</expos></del><ins><expos>basic-operation</expos></ins>
-(33.9.1) is specialized for <expos>just-cpo</expos> as follows:
+<p class="numbered">
+The names <code>just</code>, <code>just_error</code>, and <code>just_stopped</code> denote customization point objects.
+Let <code><expos>just-cpo</expos></code> be one of <code>just</code>, <code>just_error</code> or <code>just_stopped</code>.
+For a pack of subexpressions, <code>ts</code>, let <code>Ts</code> be the pack of types <code>decltype((ts))</code>.
+The expression <code><expos>just-cpo</expos>(ts...)</code> is ill-formed if:
+<ul>
+<li><code>(<expos>movable-value</expos>&lt;Ts&gt; &amp;&amp;...)</code> is <code>false</code>, or</li>
+<li><code><expos>just-cpo</expos></code> is <code>just_error</code> and <code>sizeof...(ts) == 1</code> is <code>false</code>, or</li>
+<li><code><expos>just-cpo</expos></code> is <code>just_stopped</code> and <code>sizeof...(ts) ==  0</code> is <code>false</code>.</li>
+</ul>
+Otherwise, it is expression-equivalent to <code><expos>make-sender</expos>(<expos>just-cpo</expos>, <expos>product-type</expos>{ts...})</code>.<br>
+For <code>just</code>, <code>just_error</code>, and <code>just_stopped</code>, let <code><expos>set-cpo</expos></code> be <code>set_value</code>, <code>set_error</code>,
+and <code>set_stopped</code>, respectively. The exposition-only class template
+<code><del><expos>impls-for</expos></del><ins><expos>basic-operation</expos></ins></code>
+(33.9.1) is specialized for <code><expos>just-cpo</expos></code> as follows:
 
 <pre>namespace std::execution {
 
@@ -1693,28 +1704,28 @@ struct <expos>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;<expos>just-
     };
 };</del>
 
-<ins>template&lt;typename Rcvr, typename... Ts&gt;
-struct <expos>basic-operation</expos>&lt;<expos>just-cpo</expos>, Rcvr, Ts...&gt;
-: <expos>product-type</expos>&lt;Ts...&gt;
-, <expos>default-state-impls</expos>
-, inlinable_operation_state&lt;<expos>basic-operation</expos>&lt;just-cpo, Rcvr, Ts...&gt;, Rcvr&gt; {
+<ins>template&lt;typename Rcvr, typename Values&gt;
+struct <expos>basic-operation</expos>&lt;<expos>just-cpo</expos>, Rcvr, Values&gt;  <expos>// exposition only</expos>
+: <expos>default-state-impls</expos>
+, <expos>inlinable-operation-state</expos>&lt;<expos>basic-operation</expos>&lt;just-cpo, Rcvr, Values&gt;, Rcvr&gt; {
 
-  <expos>basic-operation</expos>(Rcvr r, Ts&&... ts)
+  Values <expos>values</expos>;    <expos>// exposition only</expos>
+
+  template&lt;class Values2&gt;
+  <expos>basic-operation</expos>(Rcvr r, Values2&amp;&amp; vs)   <expos>// exposition only</expos>
   : inlinable_operation_state&lt;<expos>basic-operation</expos>, Rcvr&gt;(std::move(r))
-  , <expos>product-type</expos>(std::forward&lt;Ts&gt;(ts)...)
+  , <expos>values</expos>(std::forward<Values2>(vs))
   {}
 
-  void start() & noexcept {
-    auto&& [...ts] = *this;
-    <expos>set-cpo</expos>(std::move(this-&gt;get_receiver()), std::move(ts)...);
+  void start() &amp; noexcept {
+    auto&amp; [...vs] = <expos>values</expos>;
+    <expos>set-cpo</expos>(std::move(this-&gt;<expos>get-receiver</expos>()), std::move(vs)...);
   }
 };</ins>
 
 }</pre>
 </div>
 #+END_EXPORT
-
-
 
 ** Changes to /~read_env~/ :noexport:
 
