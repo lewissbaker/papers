@@ -1,8 +1,8 @@
 # -*- mode: org; org-html-htmlize-output-type: css -*-
-#+TITLE: P3425R2: Reducing operation-state sizes for subobject child operations
+#+TITLE: D3425R2: Reducing operation-state sizes for subobject child operations
 #+AUTHOR: Lewis Baker
 #+EMAIL: lewissbaker@gmail.com
-#+DATE: 2024-10-16
+#+DATE: 2025-02-14
 #+OPTIONS: html5-fancy
 #+OPTIONS: tasks:nil
 #+OPTIONS: html-postamble:nil
@@ -66,10 +66,11 @@
   </style>
 #+END_EXPORT
 
-| Document | *P3424R2*                             |
-| Date     | *2025-12-10*                          |
-| Reply To | *Lewis Baker <lewissbaker@gmail.com>* |
-| Audience | *LEWG*                                |
+| Document | *D3424R2*                                  |
+| Date     | *2025-02-14*                               |
+| Reply To | *Lewis Baker <lewissbaker@gmail.com>*      |
+|          | *Bryan St. Amour <bryan@bryanstamour.com>* |
+| Audience | *LEWG*                                     |
 
 * Abstract
 
