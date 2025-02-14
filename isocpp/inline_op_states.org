@@ -1144,7 +1144,7 @@ namespace std::execution {
   </ins>
   
   template&lt;class Tag&gt;
-  struct <expos><ins>sender-</ins>impls-for</expos><del> : <expos>default-impls</expos> {}</del>;       <expos>// exposition only</expos>
+  struct <expos><ins>sender-</ins>impls-for</expos> : <expos>default<ins>-sender</ins>-impls</expos> {};       <expos>// exposition only</expos>
 
 <ins>  template&lt;class Sndr&gt;
   auto <expos>get-tag</expos>(const Sndr&amp; sndr) noexcept {        <expos>// exposition only</expos>
@@ -1727,23 +1727,39 @@ struct <expos>basic-operation</expos>&lt;<expos>just-cpo</expos>, Rcvr, Values&g
 </div>
 #+END_EXPORT
 
-** Changes to /~read_env~/ :noexport:
+** Changes to /~read_env~/
 
 Modify [exec.read.env] p3 as follows:
 
 #+BEGIN_EXPORT html
-<div class="wording">
-<pre>template<>
-struct <expos><ins>state-</ins>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;read_env&gt;&gt; : <expos>default-<ins>state-</ins>impls</expos> {
-  <del>static constexpr auto start =
+<div class="wording" style="counter-set: paragraph 2">
+<p class="numbered">
+The exposition-only class template <code><expos><del>impls-for</del><ins>basic-operation</ins></expos></code> ([exec.snd.general]) is specialized for <code>read_env</code> as follows:
+<pre><del>template<>
+struct <expos>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;read_env&gt;&gt; : <expos>default-impls</expos> {
+  static constexpr auto start =
     [](auto query, auto& rcvr) noexcept -> void {
       TRY-SET-VALUE (rcvr, query(get_env(rcvr)));
-    };</del>
-  <ins>template &lt;class Self&gt;
-  void <expos>start</expos>(this Self& self) {
-    TRY-SET-VALUE(self.get_receiver(), query(get_env(self.get_receiver())));
-  }</ins>
-};</pre>
+    };  
+};</del>
+<ins>template<class Rcvr, class Query>
+struct <expos>basic-operation</expos>&lt;<expos>decayed-typeof</expos>&lt;read_env&gt;, Rcvr, Query&gt;
+: <expos>default-state-impls</expos>
+, <expos>inlinable-operation-state</expos>&lt;<expos>basic-operation</expos>&lt;<expos>decayed-typeof</expos>&lt;read_env&gt;, Rcvr, Query&gt;, Rcvr&gt; {
+  decay_t&lt;Query&gt; <expos>query</expos>;  <expos>// exposition only</expos>
+
+  <expos>basic-operation</expos>(Rcvr r, Query q) noexcept(is_nothrow_move_constructible_v&lt;Rcvr&gt;)
+  : <expos>inlinable-operation-state</expos>&lt;<expos>basic-operation</expos>, Rcvr&gt;(std::move(r))
+  , <expos>query</expos>(std::forward&lt;Query&gt;(q))
+  {}
+
+  void start() & noexcept {
+    decltype(auto) rcvr = this-&gt;<expos>get-receiver</expos>();
+    <expos>TRY-SET-VALUE</expos>(rcvr, <expos>query</expos>(get_env(rcvr)));
+  }
+};
+</ins>
+</pre>
 </div>
 #+END_EXPORT
 
