@@ -1119,7 +1119,7 @@ namespace std::execution {
     void start(this Self& self) noexcept {
       self.<expos>start-all</expos>();
     }
-    
+
     template&lt;class Self, class ChildTag&gt;
     constexpr decltype(auto) <expos>get-env</expos>(this Self& self, ChildTag) noexcept { <expos>// exposition only</expos>
       return get_env(self.<expos>get-receiver</expos>());
@@ -1142,7 +1142,7 @@ namespace std::execution {
     }
   };
   </ins>
-  
+
   template&lt;class Tag&gt;
   struct <expos><ins>sender-</ins>impls-for</expos> : <expos>default<ins>-sender</ins>-impls</expos> {};       <expos>// exposition only</expos>
 
@@ -1172,7 +1172,7 @@ namespace std::execution {
 
   template&tl;size_t I, class Sndr&gt;
   using <expos>child-type</expos> = decltype(<expos>get-child</expos>&lt;I&gt;(declval&lt;Sndr&gt;());   <expos>// exposition only</expos>
-  
+
   template&lt;T&gt;
   inline constexpr bool <expos>is-nothrow-decay-copyable-v</expos> =      <expos>// exposition only</expos>
       is_nothrow_constructible_v&lt;decay_t&lt;T&gt;, T&gt;;
@@ -1442,7 +1442,7 @@ namespace std::execution {
     template&lt;size_t Index&gt;
     using <expos>child-op-t</expos> =    <expos>// exposition only</expos>
       connect_result_t&lt;Child...[Index], <expos>child-receiver</expos>&lt;Index&gt;&gt;;
-    
+
   protected:
     template&lt;class C&gt;
     static consteval size_t <expos>index-of</expos>() noexcept {    <expos>// exposition only</expos>
@@ -1503,7 +1503,7 @@ namespace std::execution {
     using <expos>storage-t</expos> = std::byte[<expos>max-size</expos>];  <expos>// exposition only</expos>
     alignas(<expos>max-align</expos>) <expos>storage-t</expos> <expos>storage</expos>;   <expos>// exposition only</expos>
   };</ins>
-  
+
   template&lt;class <ins>Tag</ins><del>Sndr</del>, class Rcvr<ins>, class Data, class... Children</ins>&gt;
     <del>requires <expos>valid-specialization</expos>&lt;<expos>state-type</expos>, Sndr, Rcvr&gt; &amp;&amp;
              <expos>valid-specialization</expos>&lt;<expos>connect-all-result</expos>, Sndr, Rcvr&gt;</del>
@@ -1740,7 +1740,7 @@ struct <expos>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;read_env&gt;
   static constexpr auto start =
     [](auto query, auto& rcvr) noexcept -> void {
       TRY-SET-VALUE (rcvr, query(get_env(rcvr)));
-    };  
+    };
 };</del>
 <ins>template<class Rcvr, class Query>
 struct <expos>basic-operation</expos>&lt;<expos>decayed-typeof</expos>&lt;read_env&gt;, Rcvr, Query&gt;
@@ -2157,8 +2157,8 @@ The exposition-only class template <del><expos>impls-for</expos></del>
   };</del>
 
 <ins>template&lt;class Rcvr, class Shape, class F&gt;
-struct <expos>basic-operation</expos>&lt;bulk_t, Rcvr, Shape, F&gt;
-: <expos>product-type</expos>&lt;Ts...&gt;
+struct <expos>basic-operation</expos>&lt;bulk_t, Rcvr, Shape, F&gt; <expos>// exposition only</expos>
+: <expos>product-type</expos>&lt;Shape, F&gt;
 , <expos>default-state-impls</expos>
 , inlinable_operation_state&lt;<expos>basic-operation</expos>&lt;bulk_t, Rcvr, Shape, F&gt;, Rcvr&gt; {
 
