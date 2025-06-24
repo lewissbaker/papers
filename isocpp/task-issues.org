@@ -1,0 +1,671 @@
+#+title: ~std::execution::task~ issues
+
+During the wording review of P3552R3 in LWG during the meeting at Sofia, I discovered
+some design/wording issues that need to be addressed before we ship this facility in
+an international-standard.
+
+* ~task~ is not actually lazily started
+
+The current wording for ~task::promise_type::initial_suspend~ in [task.promise] p6
+is written as:
+
+#+begin_src html
+  <div>
+  <pre>
+  auto initial_suspend() noexcept;
+  </pre>
+  <p>
+    <i>Returns</i>: An awaitable object of unspecified type ([expr.await]) whose member functions arrange for:
+    <ul>
+      <li>the calling coroutine to be suspended,</li>
+      <li>the coroutine to be resumed on an execution agent of the execution resource associated with <code><i>SCHED</i>(*this)</code>.
+    </ul>
+  </p>
+  </div>
+#+end_src
+
+This wording as written means that the coroutine will actually, upon initial invocation of the coroutine,
+immediately schedule the resumption of the coroutine on the associated scheduler.
+
+There are a couple of issues here:
+- The coroutine is being started eagerly (which does not represent the design intent of it being started lazily only when the returend task is awaited or connect+started).
+- The ~SCHED(*this)~ of the promise is not actually initialized until the coroutine is connected+started and so trying to reference it here is not valid.
+
+I think this wording can instead by changed to just have ~initial_suspend()~ be "/Returns/: ~suspend_always{}~." so that the coroutine
+is initially suspended and can be resumed during start on the appropriate scheduler after ~SCHED(*this)~ has been initialized.
+
+* ~task~ coroutine reschedules too often
+
+** ~task~ should not unconditionally reschedule when control enters the coroutine
+
+The current wording of ~task~ is such that the coroutine will unconditionally reschedule
+onto the associated schedulerthrough the current scheduler when the coroutine is initially launched.
+
+In [task.promise] p6, the wording for ~initial_suspend~ says that it unconditionally suspends
+and reschedules onto the associated scheduler. Notwithstanding the issue described above of
+the current wording actually describing an eagerly started coroutine, the intent of this wording
+seems to be that the coroutine ensures execution initially starts on the associated scheduler
+by executing a ~schedule~ operation and then resuming the coroutine from the initial suspend point
+inside the ~set_value~ completion handler of the ~schedule~ operation.
+
+The effect of this would be that every call to a coroutine would have to round-trip through the
+scheduler, which, depending on the behaviour of the ~schedule~ operation, might requeue it to the
+back of the scheduler's queue, greatly increasing latency of the call.
+
+I think that, instead, we should use other means to ensure that the coroutine starts on the associated
+context. For example, by strengthening the requirement for a receiver's ~get_scheduler()~ query to
+require that ~start()~ on the operation-state created by connecting a sender to that receiver to
+happen on an execution agent associated with that scheduler. In this case, ~start()~ could then just
+initialise the necessary members of the promise and call ~handle.resume()~.
+
+** ~task~ awaiting another ~task~ should not reschedule on resumption
+
+In [task.promise] p10 the definition of ~await_transform~ that accepts ~sender~ arguments
+is defined as ~as_awaitable(affine_on(std::forward<Sender>(sndr), SCHED(*this)), *this)~.
+
+Thus, if you were to ~co_await~ an object of type ~task~ then this would end up calling
+~affine_on(tsk, SCHED(*this))~. But since ~task~ type does not customize the ~affine_on~
+algorithm, this would end up dispatching to the default implementation of ~affine_on~.
+
+As mentioned in another issue below, the default behaviour of the ~affine_on~ algorithm
+is not clearly defined, but presumably given that it does not have any additional
+information about the context on which the awaited operation will complete, it would
+need to unconditionally ~schedule~ the resumption of the coroutine onto the coroutine's
+associated scheduler.
+
+Together with the above issue, this means that the the following code:
+#+begin_src c++
+  #include <execution>
+  #include <print>
+
+  struct tracing_scheduler {
+    using scheduler_concept = std::execution::scheduler_t;
+    bool operator==(const tracing_scheduler&) const == default;
+
+    auto schedule() const noexcept {
+      return std::execution::then(std::execution::just(), [] noexcept { std::print("scheduling\n"); });
+    }
+  };
+
+  struct tracing_env {
+    using scheduler_type = tracing_scheduler;
+  };
+
+  std::execution::task<void, tracing_env> f() {
+    std::print("f()\n");
+    co_return;
+  }
+  std::execution::task<void, tracing_env> g() {
+    std::print("g() before await\n");
+    co_await f();
+    std::print("g() after await\n");
+  }
+
+  int main() {
+    std::execution::sync_wait(std::execution::on(tracing_scheduler(), g()));
+  }
+#+end_src
+
+Would end up outputting:
+#+begin_src text
+  scheduling
+  scheduling
+  g() before await
+  scheduling
+  f()
+  scheduling
+  g() after await
+#+end_src
+
+Where:
+- the first "scheduling" is from the ~on()~
+- the second "scheduling" is from the initial schedule when starting ~g()~
+- the third "scheduling" is from the initial schedule when starting ~f()~
+- the fourth "scheduling" is from the ~affine_on~ when resuming ~g()~
+
+Whereas what we ideally want here, is for the output to be:
+#+begin_src text
+  scheduling
+  g() before await
+  f()
+  g() after await
+#+end_src
+
+i.e. where only the ~on()~ algorithm performs the initial schedule onto that context,
+and after that, the coroutines are launched inline on the current context, using
+the knowledge that they are already on the right context to avoid unnecessary
+rescheduling.
+
+I think that in order to address this, there are a number things that all need
+to be aligned so that they work together:
+- the awaiting coroutine needs to apply ~affine_on~ to the child coroutine's ~task~
+  in order to tell it that it must complete on the same execution context that
+  it was started on.
+- the awaiting coroutine needs to propagate its current scheduler to be the
+  scheduler injected into the child coroutine promise to both tell it where it
+  will be started and where it needs to complete
+- when the child coroutine completes, it needs to check if the awaiting coroutine
+  has applied the ~affine_on~ algorithm to it (indicating that it must complete
+  on the context that it started on) and also whether the current scheduler
+  is different from the initial scheduler (e.g. because the coroutine has run
+  ~co_await change_coroutine_scheduler{other}~). If both of these are true then
+  it must schedule resumption of the awaiting coroutine on the original
+  scheduler, otherwise it can just resume the awaiting coroutine inline.
+
+For this to all work together, we need the ~task~ type to implement the ~affine_on~
+customization point to return a new sender/awaitable type that sets the
+"must complete on initial scheduler context" flag when it is started.
+
+And then the ~final_suspend()~ and ~yield_value()~ promise member functions
+need to be specified to check for this flag and if the flag is set and
+the current scheduler is different from the initial scheduler, then it
+should reschedule onto the original scheduler.
+
+* ~task~ coroutine awaiting another ~task~ does not use symmetric-transfer
+
+The ~task~ class as defined in [task.class] currently only defines ~connect~ and does not define ~as_awaitable~.
+
+This means that awaiting a ~task~ from another ~task~ coroutine will end up dispatching through
+the default implementation of ~as_awaitable~, which implements the ~awaitable~ interface by
+calling ~connect()~ on the ~task~ (technically on the result of ~affine_on(tsk)~) and then calls ~start()~ inside ~await_suspend()~.
+
+This results in the situation where, if the awaited coroutine completes synchronously, that the awaiting
+coroutine resumes with additional stack-frames still on the stack (~start()~, ~set_value()~, and two ~coroutine_handle::resume()~ frames).
+
+Ideally, we would be able to have one ~task~ coroutine symmetrically-transfer execution to the awaited
+coroutine inline and then have that coroutine symmetrically transfer execution back to the awaiting
+coroutine when it completes.
+
+#+name: Executing the coroutine ~g()~ below will (probably) result in stack-overflow
+#+begin_example c++
+  std::execution::task<void, std::execution::env<>> f() {
+    co_return;
+  }
+
+  std::execution::task<void, std::execution::env<>> g() {
+    for (int i = 0; i < 10'000'000; ++i) {
+      co_await f();
+    }
+  }
+#+end_example
+
+While we cannot necessarily avoid the possibility of stack-overflow in cases where you are awaiting
+non-coroutine senders that might complete synchronously, we should at least require implementations
+to avoid stack-overflow conditions with a coroutine awaits another coroutine.
+
+In order to make this work, we need to have the ~task~ type implement the ~as_awaitable()~ member function
+for it to return an awaitable that can symmetrically-transfer execution to the ~task~'s coroutine.
+
+In addition, the awaitable types returned by the ~final_suspend~ and ~yield_value~ member functions
+also need to symmetrically transfer execution to the awaiting coroutine when the current coroutine
+completes.
+
+There is also some interaction with the behaviour of the ~affine_on~ customisation for ~task~ mentioned above,
+which is needed to ensure that the coroutine resumes on the right context, in that when a ~task~ coroutine
+awaits nother ~task~, the ~as_awaitable~ call is applied to the result of calling ~affine_on~ for that task and
+so the result of ~affine_on(tsk, sch)~ also needs to customise ~as_awaitable~ in order to be able to pipe through
+the symmetric-transfer.
+
+Supporting symmetric transer in general is going to require a change in wording strategy for the
+promise type, which is currently described in terms of completion of the coroutine invoking completion
+functions on the receiver that was passed to ~connect()~. It instead needs to be able to cope with
+the two different cases, depending on whether the coroutine was launched via ~as_awaitable()~ or via
+~connect()~.
+
+Consider a wording strategy based on using the ~with_awaitable_senders~ base-class to take advantage
+of its ability to perform symmetric-transfor (or at least something similar).
+
+* (minor) ~task~ does not accept awaiting types that provide ~as_awaitable~ but that do not satisfy ~sender~ concept
+
+The overload of ~await_transform~ described in [task.promise] is constrained to require arguments to
+satisfy the ~sender~ concept. However, this precludes awaiting types that implement the ~as_awaitable()~
+customization point but that do not satisfy the ~sender~ concept from being able to be awaited
+within a ~task~ coroutine.
+
+This is inconsistent with the behaviour of the ~with_awaitable_senders~ base class defined in
+[exec.with.awaitable.senders], which only requires that the awaited value supports the
+~as_awaitable~ operation.
+
+I believe the rationale for this is that the argument needs to be passed to the ~affine_on~
+algorithm which currently requires its argument to model ~sender~.
+
+Do we want to consider relaxing this constraint to be consistent with the constraints
+on ~with_awaitable_senders~?
+
+This would require either:
+- relaxing the ~sender~ constraint on the ~affine_on~ algorithm
+  to also allow an argument that has only an ~as_awaitable()~ but that did not satisfy
+  the ~sender~ concept.
+- extending the ~sender~ concept to match types that provide the ~.as_awaitable()~
+  member-function similar to how it supports types with ~operator co_await()~.
+
+* ~affine_on~ is missing a specification for a default implementation
+
+The wording in [exec.affine.on] p5 does not actually define what the default implementation of
+the ~affine_on~ algorithm does, although it does place some requirements on the behaviour.
+
+For example, should ~affine_on~ default to calling ~continues_on~?
+
+Other algorithms define the default implementation by defining the semantics of ~sender_transform~
+method on the algorithm CPO. For example, see [[https://eel.is/c++draft/exec#continues.on-5][[exec.continues.on] p5]].
+
+e.g. Assuming that the ~affine_on~ algorithm should default to ~continues_on~, something like:
+#+begin_quote
+Given subexpressions ~sndr~ of type modeling ~sender-for<affine_on_t>~, and ~env~ of type modeling ~queryable~,
+the expression ~affine_on.transform_sender(sndr, env)~ is equivalent to ~transform_sender(continues_on(child-of<0>(sndr), data-of(sndr)), env)~.
+#+end_quote
+
+Or is the ~affine_on~ algorithm a basis operation that needs to be customised for each domain?
+
+* ~affine_on~ semantics are not clear
+
+The wording in [exec.affine.on] p5 says:
+#+begin_quote
+... Calling ~start(op)~ will start ~sndr~ on the current execution agent and execution completion
+operations on ~out_rcvr~ on an execution agent of the execution resource associated with ~sch~.
+If the current execution resource is the same as the execution resource associated with ~sch~,
+the completion operation on ~out_rcvr~ may be called before ~start(op)~ completes. If scheduling
+onto ~sch~ fails, an error completion on ~out_rcvr~ shall be executed on an unspecified execution
+agent.
+#+end_quote
+
+The sentence "If the current execution resource is the same as the execution resource associated
+with ~sch~" is not clear to which execution resource is the "current execution resource".
+It could be the "current execution agent" that was used to call ~start(op)~, or it could be
+the execution agent that
+
+It is also not clear to me what the actual difference in semantics between ~continues_on~ and
+~affine_on~ is. The ~continues_on~ semantics already requires that the resulting sender completes
+on the specified scheduler's execution agent. It does not specify that it /must/ evaluate a
+~schedule()~ (although that is what the default impl does), and so in theory it already permits
+an implementation/customization to skip the schedule (e.g. if the child sender's completion
+scheduler was equal to the target scheduler).
+
+In my mind, the key semantic that we want here is to specify one of two possible semantics
+that differ from ~continues_on~.
+
+1. That the completion of an ~affine_on~ sender will occur on the same scheduler that the
+   operation started on.
+   This is a slightly stronger requirement than that of ~continues_on~, in that it puts a
+   requirement on the caller of ~affine_on~ to ensure that the operation is started on the
+   scheduler passed to ~affine_on~, but then also grants permission for the operation to
+   complete inline if it completes synchronously.
+2. That the completion of an ~affine_on~ sender will either complete inline on the execution
+   agent that it was started on, or it will complete asynchronously on an execution agent
+   associated with the provided scheduler.
+   This is a slightly more permissive than option 1. in that it permits the caller to
+   start on any context, but also is no longer able to definitively advertise a completion
+   context, since it might now complete on one of two possible contexts (even if in many
+   cases those two contexts might be the same). This weaker semantic can be used in
+   conjunction with knowledge by the caller that they will start the operation on a
+   context associated with the same scheduler passed to ~affine_on~ to ensure that the
+   operation will complete on the given scheduler.
+
+* ~affine_on~ might not have the right shape
+
+The ~affine_on~ algorithm defined in [exec.affine.on] takes two arguments; a ~sender~ and a ~scheduler~.
+
+As mentioned above, the semantic that we really want for the purpose in coroutines is that
+the operation completes on the same execution context that it started on. This way, we can
+ensure, by induction, that the coroutine which starts on the right context, and resumes on the
+same context after each suspend-point, will itself complete on the same context.
+
+This then also begs the question: "Could we just take the scheduler that the operation will
+be started on from the ~get_scheduler~ query on the receiver's environment and avoid having
+to explicitly pass the scheduler as an argument?"
+
+To this end, I think we should consider potentially simplifying the ~affine_on~ algorithm
+to just take an input sender and to pick up the scheduler that it will be started on
+from the receiver's environment and promise to complete on that context.
+
+For example, the ~await_transform~ function could potentially be changed to return:
+~as_awaitable(affine_on(std::forward<Sndr>(sndr)))~.
+
+Then we could define the ~affine_on.transform_sender(sndr, env)~ expression (which provides the default implementation) to be equivalent to ~continues_on(sndr, get_scheduler(env))~.
+
+Such an approach would also a require change (which I believe is being explored by Eric)
+to the semantic requirements of ~get_scheduler(get_env(rcvr))~ to require that ~start()~ is called
+on that context.
+
+* ~affine_on~ should probably not forward stop-requests to reschedule operation
+
+The ~affine_on~ algorithm is used by the ~task~ coroutine to ensure that the coroutine always
+resumes back on its associated scheduler by applying the ~affine_on~ algorithm to each
+awaited value in a ~co_await~ expression.
+
+In cases where the awaited operation completes asynchronously, resumption of the coroutine
+will be scheduled using the coroutine's associated scheduler via a ~schedule~ operation.
+
+If that schedule operation completes with ~set_value~ then the coroutine successfully
+resumes on its associated execution context. However, if it completes with ~set_error~
+or ~set_stopped~ then resuming the coroutine on the execution context of the completion
+is not going to preserve the invariant that the coroutine is always going to resume
+on its associated context.
+
+For some cases this may not be an issue, but for other cases, resuming on the right
+execution context may be important for correctness, even during exception unwind or
+due to cancellation. For example, destructors may require running in a UI thread in
+order to release UI resources. Or the associated scheduler may be a strand (which
+runs all tasks scheduled to it sequentially) in order to synchronise access to shared
+resources used by destructors.
+
+Thus, if a stop-request has been sent to the coroutine, that stop-request should be
+propagated to child operations so that the child operation it is waiting on can be
+cancelled if necessary, but should probably not be propagated to any ~schedule~
+operation created by the implicit ~affine_on~ algorithm as this is needed to
+complete successfully in order to ensure the coroutine resumes on its associated context.
+
+One option to work around this with the status-quo would be to define a scheduler
+adapter that adapted the underlying ~schedule()~ operation to prevent passing
+through stop-requests from the parent environment (e.g. applying the ~unstoppable~ adapter).
+If failing to reschedule onto the associated context was a fatal error, you could also
+apply a ~terminate_on_error~ adaptor as well.
+
+Then the user could apply this adapter to the scheduler before passing it to the
+task.
+
+For example:
+#+begin_example c++
+template<std::execution::scheduler S>
+struct infallible_scheduler {
+  using scheduler_concept = std::execution::scheduler_t;
+  S scheduler;
+  auto schedule() {
+    return unstoppable(terminate_on_error(std::execution::schedule(scheduler)));
+  }
+  bool operator==(const infallible_scheduler&) const noexcept = default;
+};
+template<std::execution::scheduler S>
+infallible_scheduler(S) -> infallible_scheduler<S>;
+
+std::execution::task<void, std::execution::env<>> example() {
+  co_await some_cancellable_op();
+}
+
+std::execution::task<void, std::execution::env<>> caller() {
+  std::execution::scheduler auto sched = co_await std::execution::read_env(get_scheduler);
+  co_await std::execution::on(infallible_scheduler{sched}, example());
+}
+#+end_example
+
+However, this approach has the downside that this scheduler behaviour now also applies to all other uses of the scheduler - not just the uses required to ensure the coroutine's invariant of always resuming on the associated context.
+
+Other ways this could be tackled include:
+- making this the default behaviour of ~affine_on~
+- somehow making the behaviour a policy decision specified via the ~Environment~ template parameter of the ~task~.
+- somehow using domain-based customisation to allow the coroutine to customise the behaviour of ~affine_on~
+- making the ~task::promise_type::await_transform~ apply this adapter to the scheduler passed to ~affine_on~. i.e. it calls ~affine_on(std::forward<Sndr>(sndr), infallible_scheduler{SCHED(*sched)})~.
+
+* We should probably define customsiations for ~affine_on~ for some other senders
+
+Assuming the the ~affine_on~ algorithm semantics are changed to just require that it completes either inline or on the context of the receiver environment's ~get_scheduler~ query, then there are probably some other algorithms that we could either make use of this, or provide customisations for it that short-circuit the need to schedule unnecessarily.
+
+For example:
+- ~affine_on(just(args...))~ could be simplified to ~just(args...)~
+- ~affine_on(on(sch, sndr))~ can be simplified to ~on(sch, sndr)~ as ~on~ already provides ~affine_on~-like semantics
+- The ~counting_scope::join~ sender currently already provides ~affine_on~-like semantics.
+  - We could potentially simplify this sender to just complete inline unless the join-sender is wrapped in ~affine_on~, in which case the resulting ~affine_on(scope.join())~ sender would have the semantics that ~scope.join()~ has today.
+  - Alternatively, we could just customise ~affine_on(scope.join())~ to be equivalent to ~scope.join()~.
+- Other similar senders like those returned from ~bounded_queue::async_push~ and ~bounded_queue::async_pop~ which are defined to return a sender that will resume on the original scheduler.
+
+* (minor) ~task::promise_type~ doesn't use ~with_awaitable_senders~ - should it?
+
+The existing [exec] wording added the ~with_awaitable_senders~ helper class with the intention that it
+be usable as the base-class for asynchronous coroutine promise-types to provide the ability to
+await senders. It does this by providing the necessary ~await_transform~ overload and also the
+~unhandled_stopped~ member-function necessary to support the ~as_awaitable()~ adaptor for senders.
+
+However, the current specification of ~task::promise_type~ does not currently use this facility
+for a couple of reasons:
+- it needs to apply the ~as_affine~ adaptor to awaited values
+- it needs to provide a custom implementation of ~unhandled_stopped~ that reschedules
+  onto the original scheduler in the case that it is different from the current
+  scheduler (e.g. due to ~co_await change_coroutine_scheduler{other}~)
+
+This raises a couple of questions:
+- should there also be an ~with_affine_awaitable_senders~ that implements the scheduler affinity logic?
+- is ~with_awaitable_senders~ actually the right design if the first coroutine type we add to the stdlib doesn't end up using it?
+
+It's possible you could modify ~task::promise_type~ to inherit from ~with_awaitable_senders<promise_type>~
+and then to define an overriding ~await_transform~ as follows:
+#+begin_src c++
+  template<sender Sndr>
+  decltype(auto) await_transform(Sndr&& sndr) noexcept(/*auto*/) {
+    return with_awaitable_senders<promise_type>::await_transform(affine_on(std::forward<Sndr>(sndr), SCHED(*this)));
+  }
+#+end_src
+
+i.e. it just wraps the awaited value in a call to ~affine_on~ and then forwards to ~with_awaitable_senders~ base class
+to implement the ~as_awaitable()~ machinations and to provide the ~unhandled_stopped()~ member function.
+
+But this still wouldn't solve the ~unhandled_stopped()~ behaviour which requires conditionally rescheduling.
+
+* ~task::promise_type::unhandled_stopped~ should be marked ~noexcept~
+
+The ~unhandled_stopped()~ member function of ~task::promise_type~ is not currently marked as ~noexcept~.
+
+As this method is generally called from the ~set_stopped~ completion-handler of a receiver
+(such as in [exec.as.awaitable] p4.3) and is invoked without handler from a noexcept
+function, we should probably require that this function is marked ~noexcept~ as well.
+
+The equivalent method defined as part of the ~with_awaitable_senders~ base-class ([exec.with.awaitable.senders] p1)
+is also marked ~noexcept~.
+
+* ~task~ allocator customisation behaviour is inconsistent with ~generator~
+
+** Behaviour when the ~task~'s environment type does not specify an ~allocator_type~
+
+With the ~task~ type, the allocator is specified via the ~Environment~ template parameter's optional ~::allocator_type~ alias, which defaults to ~std::allocator<std::byte>~ if not present on the ~Environment~. The ~task::allocator_type~ type-alias provides the computed allocator type.
+
+If a ~task~ coroutine has an parameter of type ~std::allocator_arg_t~ then the value of the next parameter is used to initialise the allocator used to allocate the coroutine state, otherwise a default-constructed allocator is used to allocate the coroutine state. In the latter case, if the allocator is not default construtible then the program is ill-formed.
+
+In both cases, however, in the case where the environment type does not specify an allocator type, the resulting allocator will always be ~std::allocator~. If I try to pass an allocator of a different type via the ~std::allocator_arg_t~ argument, then the program will be ill-formed unless I can construct a ~std::allocator<byte>~ from that argument.
+
+This differs from the default behaviour of ~std::generator~ when you don't specify an allocator type, which defaults the ~Allocator~ template argument to ~void~, indicating the allocator type is unbound. If a coroutine returning such a generator type does not specify an allocator via the ~std::allocator_arg_t~ argument then the coroutine state allocation defaults to using global operator new/delete. But you can also specify an arbitrary user-provided allocator via the ~std::allocator_arg_t~ parameter and if so then the coroutine state will be allocated using that allocator.
+
+i.e. the ~std::generator~ coroutine promise-type type-erases the allocator if the allocator type is not specified as a template argument.
+
+For example:
+#+begin_src c++
+  std::generator<const int&> f1() { co_yield 42; }
+  std::generator<const int&> f2(std::allocator_arg_t, auto alloc) { co_yield 42; }
+
+  struct my_allocator { /* ... */ };
+
+  void usage() {
+    auto g = f1(); // uses std::allocator<void> to allocate coroutine state
+    g = f2(std::allocator_arg_t, my_allocator{}); // uses 'my_allocator' to allocate coroutine state
+  }
+#+end_src
+
+If an allocator type is explicitly specified via the template argument to the ~std::generator~ class template, then the allocator type used is always that allocator type and any allocator passed via ~std::allocator_arg~ must be convertible to that type.
+
+The current specification of ~task~ differs from ~std::generator~ in that it does not allow an arbitrary type-erased allocator to be used if the allocator type is not specified in the template arguments to the ~task~ type.
+
+** Handling of ~allocator_arg~ is more permissive than for ~std::generator~
+
+The wording for ~task~ with regards to passing an allocator via an ~allocator_arg~ parameter differs from the ~std::generator~ design in that the ~task~ wording allows the ~allocator_arg~ to appear anywhere in the parameter list (apart from the last parameter) whereas the wording for ~std::generator~ only considers ~allocator_arg~ parameters in the first or second arguments of the function parameter list.
+
+Is this difference from ~std::generator~ intentional?
+If so, should we also consider applying the same behaviour to ~std::generator~ as a DR?
+
+* (minor) ~task~ environment's ~allocator_type~ overrides the parent environment's ~get_allocator~
+
+The current design of ~task~ always constructs an allocator based on the environment's ~allocator_type~ and that this allocator is both used to allocate the coroutine-state but is also used as the result of the ~get_allocator~ query on environments passed to child operations.
+
+*************** TODO Finish describing this
+- coroutine allocator overrides environment's allocator
+  - prevents more efficient propagation of parent environment through multiple levels of coroutine
+*************** END
+
+* ~task::promise_type~ should not contain a stop-source
+
+As currently specified, the ~task::promise_type~ is specified to contain an exposition-only data-member of type ~task::stop_source_type~ and another exposition-only data-member of type equal to the corresponding stop-token type.
+
+My concern with this specification strategy is that for many situations the stop-source is not necessary as the parent environment's stop-token is going to match the stop-token type of the environment and so we don't actually need the ~source~ member of the ~promise_type~.
+
+Yet, as the ~stop_source_type~ is potentially user-defined it is observable whether or not this member exists and is constructed as part of the ~promise_type~ object - the user can observe whether or not the constructor of the ~stop_source_type~ was invoked. So I don't think implementations would be able to optimise out the construction of the ~source~ object by the
+
+The combination of the ~source~ and ~token~ members, for the default ~inplace_stop_source~ family of types, would result in an increase in size of the promise-type of about 4 pointers. I would like to find a way of specifying this so that the stop-source is only constructed if necessary based on the type of the receiver connected to the ~task~.
+For an example of one way this could be tackled, see the suggestion in the next issue.
+
+* ~task::promise_type~ wording assumes that stop-token is default constructible
+
+The ~task::promise_type~ type is specified as having an exposition-only ~token~ member. However, this ~token~ member is only initialized when an associated ~state~ object's ~start()~ member-function is called.
+
+The current wording for the ~promise_type~ constructor, therefore, must be default-initializing the ~token~ member. However, the ~stoppable_token~ concept ([stoptoken.concepts]) does not require types modelling that concept to provide a default constructor.
+
+This wording needs to find some other wording mechanism to lazily initialize the ~token~ member.
+
+Another approach that might be worth pursuing would be to change the design to remove the ~source~ and ~token~ members from the ~promise_type~ and also remove the ~Environment::stop_source_type~ type-alias altogether, and instead just rely on the ~Environment::query(get_stop_token_t)~ query to obtain the stop-token. i.e. don't treat the ~get_stop_token~ query specially from the perspective of the ~promise_type~ compared to other queries.
+
+Any adapting from the stop-token obtained from the ~state::rcvr~'s environment could be performed conditionally by the computed ~Environment::env_type<R>~ template-type-alias based on whether the parent environment's stop-token-type matches that of the environment's stop-token type. This would also address the concerns in the previous item above about the overhead of unconditionally storing both a stop-source and a stop-token in the ~promise_type~.
+
+For example, you could define an ~Environment~ class as follows which would adapt any incoming stop-token type into an ~inplace_stop_token~:
+#+begin_src c++
+  struct my_environment {
+    struct env_base {
+      virtual inplace_stop_token get_stop_token() const noexcept = 0;
+    };
+    
+    template<receiver R>
+    struct env_type {
+      using stop-token = stop_token_of_t<env_of_t<R>>; 
+      using stop-callback = typename stop-token::template callback_type<on-stop-request>;
+
+      env_type(env_of_t<R> env)
+      : callback(get_stop_token(env), on-stop-request{source})
+      {}
+      
+      inplace_stop_token get_stop_token() const noexcept final {
+        return source.get_token();
+      }
+      
+      inplace_stop_source source;
+      stop-callback callback;
+    };
+
+    template<receiver R>
+    requires unstoppable_token<stop_token_of_t<env_of_t<R>>>
+    struct env_type<R> : env_base {
+      inplace_stop_token get_stop_token() const noexcept final {
+        return inplace_stop_token();
+      }
+    };
+
+    template<receiver R>
+    requires same_as<stop_token_of_t<env_of_t<R>>, inplace_stop_token>
+    struct env_type<R> : env_base {
+      remove_cvref_t<env_of_t<R>> env;
+      inplace_stop_token get_stop_token() const noexcept final {
+        return get_stop_token(env);
+      }
+    };
+
+    env_base& env;
+
+    inplace_stop_token query(get_stop_token_t) const noexcept {
+      return env.get_stop_token();
+    }
+  };
+#+end_src
+
+Then the default implementation of ~task::promise_type::get_env()~ would return an environment whose ~query(get_stop_token_t)~ would forward to the ~my_environment::query(get_stop_token_t)~ member function.
+
+Please note that even the above code is not strictly correct, as ideally you want to ensure that the stop-callback is not constructed until ~start()~ is called on the ~state~ object, and that the stop-callback is destroyed before invoking the completion handler of ~rcvr~. However, as currently specified there is no way to defer the initialization of the ~callback~ member until ~start()~ is called.
+
+This strategy puts more burden on the author of environment types, but it does have the advantage that the logic for adapting the stop-tokens lives with the environment and its ~env_type~ at the point where the static type information of the parent environment is known, rather than defensively storing enough state to cope with that in the ~promise_type~ where the parent environment type is not known.
+
+* ~task~ coroutine-state is not destroyed early enough after completing
+
+Consider:
+#+begin_src c++
+  struct my_env {
+    using error_types = std::execution::completion_signatures<
+      std::execution::set_error_t(std::error_code)>;
+  };
+
+  std::execution::task<int, my_env> f(int x) {
+    some_resource res;
+    if (!res.ok()) {
+      co_yield std::execution::with_error{std::make_error_code(std::errc::device_or_resource_busy)};
+    }
+
+    auto result = co_await res.some_operation(x);
+
+    co_return result.value;
+  }
+#+end_src
+
+The current behaviour of ~co_yield with_error{e}~ is such that this suspends the coroutine and immediately invokes ~set_error~ on the receiver, passing the error value.
+
+However, this is done without first exiting the scopes which means that the continuation runs
+without first releasing any in-scope resources used by the coroutine. e.g. the ~res~ object of type ~some_resource~ in the example above.
+
+In most cases this is not going to be an issue for callers as the ~co_await~ expression awaiting the task will exit with an exception which will destroy the temporary ~sender-awaitable~ object (which will destroy the ~task::state~ object and thus call ~handle.destroy()~ on the coroutine and thus destroy the in-scope local variables in the coroutine).
+
+However, there are also cases where the in-scope resources may be kept alive for longer than expected.
+For example, consider:
+#+begin_src c++
+  std::execution::task<void> g() {
+    int result = std::max(
+      co_await upon_error(f(1), [](std::error_code ec) noexcept { return -1; }),
+      co_await upon_error(f(2), [](std::error_code ec) noexcept { return -1; }));
+  }
+#+end_src
+
+In this case, the operation-states of the ~upon_error~ operations are not destroyed until the end of the full-expression, which means that the ~task::state~ objects and thus the coroutine-state are also not destroyed until the end of the full-expression. This can result in the ~some_resource~ object in the first invocation of ~f()~ remaining alive during the invocation of the second call to ~f()~ if the first call exited via the ~co_yield~ expression.
+
+I believe this would result in unexpected behaviour for users who are typically used to the scoping rules of calling normal functions.
+
+Ideally, the coroutine-state should be destroyed immediately after copying/moving the result to storage that is not owned by the coroutine-state, but before executing the continuation.
+
+For example, in ~folly::coro::Task~, the ~await_resume()~ method returns the value ~T~ and destroys the coroutine-frame as part of exiting scopes of ~await_resume()~ after executing the ~return~ statement.
+See [[https://github.com/facebook/folly/blob/a5b93a4af57e062f71421ebb457f1b0e00c369db/folly/coro/Task.h#L602][folly::coro::TaskWithExecutor::Awaiter::await_resume()]].
+See also [[https://github.com/facebookexperimental/libunifex/blob/b6bedebc4d87eda5e31b364585a84576013eae67/include/unifex/task.hpp#L719][unifex::task::awaiter::await_resume()]].
+
+* ~task::promise_type::get_env~ seems to require an inefficient implementation
+
+The exposition-only ~task::state~ type is currently specified to hold a number of objects which are used in the implementation of ~task::promise_type::get_env~.
+
+#+begin_src c++
+  template <class T, class Environment>
+  template <receiver R>
+  class task<T, Environment>::state { // exposition only
+  public:
+    using operation_state_concept = operation_state_t;
+
+    template <class Rcvr>
+    state(coroutine_handle<promise_type> h, Rcvr&& rr);
+    ~state();
+    void start() & noexcept;
+
+  private:
+    using own-env-t = see below;     // exposition only
+    coroutine_handle<promise_type> handle;  // exposition only
+    remove_cvref_t<R>              rcvr;    // exposition only
+    own-env-t                      own-env; // exposition only
+    Environment                    environment; // exposition only
+  }; 
+#+end_src
+
+Where:
+- the type ~own-env-t~ is computed as ~typename Environment::template env_type<decltype(get_env(declval<R>()))>~ if that is well-defined, otherwise ~env<>~.
+- ~own-env~ is initialised with ~get_env(rcvr)~
+- ~environment~ is initialised with an lvalue-reference to ~own-env~.
+
+Then, in the ~promise_type~, which holds a pointer to ~state~, the ~promise_type::get_env()~ is defined such that for queries ~~Q~ other than ~get_stop_token~ and ~get_allocator~, ~promise.get_env().query(Q)~ is equivalent to ~STATE(promise).environment.query(Q)~.
+
+There are couple of minor performance conerns with the way these objects are structured.
+
+1. The fact that we pass in the result of ~get_env(rcvr)~ to construction of ~own-env~ effectively means that ~own-env~ must make a copy of the receiver's environment as ~own-env~ cannot assume that the environment object passed to it will remain alive for its lifetime (it could be a temporary).
+
+This might not be that much of an issue in practice if all of the environments were just light-weight wrappers onto a pointer to the parent operation-state as copying the environment would effectively just be copying a pointer to the parent operation state. Although, in this case the ~rcvr~ object is probably also just a thin wrapper around a pointer to the parent operation state, and so storing both the ~rcvr~ and result of ~get_env(rcvr)~ in the ~state~ is wasting storage of an unnecessary pointer.
+
+*************** TODO Futher investigation of overheads / alternatives here
+*************** END
+
+2. In cases where you have a chain of coroutines with the same environment type where a top-level 
+
+*************** TODO Further investigation of possibility of passing a pointer to top-level environment through multiple levels of coroutine
+*************** END
