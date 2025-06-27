@@ -272,7 +272,7 @@ agent.
 The sentence "If the current execution resource is the same as the execution resource associated
 with ~sch~" is not clear to which execution resource is the "current execution resource".
 It could be the "current execution agent" that was used to call ~start(op)~, or it could be
-the execution agent that
+the execution agent that the predecessor completes on.
 
 It is also not clear to me what the actual difference in semantics between ~continues_on~ and
 ~affine_on~ is. The ~continues_on~ semantics already requires that the resulting sender completes
