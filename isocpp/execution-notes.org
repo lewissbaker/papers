@@ -1,0 +1,107 @@
+
+* Notes on std::excecution wording for pre-Sofia draft
+
+- Queries like ~get_allocator~ have a definition like:
+  #+begin_src c++
+    struct get_allocator_t { /* unspecified */ };
+  #+end_src
+  This permits the body of the definition to be unspecified, but does actually specify that
+  this class does not have any base-classes, preventing the use of inheriting this from
+  ~forwarding_query_t~ to satisfy the requirement for it to be a forwarding query.
+  Is this restriction intentional?
+
+  - Eric suggests just removing the check for inheritance from ~forwarding_query_t~
+
+- Regarding https://eel.is/c++draft/exec#sched-4
+  - Should this further put a constraint that the schedulers must have the same behaviour?
+  - It might be possible to have two different schedulers of the same type that have been
+    configured differently (e.g. one schedules with high priority and the other with low
+    priority) that nevertheless are associated the same execution resource.
+
+- https://eel.is/c++draft/exec#sched-note-1
+  Do we still need this note now that we have counting_scope and friends?
+
+- https://eel.is/c++draft/exec#sched-2
+  This requires that the schedule operation of a scheduler always has exactly one
+  set_value_t completion signature and that it is ~set_value_t()~.
+  This precludes the ability to build a scheduler that always fails and that
+  has no ~set_value_t~ completion signature - is this ok?
+  Should we be checking that the ~value_signatures_of_t~ is a subset of
+  ~completion_signatures<set_value_t()>~?
+
+- Should we be mandating that ~set_value()~ , ~set_error()~ and ~set_stopped()~ calls have a return-type of ~void~?
+
+- ~concept receiver~ is constraining on whether ~get_env(rcvr)~ returns a type that satisfies ~queryable~,
+  but the ~get_env~ CPO already mandates that the return-value satisfies ~queryable~, so this check
+  seems redundant. Similarly  for ~concept sender~.
+
+- ~concept receiver~ uses ~move_constructible<remove_cvref_t<_Rcvr>> && constructible_from<remove_cvref_t<_Rcvr>, _Rcvr>~
+  Could be simplfied using ~movable-value<_Rcvr>~?
+
+- ~operation_state~ concept constraints on ~start(op)~ being ~noexcept~ but the ~start~ CPO already mandates that
+  the expression is ~noexcept~. Can we simplify the concept to remove the ~noexcept~ check?
+
+- Lots of the specification for queries are "expression equivalent to" some expression involving the
+  global constexpr object. This tends to mean that the queries themselves must forward that specific
+  object through by universal reference rather than taking it by copy as it may be possible to
+  detect inside the implementation of a ~.query()~ function whether a reference to the actual
+  global constexpr object was passed, or some copy of that object.
+
+  - We only specify the semantics of calling the query CPO on the global object, we don't specify
+    the semantics of calling the query on any copies of the query object.
+  - Should we change the expression-equivalent-to to always pass a prvalue query object to the
+    ~query()~ member function? This would allow query ~operator()~ to pass query objects by value.
+    e.g. ~get_allocator(env)~ is expression equivalent to ~env.query(auto(get_allocator))~ 
+
+  - Edit: seems like the semantics here are guaranteed by /customization-point object/ definition
+    which requires that objects are default initializable and all objects of a given CPO type
+    are equivalent. Still, it might be observable whether or not you are explicitly passed a
+    reference to the global object or a reference to some other object.
+    In fact, I think that the above change is actually necessary to satisfy the requirements of
+    /customization-point object/.
+    
+- specification for ~FWD-ENV(env)~ talks about that for queryable object ~env~, ~FWD-ENV(env).query(q, as...)~ is expression-equivalent to ~env.query(q, as...)~.
+  My interpretation of this is that this must end up calling ~env.query~ on the original ~env~ object, not on a copy
+  of ~env~, and thus the resulting type of ~FWD-ENV(env)~ necessarily needs to store a reference to ~env~.
+  However, many uses of ~FWD-ENV~ use ~FWD-ENV(get_env(x))~ which might end up passing a temporary object to ~FWD-ENV~.
+  
+- suggestion for language improvement for lookup of ~operator co_await()~.
+  - Why can't we make the expression ~operator co_await(x)~ perform lookup of both member-function
+    and namespace-scope functions (using ADL) and then perform overload resolution on both
+    rather than having to separately perform member and non-member lookup?
+
+- specification of ~completion_signatures~ usage should make use of ~type_order~ facilities to
+  ensure a canonical ordering of types listed in ~completion_signatures~.
+
+- ~transform_sender~, ~transform_env~ and ~apply_sender~ are all regular functions, whereas other customisation
+  points are all defined as CPOs. Why do we define these as normal functions and the others as CPOs?
+
+- ~default_domain::transform_env~ has a fallback of ~static_cast<Env>(std::forward<Env>(env))~ but it's not
+  clear what the effect of the ~static_cast~ is here.
+  - If this function is passed an lvalue, then ~Env~ is an lvalue-reference and the static_cast does not
+    do anything more than ~std::forward<Env>(env)~ does.
+  - If this function is passed an rvalue, then the ~static_cast~ will construct a new prvalue.
+    - Why is this the desired behaviour? 
+
+- Use of ~common_type~ in ~completion-domain~ helper makes things extra complicated.
+  Can we just get away with ~same_as~ here instead?
+
+- In ~get-domain-late~ it uses a lambda expression with the structured binding:
+  #+begin_src c++
+    [] {
+      auto [_, sch, _] = sndr;
+      return query-with-default(get_domain, sch, default_domain());
+    }()
+  #+end_src
+  However this will try to perform a copy of the sender which will be ill-formed if the
+  sender is not copyable (Note ~sndr~ is a const-ref). The structured binding should instead
+  start with ~auto& [_, sch, _] =~.
+
+- ~env<Envs...>~ class contains a ~query(QueryTag)~ member-function that only takes the query-tag.
+  However, the ~queryable~ concept description in [exec.queryable.general] still talks about
+  queries taking a pack of extra arguments after the query tag. Similarly with the definition
+  of ~FWD-ENV(env).query(q, as...)~ which also talks about forwarding an extra pack of arguments.
+  Either we should drop support from extra arguments, or we should add support for extra arguments
+  to ~env<Envs...>~ and ~prop<Query, Value>~.
+
+
