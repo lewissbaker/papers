@@ -31,6 +31,11 @@
 
 - Should we be mandating that ~set_value()~ , ~set_error()~ and ~set_stopped()~ calls have a return-type of ~void~?
 
+- Is ~weakly_parallel~ a reasonable default for ~forward_progress_guarantee~ if a scheduler does not
+  specify the ~get_forward_progress_guarantee(sch)~ query?
+  - The option ~parallel~ would seem to be the most common and is probably what most schedulers
+    will provide.
+
 - ~concept receiver~ is constraining on whether ~get_env(rcvr)~ returns a type that satisfies ~queryable~,
   but the ~get_env~ CPO already mandates that the return-value satisfies ~queryable~, so this check
   seems redundant. Similarly  for ~concept sender~.
@@ -104,4 +109,6 @@
   Either we should drop support from extra arguments, or we should add support for extra arguments
   to ~env<Envs...>~ and ~prop<Query, Value>~.
 
-
+- ~unstoppable_token~ concept is ill-formed
+  - Can't use ~tok~ argument to ~requires~ clause in evaluated context.
+  - Need to change requirement to ~requires (!Token::stop_possible());~ instead.
