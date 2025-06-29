@@ -75,6 +75,10 @@
     and namespace-scope functions (using ADL) and then perform overload resolution on both
     rather than having to separately perform member and non-member lookup?
 
+- There is no definition for the exposition-only template alias ~await-result-type<T, Promise>~
+  - Used in ~[exec.getcomplsigs]~ and ~[exec.connect]~
+  - Not clear if it is supposed to apply ~await_transform~ to the ~T~ type or not.
+
 - specification of ~completion_signatures~ usage should make use of ~type_order~ facilities to
   ensure a canonical ordering of types listed in ~completion_signatures~.
 
