@@ -75,10 +75,6 @@
     and namespace-scope functions (using ADL) and then perform overload resolution on both
     rather than having to separately perform member and non-member lookup?
 
-- There is no definition for the exposition-only template alias ~await-result-type<T, Promise>~
-  - Used in ~[exec.getcomplsigs]~ and ~[exec.connect]~
-  - Not clear if it is supposed to apply ~await_transform~ to the ~T~ type or not.
-
 - specification of ~completion_signatures~ usage should make use of ~type_order~ facilities to
   ensure a canonical ordering of types listed in ~completion_signatures~.
 
@@ -113,6 +109,36 @@
   Either we should drop support from extra arguments, or we should add support for extra arguments
   to ~env<Envs...>~ and ~prop<Query, Value>~.
 
+- ~env<Envs...>::query()~ has a return-type defined as ~decltype(auto)~.
+  I suspect this may cause problems for some queries that need to get the return-type but
+  for which the body may not yet be valid (e.g. because some types are still incomplete).
+  Although I don't have any concrete examples of where this is an issue at the moment.
+
 - ~unstoppable_token~ concept is ill-formed
   - Can't use ~tok~ argument to ~requires~ clause in evaluated context.
   - Need to change requirement to ~requires (!Token::stop_possible());~ instead.
+
+- ~AS-EXCEPT-PTR(err)~ is not necessarily ~noexcept~ yet is used in contexts (such as ~set_error()~ in [exec.sync.wait])
+  where emitting an exception would result in termination.
+  - In particular, the paragraph that says it's equivalent to ~make_exception_ptr(system_error(err))~ when ~err~ is an ~error_code~
+    might throw from the ~system_error~ constructor, whose constructor is not marked ~noexcept~.
+  - Should this be changed to catch any exception thrown by the exception and return
+    ~current_exception()~ in that case?
+
+- ~get_allocator_t~ uses ~MANDATE-NOTHROW~ but lots of allocator types are not actually required
+  to be nothrow copyable/movable, only that they are "Throws: nothing".
+  - Do we need this to be transparent to ~noexcept~ here, instead?
+
+- ~with-await-transform::await_transform()~ uses ~decltype(auto)~ as the return-type.
+  Should it use a trailing return-type instead?
+
+- Wording for ~connect()~ needs to specify that ~rcvr~ is only to be evaluated once.
+  - It occurs once in call to ~transform_sender(dom, sndr, rcvr)~
+  - And occurs again in call to ~new_sndr.connect(rcvr)~
+
+- Wording for ~connect()~ requires evaluating ~get_env(rcvr)~ even if ~get-domain-late~ ends up
+  returning a ~default_domain~. Do we want to allow eliding call to ~get_env(rcvr)~ if the
+  returned environment would be unused?
+
+- Why are most customization points defined as CPOs, but ~transform_sender~, ~transform_env~ and ~apply_sender~
+  are defined as normal functions?
