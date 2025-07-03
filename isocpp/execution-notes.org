@@ -1,40 +1,144 @@
-
 * Notes on std::excecution wording for pre-Sofia draft
 
-- Queries like ~get_allocator~ have a definition like:
-  #+begin_src c++
-    struct get_allocator_t { /* unspecified */ };
-  #+end_src
-  This permits the body of the definition to be unspecified, but does actually specify that
-  this class does not have any base-classes, preventing the use of inheriting this from
-  ~forwarding_query_t~ to satisfy the requirement for it to be a forwarding query.
-  Is this restriction intentional?
+** Standard defined queries can't customize forwarding_query_t by inheriting from it
 
-  - Eric suggests just removing the check for inheritance from ~forwarding_query_t~
+The definition of the ~forwarding_query_t~ ([[[https://eel.is/c++draft/exec#fwd.env][exec.fwd.env]]]) states that a query is a
+forwarding-query if either the expression ~q.query(forwarding_query)~ is a constant
+expression that evalutes to true o or the query type inherits from forwarding_query_t.
 
-- Regarding https://eel.is/c++draft/exec#sched-4
-  - Should this further put a constraint that the schedulers must have the same behaviour?
-  - It might be possible to have two different schedulers of the same type that have been
-    configured differently (e.g. one schedules with high priority and the other with low
-    priority) that nevertheless are associated the same execution resource.
+However, all of the queries defined in [[[https://eel.is/c++draft/exec][exec]]] are defined similar to the following:
+#+begin_src c++
+  struct get_allocator_t { unspecified };
+#+end_src
 
-- https://eel.is/c++draft/exec#sched-note-1
-  Do we still need this note now that we have counting_scope and friends?
+While this definition allows for the members of the class to be unspecified, it still
+explicitly specifies that it has an empty list of base-classes and therefore cannot
+customize ~forwarding_query_t~ by inheriting from ~forwarding_query_t~.
 
-- https://eel.is/c++draft/exec#sched-2
-  This requires that the schedule operation of a scheduler always has exactly one
-  set_value_t completion signature and that it is ~set_value_t()~.
-  This precludes the ability to build a scheduler that always fails and that
-  has no ~set_value_t~ completion signature - is this ok?
-  Should we be checking that the ~value_signatures_of_t~ is a subset of
-  ~completion_signatures<set_value_t()>~?
+We should consider whether we want to change the specification of queries that are
+to be forwarding-queries to allow inheritance from ~forwarding_query_t~ or otherwise
+remove the support for customising ~forwarding_query_t~ by inheriting from it.
 
-- Should we be mandating that ~set_value()~ , ~set_error()~ and ~set_stopped()~ calls have a return-type of ~void~?
+The recommended resolution is to remove the rule that checks for inheritance from
+~forwarding_query_t~.
 
-- Is ~weakly_parallel~ a reasonable default for ~forward_progress_guarantee~ if a scheduler does not
-  specify the ~get_forward_progress_guarantee(sch)~ query?
-  - The option ~parallel~ would seem to be the most common and is probably what most schedulers
-    will provide.
+** Equal schedulers should be required to have same behaviour
+
+The wording [[[https://eel.is/c++draft/exec#sched-4][exec.sched]]] p4 says:
+#+begin_quote
+For any two values ~sch1~ and ~sch2~ of some scheduler type ~Sch~, ~sch1 == sch2~ shall
+return ~true~ only if both ~sch1~ and ~sch2~ share the same associated execution resource.
+#+end_quote
+
+However, I don't think this requirement is sufficient for schedulers to be considered
+equal as it is possible to have two different schedulers that share the same associated
+execution resource but that have different behaviour.
+
+For example, two schedulers of the same type but where one schedules items with high
+priority and others with low priority.
+
+Ideally we want two schedulers to be equal if and only if they can be used interchangeably
+such that using either scheduler to schedule work has the same behaviour.
+
+Note that some use cases may also want to compare two schedulers as to whether or not
+they share the same associated execution resource, independently of their scheduling
+behaviour, however this could be added as a separate operator later.
+e.g. ~std::execution::same_resource(sch1, sch2)~
+
+It's also not clear how this definition applies to schedulers such as an ~inline_scheduler~
+(added in P3552) in which has no specific associated execution resource but instances
+nevertheless have the same scheduling behaviour.
+
+I suggest this paragraph is changed to refer to the schedulers having the same
+scheduling behaviour rather than having the same associated execution resource.
+Or at least add a note here indicating that equality operator may return false
+if the behaviour is different, even if the schedulers share an associated execution
+resource.
+
+** Remove note regarding waiting for completion of scheduled operations
+
+The note at the end of [[https://eel.is/c++draft/exec#sched-note-1][exec.sched]] says:
+#+begin_quote
+[Note: The ability to wait for completion of submitted function objects can be
+provided by the associated execution resource of the scheduler - end note]
+#+end_quote
+
+The suggestion that the execution resource should be used to join/wait on
+scheduled work is problematic in situations that may involve more than one
+execution context, as an execution resource having an empty queue of scheduled
+work does not necessarily imply that tasks currently running on another
+execution context will not later schedule additional work on this execution
+resource.
+
+With the introduction of ~counting_scope~ with P3149 we now have a better recommended
+way of waiting for tasks that use a resource (including execution resources)
+to complete.
+
+The note as it stands represents bad guidance and should either be removed or
+updated to refer to ~counting_scope~ and ~simple_counting_scope~ ([exec.counting.scopes]).
+
+** Consider mandating that ~set_value()~, ~set_error()~ and ~set_stopped()~ calls have a return-type of ~void~
+
+The expression ~set_value(rcvr, vs...)~ is defined as expression-equivalent to ~MANDATE-NOTHROW(rcvr.set_value(vs...))~.
+
+As we do not also mandate that the result-type of this expression must be ~void~, it is presumably
+allowed to return any other type and the ~set_value_t~ CPO is required to return any such value
+returned by the member-function in order to preserve the "expression-equivalent" property.
+
+I think we should mandate that the return-type of this expression is ~void~ to both avoid
+misuse of the return-value here but also to preserve design space for potential future
+extensions that might want to ascribe meaning to non-void return-values.
+
+Similarly for the ~set_error~ and ~set_stopped~ CPOs.
+
+*Suggestion:*
+Add a "Mandates: If the expression ~set_value(rcvr, vs...)~ is well-formed, its type shall be ~void~." to [exec.set.value].
+And similarly for ~set_error~ and ~set_stopped~.
+
+** Reconsider ~weakly_parallel~ as the default ~forward_progress_guarantee~
+
+The ~get_forward_progress_guarantee~ CPO is intended to allow querying a scheduler
+as for what sort of forward-progress guarantee it provides.
+
+Algorithms may use this to determine whether it is safe to execute certain
+operations on a given scheduler.
+
+If a scheduler does not customize this query, the query will fall back to returning
+a forward-progress guarantee of ~weakly_parallel~.
+
+I think we should reconsider what this default should be returning and suggest it
+should instead return ~parallel~ by default, as this will be by far the most common
+kind of scheduler - i.e. a scheduler that executes on ~std::thread~-like execution
+agents and that maintains a queue of scheduled tasks.
+
+I expect it to be common that authors of schedulers may forget to customize the
+~get_forward_progress_guarantee_t~ query and just leave it at the default, which
+will likely leave their scheduler reporting a weaker guarantee than it actually
+provides and thus not being usable within generic algorithms that require at least
+~parallel~ forward progress.
+
+For example, the ~run_loop~ execution context defined in [exec.run.loop] does not
+define its scheduler to customize the ~get_forward_progress_guarantee_t~.
+This means it will report the default value of ~weakly_parallel~.
+
+However, the scheduled operations will run on the thread that calls ~run_loop::run()~
+and thus will inherit its forward-progress guarantees, and as this function might
+block and is therefore unsafe to invoke it from a thread with ~weakly_parallel~
+forward progress guarantes (which should probably be explicitly specified as
+having undefined-behaviour) we can safely assume that ~run_loop~'s scheduler can
+provide ~parallel~ forward-progress guarantee (assuming some thread eventually calls
+~run()~).
+
+It's not clear whether the current ~run_loop~ specification defaulting to it's scheduler
+having ~weakly_parallel~ forward progress guarantee is intentional or unintentional here.
+
+Schedulers that provide either ~weakly_parallel~ or ~concurrent~ forward progress
+guarantees require implementations to be much more aware of the fact that these
+are the guarantees they are providing and thus could be more expected to customize
+the  ~get_forward_progress_guarantee~ query to return the respective values.
+
+** Unformatted
+
 
 - ~concept receiver~ is constraining on whether ~get_env(rcvr)~ returns a type that satisfies ~queryable~,
   but the ~get_env~ CPO already mandates that the return-value satisfies ~queryable~, so this check
@@ -56,7 +160,7 @@
     the semantics of calling the query on any copies of the query object.
   - Should we change the expression-equivalent-to to always pass a prvalue query object to the
     ~query()~ member function? This would allow query ~operator()~ to pass query objects by value.
-    e.g. ~get_allocator(env)~ is expression equivalent to ~env.query(auto(get_allocator))~ 
+    e.g. ~get_allocator(env)~ is expression equivalent to ~env.query(auto(get_allocator))~
 
   - Edit: seems like the semantics here are guaranteed by /customization-point object/ definition
     which requires that objects are default initializable and all objects of a given CPO type
@@ -64,12 +168,12 @@
     reference to the global object or a reference to some other object.
     In fact, I think that the above change is actually necessary to satisfy the requirements of
     /customization-point object/.
-    
+
 - specification for ~FWD-ENV(env)~ talks about that for queryable object ~env~, ~FWD-ENV(env).query(q, as...)~ is expression-equivalent to ~env.query(q, as...)~.
   My interpretation of this is that this must end up calling ~env.query~ on the original ~env~ object, not on a copy
   of ~env~, and thus the resulting type of ~FWD-ENV(env)~ necessarily needs to store a reference to ~env~.
   However, many uses of ~FWD-ENV~ use ~FWD-ENV(get_env(x))~ which might end up passing a temporary object to ~FWD-ENV~.
-  
+
 - suggestion for language improvement for lookup of ~operator co_await()~.
   - Why can't we make the expression ~operator co_await(x)~ perform lookup of both member-function
     and namespace-scope functions (using ADL) and then perform overload resolution on both
@@ -86,7 +190,7 @@
   - If this function is passed an lvalue, then ~Env~ is an lvalue-reference and the static_cast does not
     do anything more than ~std::forward<Env>(env)~ does.
   - If this function is passed an rvalue, then the ~static_cast~ will construct a new prvalue.
-    - Why is this the desired behaviour? 
+    - Why is this the desired behaviour?
 
 - Use of ~common_type~ in ~completion-domain~ helper makes things extra complicated.
   Can we just get away with ~same_as~ here instead?
