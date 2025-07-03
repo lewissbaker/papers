@@ -1,4 +1,4 @@
-* Notes on std::excecution wording for pre-Sofia draft
+* Notes on std::execution wording for pre-Sofia draft
 
 ** Standard defined queries can't customize forwarding_query_t by inheriting from it
 
