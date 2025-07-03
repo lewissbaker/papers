@@ -476,6 +476,33 @@ to the same expression in a coroutine with promise type ~Promise~.
   inconsistent with the definitions of ~env<Envs...>::query()~, ~FWD-ENV~ and other environment wrappers
   for which an ~env.query(q)~ is only valid if the underlying environment's ~env.inner.query(q)~ expression is valid.
 
+- In [exec.as.awaitable] p7.1 the wording says that ~as_awaitable(expr, p)~ is expression equivalent to
+  ~expr.as_awaitable(p)~ if that expression is well formed, and if so then mandates that the type of that
+  expression satisfies ~is-awaitable<Promise>~.
+  - The use of MANDATES here seems inconsistent with the definition of ~with-await-transform~
+    in [exec.awaitable] which has an ~await_transform~ overload that constrains the call to ~value.as_awaitable(promise)~
+    to both be a valid expression and have a return-type that satisfies ~is-awaitable<Promise&>~.
+  - We should be consistent between ~execution::as_awaitable(sndr, promise)~ and ~with-await-transform~
+    as to whether we use constraints or mandates to check that the result of ~.as_awaitable()~ satisifies
+    ~is-awaitable~.
+  - In fact, we may actually want to use a different concept that only checks for the ~awaitable~ concept
+    and that does not apply any ~promise.await_transform~ transformations. The ~is-awaitable~ concept will
+    apply ~await_transform~ to the argument-type, which in this case is the result of calling ~expr.as_awaitable(promise)~.
+    However, the typical use case for the ~as_awaitable()~ CPO is to call it from within ~await_transform~
+    (like ~with_awaitable_senders~ helper does) in which case the type that we want to check has already
+    gone through the promise-type's ~await_transform~ transformation and so passing the result through
+    ~await_transform~ again as part of ~is-awaitable~ concept check seems incorrect.
+
+- In [exec.awaitable] the definition of the ~has-as-awaitable~ concept constrains the result of calling
+  ~std::forward<T>(t).as_awaitable(p)~ as needing to satisfy ~is-awaitable<Promise&>~.
+  However, the ~is-awaitable~ concept takes its ~Promise~ template parameter and passes this as the
+  template argument to ~coroutine_handle<Promise>~. Thus, this would end up trying to instantiate
+  ~coroutine_handle<Promise&>~ which is probably not what was intended.
+
+  The ~is-awaitable<Promise&>~ constraint needs to be changed to ~is-awaitable<Promise>~ as the
+  ~is-awaitable~ concept applies the necessary lvalue reference to the template argument where
+  necessary.
+
 * Notes not directly related to [exec] wording
 
 - suggestion for language improvement for lookup of ~operator co_await()~.
