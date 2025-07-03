@@ -139,6 +139,30 @@ the  ~get_forward_progress_guarantee~ query to return the respective values.
 
 ** Unformatted
 
+- ~run_loop~'s scheduler should probably report a ~get_forward_progress_guarantee()~ of ~parallel~.
+  Currently ~run_loop~ specification does not define that its scheduler has a customisation of
+  the ~get_forward_progress_guarantee~ query. This means that it will report a forward-progress
+  guarantee by default of ~weakly_parallel~.
+
+  However, as all tasks scheduled to a ~run_loop~ will be run on the thread that calls
+  ~run_loop::run()~ and because ~run_loop::run()~ may be required to block until scheduled
+  items are submitted, it would not be safe to call ~run_loop::run()~ from a thread
+  with a weakly-parallel forward-progress guarantee. Thus we should be able to assume
+  that ~run_loop~ itself will provide a forward-progress guarantee of ~parallel~.
+
+- It is not possible to constrain a scheduler to require that it statically provides a
+  given forward progress guarantee.
+  It is not possible to evaluate whether the result of the ~get_forward_progress_guarantee()~
+  query on a given scheduler is going to return a given value as this query is required
+  to return type ~forward_progress_guarantee~, preventing it from returning e.g.
+  ~constant_wrapper<forward_progress_guarantee::parallel>~.
+  Also, implementations of the ~queryable~ concept in [exec] do not define static ~query~
+  functions, so we cannot generally test whether all instances of a queryable object
+  will return a given value by testing whether ~queryable_type::query(some_query_t{})~ is valid.
+  This seems to be a fundamental limitation of the ~queryable~ concept and of the environment
+  object wrappers that [exec] provides.
+  See https://godbolt.org/z/rcP1Y3jY9 for an example of how we might be able to define
+  wrappers to forward staticness of queries.
 
 - ~concept receiver~ is constraining on whether ~get_env(rcvr)~ returns a type that satisfies ~queryable~,
   but the ~get_env~ CPO already mandates that the return-value satisfies ~queryable~, so this check
@@ -246,3 +270,89 @@ the  ~get_forward_progress_guarantee~ query to return the respective values.
 
 - Why are most customization points defined as CPOs, but ~transform_sender~, ~transform_env~ and ~apply_sender~
   are defined as normal functions?
+
+- ~on()~ specification seems to already assume the context that the operation was started on
+  is the same as ~get_scheduler(get_env(rcvr))~.
+  - Can we make this a more general requirement that if the receiver's environment
+    provides ~get_scheduler~ that this places a requirement on the caller to ensure ~start()~
+    is called on that context?
+  - Alternatively, we should reword the phrasing in [exec.on] to avoid talking about resuming
+    on the execution context that it started on and instead just talk about resuming on
+    the execution context associated with ~get_scheduler(get_env(rcvr))~.
+
+- Wording for ~connect()~ defines fallback to be expression-equivalent to ~connect-awaitable(new_sndr, rcvr)~.
+  However, ~connect-awaitable~ has a ~requires~ clause that checks that ~rcvr~ is able to receive all of the
+  completion signals.
+  - Should be be "mandating" that ~rcvr~ is able to receive all of the signals rather than using "constraints"
+    here?
+  - We don't seem to use constraints that check the receiver is able to accept all of the signals when
+    calling member ~.connect()~ function so I think we should be consistent with the ~connect-awaitable~
+    fallback here.
+
+- Wording for ~connect()~ defines ~operation-state-task~ which must have ~promise_type~ member equal to
+  ~connect-awaitable-promise~ whose type depends on type of ~sndr~ and ~rcvr~ expressions passed into
+  ~connect()~. However, other than the ~::promise_type~ member alias, there isn't anything in
+  ~operation-state-task~ that actually depends on the types of the sender/receiver and so we could
+  potentially avoid making this type dependent and all of the additional instantiations needed
+  to use it if we instead specialised ~coroutine_traits<operation-state-task, _Sndr, _Rcvr>~ to
+  have a ~promise_type~ of ~connect-awaitable-promise~ rather than specifying that ~operation-state-task~
+  must have a ~promise_type~ of ~connect-awaitable-promise~.
+
+- Wording for ~connect()~ constructs a coroutine for awaitables but does not make use of the allocator
+  provided by ~get_allocator(get_env(rcvr))~ to allocate the coroutine state. Instead, it just uses
+  the global allocation function. Should it use the allocator from the environment instead?
+
+- Wording for ~connect-awaitable~ helper in [exec.connect] uses ~same_as<V, void>~ to check for void return-type
+  of the await expression, but we should be using ~is_void_v<V>~ here to also handle /cv/ ~void~.
+
+- Should definition of ~connect-awaitable-promise~ in [exec.connect] be calling ~unreachable()~ inside
+  the ~final_suspend()~, ~unhandled_exception()~ and ~return_void()~ member-functions instead of ~terminate()~?
+
+- Wording for [exec.as.awaitable] [[https://eel.is/c++draft/exec#as.awaitable-7.2][p7.2]] uses "Preconditions:" for things that look like they should be "constraints".
+
+- Wording for [exec.as.awaitable] [[https://eel.is/c++draft/exec#as.awaitable-7.2][p7.2]] contains the phrase:
+  #+begin_quote
+... and the expression ~co_await expr~ in a coroutine with promise type ~U~ is expression-equivalent
+to the same expression in a coroutine with promise type ~Promise~.
+  #+end_quote
+  It is not clear how this can be "expression-equivalent to" as the types involved are not the
+  same: a different ~coroutine_handle<Promise>~ type is passed to ~await_suspend()~ and ~Promise~
+  potentially calls ~await_transform~.
+  Perhaps we should use some phrasing along the lines of "effects equivalent to" instead of
+  "expression-equivalent to"?
+
+  Alternatively, perhaps there is a different way to describe this by checking whether:
+  ~GET-AWAITER(expr, p)~ satisfies ~is-awaiter<Promise>~ where ~p~ is an lvalue-reference to
+  an unspecified promise type that does not have an ~await_transform~ member.
+  This should effectively just apply the ~operator co_await()~ if such a call is well-formed
+  and then check that the result is a valid awaiter in a coroutine with promise-type ~Promise~.
+  This would avoid the need to say anything about whether a ~co_await~ expression in some
+  coroutine with an unspecified promise is equivalent to a ~co_await~ expression in a
+  coroutine with the promise type of ~Promise~.
+
+- Wording for ~as_awaitable~ in [exec.as.awaitable] defines what ~as_awaitable(expr, p)~ is
+  equivalent to if ~p~ is an lvalue, but doesn't say what happens if ~p~ is not an lvalue.
+  I think we need to say something like "If ~p~ is not an lvalue then ~as_awaitable(expr, p)~
+  is ill-formed."
+
+- Wording for [exec.as.awaitable] concept ~awaitable-sender~ refers to unqualified ~awaitable-receiver~
+  type. This type should be qualified as ~sender-awaitable<Sndr, Promise>::awaitable-receiver~.
+
+- In [exec.as.awaitable] should ~sender-awaitable~ handle the case where the completion-signatures of the sender
+  do not contain any error completions and where ~is_nothrow_constructible_v<result-type, Vs...>~ is true for
+  all value completions ~set_value_t(Vs...)~ by avoiding the need to store an ~exception_ptr~ and also
+  declaring the ~await_resume()~ member function of ~sender-awaitable~ as ~noexcept~?
+  Implementations can already do this if they want to (strengthening is allowed), but do we want
+  to require implementations to do this?
+
+- In [exec.as.awaitable] the ~awaitable-receiver::set_value~ member-function is defined as having
+  a constraint that the result-type is constructible from the values. Should we be using mandates
+  here instead? There shouldn't be any need to change behaviour based on whether or not the
+  receiver's completion methods are well-formed or not.
+
+- In [exec.as.awaitable] [[https://eel.is/c++draft/exec#as.awaitable-4.4][p4.4]] we define ~get_env(crcvr).query(tag, as...)~ as expression equivalent
+  to ~tag(get_env(as_const(crcvr.continuation.promise())), as...)~.
+  However, this can result in the returned environment satisfying some queries by returning default
+  values when the original environment did not provide implementations for those queries. This is
+  inconsistent with the definitions of ~env<Envs...>::query()~, ~FWD-ENV~ and other environment wrappers
+  for which an ~env.query(q)~ is only valid if the underlying environment's ~env.inner.query(q)~ expression is valid.
