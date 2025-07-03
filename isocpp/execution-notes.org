@@ -1,6 +1,6 @@
 * Notes on std::execution wording for pre-Sofia draft
 
-** Standard defined queries can't customize forwarding_query_t by inheriting from it
+** Standard defined queries can't customize ~forwarding_query_t~ by inheriting from it
 
 The definition of the ~forwarding_query_t~ ([[[https://eel.is/c++draft/exec#fwd.env][exec.fwd.env]]]) states that a query is a
 forwarding-query if either the expression ~q.query(forwarding_query)~ is a constant
@@ -137,61 +137,185 @@ guarantees require implementations to be much more aware of the fact that these
 are the guarantees they are providing and thus could be more expected to customize
 the  ~get_forward_progress_guarantee~ query to return the respective values.
 
+** ~run_loop~'s scheduler should probably report a ~get_forward_progress_guarantee()~ of ~parallel~
+
+Currently ~run_loop~ specification does not define that its scheduler has a customisation of
+the ~get_forward_progress_guarantee~ query. This means that it will report a forward-progress
+guarantee by default of ~weakly_parallel~.
+
+However, as all tasks scheduled to a ~run_loop~ will be run on the thread that calls
+~run_loop::run()~ and because ~run_loop::run()~ may be required to block until scheduled
+items are submitted, it would not be safe to call ~run_loop::run()~ from a thread
+with a weakly-parallel forward-progress guarantee. Thus we should be able to assume
+that ~run_loop~ itself will provide a forward-progress guarantee of ~parallel~.
+
+** It is not possible to constrain a scheduler to require that it statically provides a forward-progress guarantee
+
+It is not possible to evaluate whether the result of the ~get_forward_progress_guarantee()~
+query on a given scheduler is going to return a given value as this query is required
+to return type ~forward_progress_guarantee~, preventing it from returning e.g.
+~constant_wrapper<forward_progress_guarantee::parallel>~.
+
+Also, implementations of the ~queryable~ concept in [exec] do not define static ~query~
+functions, so we cannot generally test whether all instances of a queryable object
+will return a given value by testing whether ~queryable_type::query(some_query_t{})~ is valid.
+
+This seems to be a fundamental limitation of the ~queryable~ concept and of the environment
+object wrappers that [exec] provides.
+
+See https://godbolt.org/z/rcP1Y3jY9 for an example of how we might be able to define
+wrappers to forward staticness of queries.
+
+** Unnecessary constraint in ~receiver~ and ~sender~ concepts
+
+In [exec.recv.concepts] ~concept receiver~ is constraining on whether ~get_env(rcvr)~ returns a type that satisfies ~queryable~,
+but the ~get_env~ CPO already mandates that the return-value satisfies ~queryable~, so this check seems redundant.
+
+Suggested change:
+#+begin_src diff
+   template<class Rcvr>
+     concept receiver =
+       derived_from<typename remove_cvref_t<Rcvr>::receiver_concept, receiver_t> &&
+       requires(const remove_cvref_t<Rcvr>& rcvr) {
+  -      { get_env(rcvr) } -> queryable;
+  +      get_env(rcvr);
+       } &&
+       move_constructible<remove_cvref_t<Rcvr>> &&       // rvalues are movable, and
+       constructible_from<remove_cvref_t<Rcvr>, Rcvr>;   // lvalues are copyable
+#+end_src
+
+However, as the ~get_env()~ CPO is defined for all objects (it will fall back to returning
+~env<>~ if ~AS-CONST(obj).get_env()~ is not valid), testing whether ~get_env(rcvr)~
+expression is valid is not actually going to constrain types in any way.
+So we could consider just removing the entire ~requires~ expression that checks
+for ~get_env(rcvr)~.
+
+Similar changes should be applied to the ~sender~ concept definition in [exec.snd.concepts].
+
+** Unnecessary constraint in ~operation_state~ concept
+
+The ~operation_state~ concept is defined in [exec.opstate.general] as follows:
+#+begin_src c++
+  template<class O>
+    concept operation_state =
+      derived_from<typename O::operation_state_concept, operation_state_t> &&
+      is_object_v<O> &&
+      requires (O& o) {
+        { start(o) } noexcept;
+      };
+#+end_src
+
+The ~requires~ expression that checks that the ~start(op)~ expression is valid also
+checks that this expression is ~noexcept~. However, the ~start~ CPO already mandates
+that the expression is ~noexcept~ and so the additional ~noexcept~ check in the
+~operation_state~ concept seems unnecessary.
+
+Can we simplify the ~operation_state~ concept to remove the ~noexcept~ check?
+
+** Specification of queries should not require passing references to global CPO objects
+
+The specification of most queries in [exec] defines them to be "expression-equivalent to"
+calling the ~query()~ member-function, passing the global CPO object as the argument.
+
+For example: The ~get_allocator~ query is defined as:
+#+begin_src c++
+  namespace std::execution {
+  struct get_allocator_t { unspecified };
+  inline constexpr get_allocator_t get_allocator{};
+#+end_src
+such that ~get_allocator(env)~ is expression-equivalent to ~MANDATE-NOTHROW(AS-CONST(env).query(get_allocator))~
+
+However, when such a formulation is combined with the definition of customization-point object
+in [customization.point.object] we can end up with implementations that need to unnecessarily
+pass references to the global object.
+
+The wording in [customization.point.object] requires that calling ~operator()~ on any instance of the
+customization-point object type, whether const-qualfified or not and whether on an lvalue or rvalue,
+has equivalent effects to calling the original customization point object.
+
+Since the effects of calling ~get_allocator(env)~ is such that it passes the object ~get_allocator~ as
+an argument to the ~env.query()~ call, then all calls to function objects of type ~get_allocator_t~
+must also be expression-equivalent to ~env.query(get_allocator)~. i.e they must pass in a reference
+to the global object as this would be detectable behaviour inside the ~query()~ member function.
+
+For example, I could write a ~query()~ function that looked like:
+#+begin_src c++
+  struct my_env {
+    std::allocator<void> query(const std::execution::get_allocator_t& q) const noexcept {
+      assert(&q == &std::execution::get_allocator);
+      return std::allocator<void>{};
+    }
+  };
+#+end_src
+and would be presumably within expected behaviour for the assertion to pass when evaluating
+#+begin_src c++
+  my_env env;
+  auto query = std::execution::get_allocator;
+  auto alloc = query(env);
+#+end_src
+
+In order to satisfy this behaviour, implementations would need to define ~get_allocator_t~
+something like the following:
+#+begin_src c++
+  namespace std::execution {
+    template<class Queryable, class Query>
+    concept __has_query = requires(const Queryable& env, const Query& query) {
+      env.query(query);
+    };
+
+    template<class Queryable, class Query>
+    using __query_result_t = decltype(std::declval<const Queryable&>().query(std::declval<const Query&>()));
+
+    struct get_allocator_t {
+      template<__has_query<get_allocator_t> Queryable>
+      static constexpr auto operator()(const Queryable& q) noexcept
+        -> __query_result_t<Queryable, get_allocator_t>;
+    };
+    inline constexpr get_allocator_t get_allocator{};
+    // Must define the operator() overload after 'get_allocator' object definition
+    // so that it can pass a reference to 'get_allocator'.
+    template<__has_query<get_allocator_t> Queryable>
+    constexpr auto get_allocator_t::operator()(const Queryable& q) noexcept
+      -> __query_result_t<Queryable, get_allocator_t> {
+      return q.query(get_allocator);
+    }
+  }
+#+end_src
+
+This can result in potential aliasing of the CPO object, forcing an instance to live in the binary.
+
+If queries were instead defined to pass a prvalue CPO as an argument to the ~query()~ member
+function then implementations could avoid unnecessarily aliasing the global CPO object and
+also allow simplification of the implementation, allowing the ~operator()~ to be defined
+inline.
+
+For example, simply changing ~get_allocator(env)~ to be expression-equivalent to ~MANDATE-NOTHROW(AS-CONST(env).query(auto(get_allocator)))~
+would now permit the following implementation:
+#+begin_src c++
+  namespace std::execution {
+    template<class Queryable, class Query>
+    concept __has_query = requires(const Queryable& env) {
+      env.query(Query{});
+    };
+
+    template<class Queryable, class Query>
+    using __query_result_t = decltype(std::declval<const Queryable&>().query(std::declval<Query>()));
+
+    struct get_allocator_t {
+      template<__has_query<get_allocator_t> Queryable>
+      static constexpr auto operator()(const Queryable& q) noexcept
+        -> __query_result_t<Queryable, get_allocator_t> {
+        return q.query(get_allocator_t{});
+      }
+    };
+    inline constexpr get_allocator_t get_allocator{};
+  }
+#+end_src
+
+The suggested change is to replace occurrences of a customization-point object ~cpo~ with ~auto(cpo)~ in
+the "expression-equvalent to" expression for all customization-point objects defined in [exec].
+
 ** Unformatted
-
-- ~run_loop~'s scheduler should probably report a ~get_forward_progress_guarantee()~ of ~parallel~.
-  Currently ~run_loop~ specification does not define that its scheduler has a customisation of
-  the ~get_forward_progress_guarantee~ query. This means that it will report a forward-progress
-  guarantee by default of ~weakly_parallel~.
-
-  However, as all tasks scheduled to a ~run_loop~ will be run on the thread that calls
-  ~run_loop::run()~ and because ~run_loop::run()~ may be required to block until scheduled
-  items are submitted, it would not be safe to call ~run_loop::run()~ from a thread
-  with a weakly-parallel forward-progress guarantee. Thus we should be able to assume
-  that ~run_loop~ itself will provide a forward-progress guarantee of ~parallel~.
-
-- It is not possible to constrain a scheduler to require that it statically provides a
-  given forward progress guarantee.
-  It is not possible to evaluate whether the result of the ~get_forward_progress_guarantee()~
-  query on a given scheduler is going to return a given value as this query is required
-  to return type ~forward_progress_guarantee~, preventing it from returning e.g.
-  ~constant_wrapper<forward_progress_guarantee::parallel>~.
-  Also, implementations of the ~queryable~ concept in [exec] do not define static ~query~
-  functions, so we cannot generally test whether all instances of a queryable object
-  will return a given value by testing whether ~queryable_type::query(some_query_t{})~ is valid.
-  This seems to be a fundamental limitation of the ~queryable~ concept and of the environment
-  object wrappers that [exec] provides.
-  See https://godbolt.org/z/rcP1Y3jY9 for an example of how we might be able to define
-  wrappers to forward staticness of queries.
-
-- ~concept receiver~ is constraining on whether ~get_env(rcvr)~ returns a type that satisfies ~queryable~,
-  but the ~get_env~ CPO already mandates that the return-value satisfies ~queryable~, so this check
-  seems redundant. Similarly  for ~concept sender~.
-
-- ~concept receiver~ uses ~move_constructible<remove_cvref_t<_Rcvr>> && constructible_from<remove_cvref_t<_Rcvr>, _Rcvr>~
-  Could be simplfied using ~movable-value<_Rcvr>~?
-
-- ~operation_state~ concept constraints on ~start(op)~ being ~noexcept~ but the ~start~ CPO already mandates that
-  the expression is ~noexcept~. Can we simplify the concept to remove the ~noexcept~ check?
-
-- Lots of the specification for queries are "expression equivalent to" some expression involving the
-  global constexpr object. This tends to mean that the queries themselves must forward that specific
-  object through by universal reference rather than taking it by copy as it may be possible to
-  detect inside the implementation of a ~.query()~ function whether a reference to the actual
-  global constexpr object was passed, or some copy of that object.
-
-  - We only specify the semantics of calling the query CPO on the global object, we don't specify
-    the semantics of calling the query on any copies of the query object.
-  - Should we change the expression-equivalent-to to always pass a prvalue query object to the
-    ~query()~ member function? This would allow query ~operator()~ to pass query objects by value.
-    e.g. ~get_allocator(env)~ is expression equivalent to ~env.query(auto(get_allocator))~
-
-  - Edit: seems like the semantics here are guaranteed by /customization-point object/ definition
-    which requires that objects are default initializable and all objects of a given CPO type
-    are equivalent. Still, it might be observable whether or not you are explicitly passed a
-    reference to the global object or a reference to some other object.
-    In fact, I think that the above change is actually necessary to satisfy the requirements of
-    /customization-point object/.
 
 - specification for ~FWD-ENV(env)~ talks about that for queryable object ~env~, ~FWD-ENV(env).query(q, as...)~ is expression-equivalent to ~env.query(q, as...)~.
   My interpretation of this is that this must end up calling ~env.query~ on the original ~env~ object, not on a copy
