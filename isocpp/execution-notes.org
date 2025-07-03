@@ -322,11 +322,6 @@ the "expression-equvalent to" expression for all customization-point objects def
   of ~env~, and thus the resulting type of ~FWD-ENV(env)~ necessarily needs to store a reference to ~env~.
   However, many uses of ~FWD-ENV~ use ~FWD-ENV(get_env(x))~ which might end up passing a temporary object to ~FWD-ENV~.
 
-- suggestion for language improvement for lookup of ~operator co_await()~.
-  - Why can't we make the expression ~operator co_await(x)~ perform lookup of both member-function
-    and namespace-scope functions (using ADL) and then perform overload resolution on both
-    rather than having to separately perform member and non-member lookup?
-
 - specification of ~completion_signatures~ usage should make use of ~type_order~ facilities to
   ensure a canonical ordering of types listed in ~completion_signatures~.
 
@@ -480,3 +475,12 @@ to the same expression in a coroutine with promise type ~Promise~.
   values when the original environment did not provide implementations for those queries. This is
   inconsistent with the definitions of ~env<Envs...>::query()~, ~FWD-ENV~ and other environment wrappers
   for which an ~env.query(q)~ is only valid if the underlying environment's ~env.inner.query(q)~ expression is valid.
+
+* Notes not directly related to [exec] wording
+
+- suggestion for language improvement for lookup of ~operator co_await()~.
+  - Why can't we make the expression ~operator co_await(x)~ perform lookup of both member-function
+    and namespace-scope functions (using ADL) and then perform overload resolution on both
+    rather than having to separately perform member and non-member lookup?
+
+
