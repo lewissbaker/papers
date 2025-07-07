@@ -354,7 +354,8 @@ the "expression-equvalent to" expression for all customization-point objects def
   queries taking a pack of extra arguments after the query tag. Similarly with the definition
   of ~FWD-ENV(env).query(q, as...)~ which also talks about forwarding an extra pack of arguments.
   Either we should drop support from extra arguments, or we should add support for extra arguments
-  to ~env<Envs...>~ and ~prop<Query, Value>~.
+  to ~env<Envs...>~ and ~prop<Query, Value>~ and all of the other places where we define a ~query()~
+  function.
 
 - ~env<Envs...>::query()~ has a return-type defined as ~decltype(auto)~.
   I suspect this may cause problems for some queries that need to get the return-type but
@@ -502,6 +503,84 @@ to the same expression in a coroutine with promise type ~Promise~.
   The ~is-awaitable<Promise&>~ constraint needs to be changed to ~is-awaitable<Promise>~ as the
   ~is-awaitable~ concept applies the necessary lvalue reference to the template argument where
   necessary.
+
+- [exec.with.awaitable.senders] p2 The ~requires~ clause checking whether
+  ~other.unhandled_stopped()~ is valid should also check that the result satisfies
+  ~convertible_to<coroutine_handle<>>~, similarly to how the exposition-only concept
+  ~awaitable-sender~ defined in [exec.as.awaitable] does.
+
+- [exec.with.awaitable.senders] p3 Consider mandating here that ~derived_from<Promise, with_awaitable_senders>~ is satisfied
+  to ensure that the ~static_cast<Promise&>(*this)~ is a valid expression.
+
+- [exec.with.awaitable.senders] p3 The ~with_awaitable_senders::await_transform~ member function
+  should declare a conditionally-noexcept exception specification to be consistent with
+  the ~with-await-transform::await_transform~ function.
+
+- Definition of ~transform_sender~ says to compare types of ~sndr~ and ~transformed-sndr~ ignoring cv-qualifiers
+  but this doesn't take into account that ~sndr~ might be ~T&&~ and ~transformed-sndr~ may be ~T~ (e.g. if the transform
+  returned a prvalue).
+
+  My interpretation was that I should apply the test ~same_as<remove_cv_t<decltype(sndr)>, remove_cv_t<decltype(transformed-sndr)>>~.
+  However, ~remove_cv_t~ does not remove qualifiers from a type ~Sndr&&~ (which is the type of ~sndr~).
+  Is the intention that this should instead use ~same_as<remove_cvref_t<decltype(sndr)>, remove_cvref_t<decltype(transformed-sndr)>>~?
+  If so, can we use some more precise wording than "ignoring cv-qualifiers" to describe this?
+
+- ~execution::transform_sender~ can return dangling references if a custom domain returns a prvalue.
+  Consider the following code:
+  #+begin_src c++
+    struct simple_sender { /* implementation omitted */ };
+    struct other_sender { /* implementation omitted */ };
+    struct my_domain {
+      static constexpr other_sender transform_sender(simple_sender&& s) noexcept;
+    };
+
+    void example() {
+      auto sndr = std::execution::transform_sender(my_domain{}, simple_sender{});
+    }
+  #+end_src
+  In this example, the implementation of ~std::execution::transform_sender~ is required to have
+  a body for the instantiation of this call equivalent to overload #1 below:
+  #+begin_src c++
+    namespace std::execution {
+      other_sender&& transform_sender(my_domain dom, simple_sender&& s) noexcept { // #1
+        // This recursive call calls onto overload #2 below.
+        return std::execution::transform_sender(dom,
+                                                dom.transform_sender(std::forward<simple_sender>(s)));
+      }
+
+      other_sender&& transform_sender(my_domain dom, other_sender&& s) noexcept { // #2
+        // my_domain cannot transform other_sender, so we fall back to transforming
+        // using the default domain. Calls onto overload of default_domain::transform_sender() below.
+        return default_domain().transform_sender(std::forward<other_sender>(s));
+      }
+
+      // As per [exec.domain.default] falls back to 'return std::forward<Sndr>(s);' if
+      // tag_of_t<Sndr> is not well-formed.
+      other_sender&& default_domain::transform_sender(other_sender&& s) noexcept {
+        return std::forward<other_sender>(s);
+      }
+    }
+  #+end_src
+  The problem here is that the call to ~dom.transform_sender()~ is returning a prvalue temporary which
+  is then being passed into overload #2 of ~execution::transform_sender()~ which is then returning
+  an rvalue reference to this temporary which it is then returning from overload #1.
+  However, the lifetime of this temporary ends immediately upon returning from ~execution::transform_sender()~
+  and thus the caller in ~example()~ above is left initializing its local variable ~sndr~ from a dangling
+  reference.
+
+  The definition of ~execution::transform_sender~ needs to be fixed to avoid this case of returning a
+  reference to a temporary object.
+
+  A simple fix here would be to use an ~auto~ return type rather than a ~decltype(auto)~ return type to
+  force ~execution::transform_sender~ to always return a newly constructed prvalue sender.
+  The downside with this, however, is that in the reasonably common case of the call to ~transform_sender()~
+  resulting in no transformation and just returning the original object such a design would incur
+  an additional move operation of the sender, which could be expensive for large sender expressions.
+
+  Another alternative could be to force the result of a nested call to ~execution::transform_sender~
+  to always return a prvalue:
+  i.e. change the ~final-sndr~ expression for the case where ~transformed-sndr~ and ~sndr~ have different
+  types to be ~auto(transform_sender(dom, transformed-sndr, env...))~.
 
 * Notes not directly related to [exec] wording
 
