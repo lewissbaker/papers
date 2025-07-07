@@ -1,6 +1,6 @@
 * Notes on std::execution wording for pre-Sofia draft
 
-** Standard defined queries can't customize ~forwarding_query_t~ by inheriting from it
+** Standard defined queries can't customize ~forwarding_query_t~ by inheriting from it :design:
 
 The definition of the ~forwarding_query_t~ ([[[https://eel.is/c++draft/exec#fwd.env][exec.fwd.env]]]) states that a query is a
 forwarding-query if either the expression ~q.query(forwarding_query)~ is a constant
@@ -22,7 +22,7 @@ remove the support for customising ~forwarding_query_t~ by inheriting from it.
 The recommended resolution is to remove the rule that checks for inheritance from
 ~forwarding_query_t~.
 
-** Equal schedulers should be required to have same behaviour
+** Equal schedulers should be required to have same behaviour        :design:
 
 The wording [[[https://eel.is/c++draft/exec#sched-4][exec.sched]]] p4 says:
 #+begin_quote
@@ -77,7 +77,7 @@ to complete.
 The note as it stands represents bad guidance and should either be removed or
 updated to refer to ~counting_scope~ and ~simple_counting_scope~ ([exec.counting.scopes]).
 
-** Consider mandating that ~set_value()~, ~set_error()~ and ~set_stopped()~ calls have a return-type of ~void~
+** Consider mandating that ~set_value()~, ~set_error()~ and ~set_stopped()~ calls have a return-type of ~void~ :design:
 
 The expression ~set_value(rcvr, vs...)~ is defined as expression-equivalent to ~MANDATE-NOTHROW(rcvr.set_value(vs...))~.
 
@@ -95,7 +95,7 @@ Similarly for the ~set_error~ and ~set_stopped~ CPOs.
 Add a "Mandates: If the expression ~set_value(rcvr, vs...)~ is well-formed, its type shall be ~void~." to [exec.set.value].
 And similarly for ~set_error~ and ~set_stopped~.
 
-** Reconsider ~weakly_parallel~ as the default ~forward_progress_guarantee~
+** Reconsider ~weakly_parallel~ as the default ~forward_progress_guarantee~ :design:
 
 The ~get_forward_progress_guarantee~ CPO is intended to allow querying a scheduler
 as for what sort of forward-progress guarantee it provides.
@@ -137,7 +137,7 @@ guarantees require implementations to be much more aware of the fact that these
 are the guarantees they are providing and thus could be more expected to customize
 the  ~get_forward_progress_guarantee~ query to return the respective values.
 
-** ~run_loop~'s scheduler should probably report a ~get_forward_progress_guarantee()~ of ~parallel~
+** ~run_loop~'s scheduler should probably report a ~get_forward_progress_guarantee()~ of ~parallel~ :design:
 
 Currently ~run_loop~ specification does not define that its scheduler has a customisation of
 the ~get_forward_progress_guarantee~ query. This means that it will report a forward-progress
@@ -149,7 +149,7 @@ items are submitted, it would not be safe to call ~run_loop::run()~ from a threa
 with a weakly-parallel forward-progress guarantee. Thus we should be able to assume
 that ~run_loop~ itself will provide a forward-progress guarantee of ~parallel~.
 
-** It is not possible to constrain a scheduler to require that it statically provides a forward-progress guarantee
+** It is not possible to constrain a scheduler to require that it statically provides a forward-progress guarantee :design:
 
 It is not possible to evaluate whether the result of the ~get_forward_progress_guarantee()~
 query on a given scheduler is going to return a given value as this query is required
@@ -213,6 +213,7 @@ that the expression is ~noexcept~ and so the additional ~noexcept~ check in the
 Can we simplify the ~operation_state~ concept to remove the ~noexcept~ check?
 
 ** Specification of queries should not require passing references to global CPO objects
+
 
 The specification of most queries in [exec] defines them to be "expression-equivalent to"
 calling the ~query()~ member-function, passing the global CPO object as the argument.
@@ -315,90 +316,290 @@ would now permit the following implementation:
 The suggested change is to replace occurrences of a customization-point object ~cpo~ with ~auto(cpo)~ in
 the "expression-equvalent to" expression for all customization-point objects defined in [exec].
 
-** Unformatted
+** ~FWD-ENV(env)~ is unclear about ownership/lifetime of ~env~ object   :clarify:
 
-- specification for ~FWD-ENV(env)~ talks about that for queryable object ~env~, ~FWD-ENV(env).query(q, as...)~ is expression-equivalent to ~env.query(q, as...)~.
-  My interpretation of this is that this must end up calling ~env.query~ on the original ~env~ object, not on a copy
-  of ~env~, and thus the resulting type of ~FWD-ENV(env)~ necessarily needs to store a reference to ~env~.
-  However, many uses of ~FWD-ENV~ use ~FWD-ENV(get_env(x))~ which might end up passing a temporary object to ~FWD-ENV~.
+The specification for ~FWD-ENV(env)~ says that for queryable object ~env~, ~FWD-ENV(env).query(q, as...)~
+is expression-equivalent to ~env.query(q, as...)~.
 
-- specification of ~completion_signatures~ usage should make use of ~type_order~ facilities to
-  ensure a canonical ordering of types listed in ~completion_signatures~.
+My interpretation of this is that this must end up calling ~env.query~ on the original ~env~ object,
+not on a copy of ~env~, and thus the resulting type of ~FWD-ENV(env)~ necessarily needs to store
+~env~ itself (e.g. by in-place constructing it as a member of the ~FWD-ENV(env)~ object) or by
+storing a reference to ~env~.
 
-- ~transform_sender~, ~transform_env~ and ~apply_sender~ are all regular functions, whereas other customisation
-  points are all defined as CPOs. Why do we define these as normal functions and the others as CPOs?
+However, many uses of ~FWD-ENV~ use ~FWD-ENV(get_env(x))~ which might end up passing a temporary
+object to ~FWD-ENV~ and so holding a reference to ~env~ does not seem like a suitable implementation
+strategy.
 
-- ~default_domain::transform_env~ has a fallback of ~static_cast<Env>(std::forward<Env>(env))~ but it's not
-  clear what the effect of the ~static_cast~ is here.
-  - If this function is passed an lvalue, then ~Env~ is an lvalue-reference and the static_cast does not
-    do anything more than ~std::forward<Env>(env)~ does.
-  - If this function is passed an rvalue, then the ~static_cast~ will construct a new prvalue.
-    - Why is this the desired behaviour?
+The ~queryable~ concept does not require that the type is copyable/movable, so we cannot
+necessarily guarantee that we could move/copy the object returned from ~get_env()~ into another
+object anyway - it would need to be in-place constructed within the object returned by ~FWD-ENV~.
 
-- Use of ~common_type~ in ~completion-domain~ helper makes things extra complicated.
-  Can we just get away with ~same_as~ here instead?
+** Consider making use of ~type_order~ facilities to require canonical ~completion_signatures~ :improvement:design:
 
-- In ~get-domain-late~ it uses a lambda expression with the structured binding:
+With the introduction of compile-time type-ordering, we should consider whether to mandate taking
+advantage of the ability to sort types to require specializations of the ~completion_signatures~
+class template to have the completion-signatures listed in a canonical order.
+
+Forcing a canonical order could help reduce the number of template instantiations in cases where
+two senders compute equivalent sets of completion signatures but where the completion signatures
+are listed in a different order.
+
+** Should ~transform_sender~, ~transform_env~ and ~apply_sender~ functions be customization points? :design:
+
+The ~transform_sender~ ([exec.snd.transform]), ~transform_env~ ([exec.snd.transform.env]) and ~apply_sender~ ([exec.snd.apply])
+are curently all defined as regular functions, whereas other customisation points are all defined as CPOs.
+
+Why do we define these as normal functions and the others as CPOs?
+Is the distinction here intentional?
+
+The difference between declarations is observable.
+- Customization point objects would not be found by ADL, whereas the current declarations
+  can be expected to be found by ADL.
+  e.g. if passing ~std::execution::default_domain~ as the first argument, as specified I would expect to be
+  able to make an unqualified call to ~transform_sender(std::execution::default_domain(), sndr)~
+  and this would find the ~std::execution::transform_sender~ function definition.
+- Customization point objects can be passed around unqualified as function-objects,
+  whereas when declared as a function-template you cannot pass around the function-name
+  as an object.
+
+Note that the stdexec implementation currently has ~transform_sender~ defined as a CPO, which would be non-compliant
+according to the current specification.
+
+** Clarify the intent of ~static_cast<Env>()~ in ~default_domain::transform_env()~ :clarify:
+
+In [exec.domain.default] p5, the ~default_domain::transform_env~ is specified to have
+a fallback return expression of ~static_cast<Env>(std::forward<Env>(env))~.
+
+However, it's not clear what the purpose of the ~static_cast~ is here.
+- If this function is passed an lvalue, then ~Env~ is an lvalue-reference and the static_cast does not
+  do anything more than ~std::forward<Env>(env)~ does.
+- If this function is passed an rvalue, then the ~static_cast~ will construct a new prvalue.
+  - Why is this the desired behaviour?
+  - Why is a similar cast not applied to the ~transform_sender~ implementation?
+
+It is also not clear that introducing a move-construction here is valid:
+- There is no requirement on the ~queryable~ concept that says that environment objects
+  must provide a move or copy constructor, so forcing move-construction of a new
+  environment object to be returned from ~transform_env()~ without constraining or
+  mandating that the type ~Env~ is move-constructible seems incorrect.
+
+** Unnecessary copy of sender in ~get-domain-late~ specification
+
+In [exec.snd.expos] p14.1 in the specification of ~get-domain-late~ it uses a lambda
+expression with the structured binding:
   #+begin_src c++
     [] {
       auto [_, sch, _] = sndr;
       return query-with-default(get_domain, sch, default_domain());
-    }()
+    }();
   #+end_src
-  However this will try to perform a copy of the sender which will be ill-formed if the
-  sender is not copyable (Note ~sndr~ is a const-ref). The structured binding should instead
-  start with ~auto& [_, sch, _] =~.
 
-- ~env<Envs...>~ class contains a ~query(QueryTag)~ member-function that only takes the query-tag.
-  However, the ~queryable~ concept description in [exec.queryable.general] still talks about
-  queries taking a pack of extra arguments after the query tag. Similarly with the definition
-  of ~FWD-ENV(env).query(q, as...)~ which also talks about forwarding an extra pack of arguments.
-  Either we should drop support from extra arguments, or we should add support for extra arguments
-  to ~env<Envs...>~ and ~prop<Query, Value>~ and all of the other places where we define a ~query()~
-  function.
+However this will try to perform a copy of the sender which will be ill-formed if the
+sender is not copyable (Note ~sndr~ is a const-ref). The structured binding should instead
+start with ~auto& [_, sch, _] =~.
 
-- ~env<Envs...>::query()~ has a return-type defined as ~decltype(auto)~.
-  I suspect this may cause problems for some queries that need to get the return-type but
-  for which the body may not yet be valid (e.g. because some types are still incomplete).
-  Although I don't have any concrete examples of where this is an issue at the moment.
+There is also a similar issue in the definition of ~execution::continues_on~ in
+[exec.continues.on] p5, where it unnecessarily takes a copy/move of ~sndr~.
+#+begin_src c++
+  auto [_, data, child] = sndr;
+  return schedule_from(std::move(data), std::move(child));
+#+end_src
 
-- ~unstoppable_token~ concept is ill-formed
-  - Can't use ~tok~ argument to ~requires~ clause in evaluated context.
-  - Need to change requirement to ~requires (!Token::stop_possible());~ instead.
+The above structured binding should be ~auto&& [_, data, child] = sndr;~ instead.
 
-- ~AS-EXCEPT-PTR(err)~ is not necessarily ~noexcept~ yet is used in contexts (such as ~set_error()~ in [exec.sync.wait])
-  where emitting an exception would result in termination.
-  - In particular, the paragraph that says it's equivalent to ~make_exception_ptr(system_error(err))~ when ~err~ is an ~error_code~
-    might throw from the ~system_error~ constructor, whose constructor is not marked ~noexcept~.
-  - Should this be changed to catch any exception thrown by the exception and return
-    ~current_exception()~ in that case?
+** Inconsistent support for ~std::execution~ queries taking additional arguments
 
-- ~get_allocator_t~ uses ~MANDATE-NOTHROW~ but lots of allocator types are not actually required
-  to be nothrow copyable/movable, only that they are "Throws: nothing".
-  - Do we need this to be transparent to ~noexcept~ here, instead?
+The facilities in [exec] that define queryable types that provide implementations
+of ~query()~ member-functions are inconsistent in their support for taking optional
+additional arguments to the ~query()~ call.
 
-- ~with-await-transform::await_transform()~ uses ~decltype(auto)~ as the return-type.
-  Should it use a trailing return-type instead?
+In [exec.queryable.general] p1, which defines the general concepts of
+/queryable object/, /query object/ and /query/, it talks about queries having a
+possibly empty set of additional arguments.
 
-- Wording for ~connect()~ needs to specify that ~rcvr~ is only to be evaluated once.
-  - It occurs once in call to ~transform_sender(dom, sndr, rcvr)~
-  - And occurs again in call to ~new_sndr.connect(rcvr)~
+The following definitions of ~queryable~ types defined in [exec] support taking
+additional arguments to ~env.query(tag, as...)~:
+- In [exec.snd.expos] p2 ~FWD-ENV(env).query(q, as...)~ is defined to be equivalent to ~env.query(q, as...)~
+  if the query object ~q~ is a ~forwarding_query~.
+  This is used as the environment returned by ~basic-receiver::get_env()~.
+- In [exec.snd.expos] p4 ~JOIN-ENV(env1, env2)~ also defines that the environment
+  object ~env3~ is returned from ~JOIN-ENV~ such that ~env3.query(q, as...)~ is
+  equivalent to ~env1.query(q, as...)~ if that is valid, otherwise ~env2.query(q, as...)~.
+- In [exec.as.awaitable] p4.4 the ~awaitable-receiver~ type is defined to return an
+  environment ~env~ from its ~get_env()~ member-function such that ~env.query(tag, as...)~
+  is equivalent to ~tag(get_env(as_const(crcvr.continuation.promise())), as...)~.
+  (Which is itself a separate bug - it should be calling ~.query(tag, as...)~ member-function).
+  
+The following definitions of ~queryable~ types defined in [exec] *do not* support taking
+additional arguments to ~env.query(tag)~.
+- In [exec.snd.expos] p43.2 the ~impls-for<write-env-t>::get-env~ function is defined
+  to return a ~queryable~ object ~e~ such that ~e.query(q)~ is equivalent to ~state.query(q)~
+  if that is valid, otherwise ~get_env(rcvr).query(q)~.
+- The ~read_env~ algorithm defined in [exec.read.env] only supports queries that do
+  not take any additional arguments, although there doesn't appear to be anything
+  stopping passing a stateless lambda as the query object (as long as it satisfies
+  requirements of being a customization point object).
+- In [exec.let] p6.2 it defines ~receiver2::get_env()~ to return a ~queryable~ object ~e~
+  such that ~e.query(q)~ is equivalent to ~env.query(q)~ if that is valid, otherwise
+  ~get_env(rcvr).query(q)~.
+- In [exec.when.all] p6 it defines ~impls-for<when_all_t>::get-env~ to return a
+  ~queryable~ object ~e~ such that ~e.query(get_stop_token)~ is equivalent to
+  ~state.stop-src.get_token()~ and ~e.query(q)~ for some ~q~ that is not ~get_stop_token~
+  to be ~get_env(rcvr).query(q)~.
+- The class template ~env<Envs...>~ defined in [exec.env] is defined to have a
+  ~query(QueryTag q)~ member-function that forwars the call to the first child
+  environment env_{i} such that env_{i}.query(q) is valid.
 
-- Wording for ~connect()~ requires evaluating ~get_env(rcvr)~ even if ~get-domain-late~ ends up
-  returning a ~default_domain~. Do we want to allow eliding call to ~get_env(rcvr)~ if the
-  returned environment would be unused?
+We should be consistent with either uniformly supporting queries with additional
+arguments or we should remove support for queries with additional arguments
+altogether.
 
-- Why are most customization points defined as CPOs, but ~transform_sender~, ~transform_env~ and ~apply_sender~
-  are defined as normal functions?
+** The ~AS-EXCEPT-PTR(err)~ is potentially throwing when ~err~ has type ~error_code~
 
-- ~on()~ specification seems to already assume the context that the operation was started on
-  is the same as ~get_scheduler(get_env(rcvr))~.
-  - Can we make this a more general requirement that if the receiver's environment
-    provides ~get_scheduler~ that this places a requirement on the caller to ensure ~start()~
-    is called on that context?
-  - Alternatively, we should reword the phrasing in [exec.on] to avoid talking about resuming
-    on the execution context that it started on and instead just talk about resuming on
-    the execution context associated with ~get_scheduler(get_env(rcvr))~.
+The ~AS-EXCEPT-PTR(err)~ exposition-only helper defined in [exec.general] p8 is not
+necessarily ~noexcept~ yet is used in contexts (such as ~set_error()~ in [exec.sync.wait])
+where emitting an exception would result in termination.
+
+In particular, the paragraph that says it's equivalent to ~make_exception_ptr(system_error(err))~ when ~err~ is an ~error_code~
+might throw from the ~system_error~ constructor as this constructor is not marked ~noexcept~.
+
+I suggest this case be changed to catch any exception thrown by the ~system_error~ constructor
+and return ~current_exception()~ in that case.
+
+** Wording for ~std::execution::connect~ needs to specify that ~rcvr~ is only to be evaluated once
+
+In [exec.connect] p6 it states that for expressions ~sndr~ and ~rcvr~, the expression ~connect(sndr, rcvr)~
+is expression equivalent to either:
+- ~new_sndr.connect(rcvr)~, or
+- ~connect-awaitable(new_sndr, rcvr)~
+
+Where ~new_sndr~ is defined as the expression
+~transform_sender(decltype(get-domain-late(sndr, get_env(rcvr))){}, sndr, get_env(rcvr))~.
+
+However, if you substitute the ~new_sndr~ expression into the ~new_sndr.connect(rcvr)~ expression
+you can see that in the resulting expression, the subexpression ~rcvr~ appears multiple times
+and yet the wording does not state that "except where ~rcvr~ expression is only evaluated once".
+
+I suggest that we modify [exec.connect] p6 to the following:
+#+begin_quote
+The expression ~connect(sndr, rcvr)~ is expression-equivalent to:
+- ~new_sndr.connect(rcvr)~ if that expression is well-formed.
+  /Mandates:/ The type of the expression above satisfies ~operation_state~.
+- Otherwise, ~connect-awaitable(new_sndr, rcvr)~.
+<ins>except that ~rcvr~ is only evaluated once.</ins>
+/Mandates:/ ~sender<Sndr> && receiver<Rcvr>~ is ~true~.
+#+end_quote
+
+** Wording for ~execution::on()~ incorrectly assumes that ~start()~ is called on execution context associated with ~get_scheduler(get_env(rcvr))~
+
+The specification of ~execution::on~ in [exec.on], seems to assume that the scheduler obtained
+from the receiver connected to it by ~get_scheduler(get_env(rcvr))~ is the scheduler that the
+operation will be started on by calling ~start(op)~.
+
+p1.1 states:
+#+begin_quote
+- ~on(sch, sndr)~, which starts a sender ~sndr~ on an execution agent belonging to a scheduler
+  ~sch~'s associated execution resource and that, upon ~sndr~'s completion,
+  *transfers execution back to the execution resource on which the sender was started*.
+#+end_quote
+
+There is currently no guarantee or requirement that callers of ~start(op)~ will make this call
+on an execution agent belonging to the execution resource associated with the current
+scheduler.
+
+I suggest we amend this sentence to something like the following:
+#+begin_quote
+- ~on(sch, sndr)~, which starts a sender ~sndr~ on an execution agent belonging to a scheduler
+  ~sch~'s associated execution resource and that, upon ~sndr~'s completion,
+  *transfers execution back to the execution resource associated with the original
+  current scheduler*.
+#+end_quote
+
+The /current scheduler/ is defined in p10.1:
+#+begin_quote
+- remember the *current scheduler*, ~get_scheduler(get_env(rcvr))~
+#+end_quote
+
+Alternatively, it may be clearer to just talk about the scheduler ~get_scheduler(get_env(rcvr))~
+where ~on(sch, sndr)~ is connected to ~rcvr~.
+
+** ~execution::transform_sender~ can return dangling references
+
+The ~execution::transform_sender~ can return dangling references if a custom domain's ~transform_sender~ function
+returns a prvalue.
+
+Consider the following code:
+  #+begin_src c++
+  struct simple_sender { /* implementation omitted */ };
+  struct other_sender { /* implementation omitted */ };
+  struct my_domain {
+    static constexpr other_sender transform_sender(simple_sender&& s) noexcept;
+  };
+
+  void example() {
+    auto sndr = std::execution::transform_sender(my_domain{}, simple_sender{});
+  }
+  #+end_src
+
+In this example, the implementation of ~std::execution::transform_sender~ is specified to have
+a body for the instantiation of this call equivalent to overload #1 below:
+  #+begin_src c++
+  namespace std::execution {
+    other_sender&& transform_sender(my_domain dom, simple_sender&& s) noexcept { // #1
+      // This recursive call calls onto overload #2 below.
+      return std::execution::transform_sender(dom,
+                                              dom.transform_sender(std::forward<simple_sender>(s)));
+    }
+
+    other_sender&& transform_sender(my_domain dom, other_sender&& s) noexcept { // #2
+      // my_domain cannot transform other_sender, so we fall back to transforming
+      // using the default domain. Calls onto overload of default_domain::transform_sender() below.
+      return default_domain().transform_sender(std::forward<other_sender>(s));
+    }
+
+    // As per [exec.domain.default] falls back to 'return std::forward<Sndr>(s);' if
+    // tag_of_t<Sndr> is not well-formed.
+    other_sender&& default_domain::transform_sender(other_sender&& s) noexcept {
+      return std::forward<other_sender>(s);
+    }
+  }
+  #+end_src
+
+The problem here is that the call to ~dom.transform_sender()~ is returning a prvalue temporary which
+is then being passed into overload #2 of ~execution::transform_sender()~ which is then returning
+an rvalue reference to this temporary which it is then returning from overload #1.
+
+However, the lifetime of this temporary ends immediately upon returning from ~execution::transform_sender()~
+and thus the caller in ~example()~ above is left initializing its local variable ~sndr~ from a dangling
+reference.
+
+The definition of ~execution::transform_sender~ needs to be fixed to avoid this case of returning a
+reference to a temporary object.
+
+A simple fix here would be to use an ~auto~ return type rather than a ~decltype(auto)~ return type to
+force ~execution::transform_sender~ to always return a newly constructed prvalue sender.
+The downside with this, however, is that in the reasonably common case of the call to ~transform_sender()~
+resulting in no transformation and just returning the original object such a design would incur
+an additional move operation of the sender, which could be expensive for large sender expressions.
+
+Another alternative could be to force the result of a nested call to ~execution::transform_sender~
+to always return a prvalue:
+i.e. change the ~final-sndr~ expression for the case where ~transformed-sndr~ and ~sndr~ have different
+types to be ~auto(transform_sender(dom, transformed-sndr, env...))~.
+
+Suggested wording change is to modify [exec.snd.transform] p1 as follows:
+#+begin_quote
+Let ~transformed-sndr~ be the expression:
+- ~dom.transform_sender(std::forward<Sndr>(sndr), env...)~
+if that expression is well-formed;  otherwise,
+- ~default_domain().transform_sender(std::forward<Sndr>(sndr), env...)~
+
+Let ~final-sndr~ be the expression ~transformed-sndr~ if ~transformed-sndr~ and ~sndr~
+have the same type ignoring cv-qualifiers; otherwise it is the expression
+<ins> ~auto(~ </ins> ~transform_sender(dom, transformed-sndr, env...)~ <ins> ~)~ </ins>.
+#+end_quote
+
+** Unformatted
 
 - Wording for ~connect()~ defines fallback to be expression-equivalent to ~connect-awaitable(new_sndr, rcvr)~.
   However, ~connect-awaitable~ has a ~requires~ clause that checks that ~rcvr~ is able to receive all of the
@@ -525,62 +726,25 @@ to the same expression in a coroutine with promise type ~Promise~.
   Is the intention that this should instead use ~same_as<remove_cvref_t<decltype(sndr)>, remove_cvref_t<decltype(transformed-sndr)>>~?
   If so, can we use some more precise wording than "ignoring cv-qualifiers" to describe this?
 
-- ~execution::transform_sender~ can return dangling references if a custom domain returns a prvalue.
-  Consider the following code:
-  #+begin_src c++
-    struct simple_sender { /* implementation omitted */ };
-    struct other_sender { /* implementation omitted */ };
-    struct my_domain {
-      static constexpr other_sender transform_sender(simple_sender&& s) noexcept;
-    };
+** Issues that need more investigation
 
-    void example() {
-      auto sndr = std::execution::transform_sender(my_domain{}, simple_sender{});
-    }
-  #+end_src
-  In this example, the implementation of ~std::execution::transform_sender~ is required to have
-  a body for the instantiation of this call equivalent to overload #1 below:
-  #+begin_src c++
-    namespace std::execution {
-      other_sender&& transform_sender(my_domain dom, simple_sender&& s) noexcept { // #1
-        // This recursive call calls onto overload #2 below.
-        return std::execution::transform_sender(dom,
-                                                dom.transform_sender(std::forward<simple_sender>(s)));
-      }
+- ~env<Envs...>::query()~ has a return-type defined as ~decltype(auto)~.
+  I suspect this may cause problems for some queries that need to get the return-type but
+  for which the body may not yet be valid (e.g. because some types are still incomplete).
+  Although I don't have any concrete examples of where this is an issue at the moment.
 
-      other_sender&& transform_sender(my_domain dom, other_sender&& s) noexcept { // #2
-        // my_domain cannot transform other_sender, so we fall back to transforming
-        // using the default domain. Calls onto overload of default_domain::transform_sender() below.
-        return default_domain().transform_sender(std::forward<other_sender>(s));
-      }
+- ~get_allocator_t~ uses ~MANDATE-NOTHROW~ but lots of allocator types are not actually required
+  to be nothrow copyable/movable, only that they are "Throws: nothing".
+  - Do we need this to be transparent to ~noexcept~ here, instead?
 
-      // As per [exec.domain.default] falls back to 'return std::forward<Sndr>(s);' if
-      // tag_of_t<Sndr> is not well-formed.
-      other_sender&& default_domain::transform_sender(other_sender&& s) noexcept {
-        return std::forward<other_sender>(s);
-      }
-    }
-  #+end_src
-  The problem here is that the call to ~dom.transform_sender()~ is returning a prvalue temporary which
-  is then being passed into overload #2 of ~execution::transform_sender()~ which is then returning
-  an rvalue reference to this temporary which it is then returning from overload #1.
-  However, the lifetime of this temporary ends immediately upon returning from ~execution::transform_sender()~
-  and thus the caller in ~example()~ above is left initializing its local variable ~sndr~ from a dangling
-  reference.
+- ~with-await-transform::await_transform()~ uses ~decltype(auto)~ as the return-type.
+  Should it use a trailing return-type instead?
 
-  The definition of ~execution::transform_sender~ needs to be fixed to avoid this case of returning a
-  reference to a temporary object.
+- Wording for ~connect()~ requires evaluating ~get_env(rcvr)~ even if ~get-domain-late~ ends up
+  returning a ~default_domain~. Do we want to allow eliding call to ~get_env(rcvr)~ if the
+  returned environment would be unused?
 
-  A simple fix here would be to use an ~auto~ return type rather than a ~decltype(auto)~ return type to
-  force ~execution::transform_sender~ to always return a newly constructed prvalue sender.
-  The downside with this, however, is that in the reasonably common case of the call to ~transform_sender()~
-  resulting in no transformation and just returning the original object such a design would incur
-  an additional move operation of the sender, which could be expensive for large sender expressions.
 
-  Another alternative could be to force the result of a nested call to ~execution::transform_sender~
-  to always return a prvalue:
-  i.e. change the ~final-sndr~ expression for the case where ~transformed-sndr~ and ~sndr~ have different
-  types to be ~auto(transform_sender(dom, transformed-sndr, env...))~.
 
 * Notes not directly related to [exec] wording
 
