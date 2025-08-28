@@ -1,6 +1,15 @@
 * Notes on std::execution wording for pre-Sofia draft
 
-** Standard defined queries can't customize ~forwarding_query_t~ by inheriting from it :design:
+** DELEGATED Standard defined queries can't customize ~forwarding_query_t~ by inheriting from it :design:
+:PROPERTIES:
+:CREATED:  [2025-08-25 Mon 09:22:01+0930]
+:END:
+:LOGBOOK:
+- State "DELEGATED"  from "WAITING"       [2025-08-28 Thu 13:52]
+  Tracked as https://cplusplus.github.io/LWG/issue4326
+- State "WAITING"  from              [2025-08-25 Mon 09:22] \\
+  Sent to lwgchair.
+:END:
 
 The definition of the ~forwarding_query_t~ ([[[https://eel.is/c++draft/exec#fwd.env][exec.fwd.env]]]) states that a query is a
 forwarding-query if either the expression ~q.query(forwarding_query)~ is a constant
@@ -22,7 +31,16 @@ remove the support for customising ~forwarding_query_t~ by inheriting from it.
 The recommended resolution is to remove the rule that checks for inheritance from
 ~forwarding_query_t~.
 
-** Equal schedulers should be required to have same behaviour        :design:
+** DELEGATED Equal schedulers should be required to have same behaviour :design:
+:PROPERTIES:
+:CREATED:  [2025-08-25 Mon 09:45:11+0930]
+:END:
+:LOGBOOK:
+- State "DELEGATED"  from "WAITING"  [2025-08-28 Thu 13:53] \\
+  Tracked as https://cplusplus.github.io/LWG/issue4327
+- State "WAITING"    from              [2025-08-25 Mon 09:45] \\
+  Sent to lwgchair.
+:END:
 
 The wording [[[https://eel.is/c++draft/exec#sched-4][exec.sched]]] p4 says:
 #+begin_quote
@@ -55,7 +73,16 @@ Or at least add a note here indicating that equality operator may return false
 if the behaviour is different, even if the schedulers share an associated execution
 resource.
 
-** Remove note regarding waiting for completion of scheduled operations
+** DELEGATED Remove note regarding waiting for completion of scheduled operations
+:PROPERTIES:
+:CREATED:  [2025-08-25 Mon 09:50:08+0930]
+:END:
+:LOGBOOK:
+- State "DELEGATED"  from "DELEGATED"  [2025-08-28 Thu 13:53] \\
+  Tracked as https://cplusplus.github.io/LWG/issue4328
+- State "WAITING"    from              [2025-08-25 Mon 09:50] \\
+  Sent to lwgchair
+:END:
 
 The note at the end of [[https://eel.is/c++draft/exec#sched-note-1][exec.sched]] says:
 #+begin_quote
@@ -77,7 +104,14 @@ to complete.
 The note as it stands represents bad guidance and should either be removed or
 updated to refer to ~counting_scope~ and ~simple_counting_scope~ ([exec.counting.scopes]).
 
-** Consider mandating that ~set_value()~, ~set_error()~ and ~set_stopped()~ calls have a return-type of ~void~ :design:
+** WAITING Consider mandating that ~set_value()~, ~set_error()~ and ~set_stopped()~ calls have a return-type of ~void~ :design:
+:PROPERTIES:
+:CREATED:  [2025-08-25 Mon 10:07:28+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-25 Mon 10:07] \\
+  Sent to lwgchair
+:END:
 
 The expression ~set_value(rcvr, vs...)~ is defined as expression-equivalent to ~MANDATE-NOTHROW(rcvr.set_value(vs...))~.
 
@@ -95,7 +129,92 @@ Similarly for the ~set_error~ and ~set_stopped~ CPOs.
 Add a "Mandates: If the expression ~set_value(rcvr, vs...)~ is well-formed, its type shall be ~void~." to [exec.set.value].
 And similarly for ~set_error~ and ~set_stopped~.
 
-** Reconsider ~weakly_parallel~ as the default ~forward_progress_guarantee~ :design:
+** WAITING Uses of MANDATE-NOTHROW should not include sub-expressions
+:PROPERTIES:
+:CREATED:  [2025-08-25 Mon 10:58:01+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-25 Mon 10:58] \\
+  Sent to lwgchair
+:END:
+
+There are a number of CPOs defined in [exec] which have behaviour specified in terms
+of being expression-equivalent to a MANDATE-NOTHROW expression.
+
+The intent of this is that we want to make sure that the call that the CPO
+dispatches to is marked noexcept.
+
+However, the way that these CPOs are currently specified in terms of sub-expressions
+means that we are currently requiring all of the expressions passed as arguments to
+the CPO are also noexcept. Outside of defining these CPOs as preprocessor macros, this
+is unimplementable - and also undesirable behaviour.
+
+For example, [exec.set.value] defines ~set_value(rcvr, vs...)~ to be equivalent to
+~MANDATE-NOTHROW(rcvr.set_value(vs...))~ for sub-expressions ~rcvr~ and pack of
+sub-expressions ~vs~.
+
+In [exec.general] p5 we define ~MANDATE-NOTHROW(expr)~ as expression-equivalent to ~expr~
+but mandate that ~noexcept(expr)~ is ~true~.
+
+So in the above definition of ~set_value(rcvr, vs...)~ we are actually requiring that
+the expression ~noexcept(rcvr.set_value(vs...))~ is true. This is only true if all of
+the sub-expressions are ~noexcept~; ~rcvr~, ~vs...~ and the member-function call to ~rcvr.set_value()~
+including any implicit conversions of arguments.
+
+This means that if, for example, one of the sub-expressions in the pack ~vs~ was
+a call to some potentially-throwing function then the overall ~set_value~ expression
+would be ill-formed.
+
+For example:
+#+begin_src c++
+  struct my_receiver {
+    void set_value(int x) noexcept;
+  };
+
+  int get_value() noexcept(false);
+
+  my_receiver r;
+  std::execution::set_value(r, get_value()); // fails MANDATE-NOTHROW mandates
+#+end_src
+
+Instead, we need to redefine these CPOs as being expression-equivalent to something
+that does not require that the argument expressions to the CPO themselves are
+noexcept - only what will be in the body of the CPO function.
+
+This can be done with an immediately-invoked lambda.
+
+For example, we could change [exec.set.value] to define ~set_value(rcvr, vs...)~
+as expression-equivalent to:
+#+begin_src c++
+  [](auto& rcvr2, auto&&... vs2) noexcept -> decltype(auto) requires requires { rcvr2.set_value(vs2...); } {
+    return MANDATE-NOTHROW(rcvr2.set_value(vs2...));
+  }(rcvr, vs...);
+#+end_src
+
+The following sections all contain problematic uses of MANDATE-NOTHROW:
+- [exec.get.allocator]
+- [exec.get.stop.token]
+- [exec.get.env]
+- [exec.get.domain]
+- [exec.get.scheduler]
+- [exec.get.delegation.scheduler]
+- [exec.get.fwd.progress]
+- [exec.get.compl.sched]
+- [exec.get.await.adapt]
+- [exec.set.value]
+- [exec.set.error]
+- [exec.set.stopped]
+- [exec.opstate.start]
+
+
+** WAITING Reconsider ~weakly_parallel~ as the default ~forward_progress_guarantee~ :design:
+:PROPERTIES:
+:CREATED:  [2025-08-25 Mon 11:14:48+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-25 Mon 11:14] \\
+  Sent to lwgchair
+:END:
 
 The ~get_forward_progress_guarantee~ CPO is intended to allow querying a scheduler
 as for what sort of forward-progress guarantee it provides.
@@ -137,7 +256,14 @@ guarantees require implementations to be much more aware of the fact that these
 are the guarantees they are providing and thus could be more expected to customize
 the  ~get_forward_progress_guarantee~ query to return the respective values.
 
-** ~run_loop~'s scheduler should probably report a ~get_forward_progress_guarantee()~ of ~parallel~ :design:
+** WAITING ~run_loop~'s scheduler should probably report a ~get_forward_progress_guarantee()~ of ~parallel~ :design:
+:PROPERTIES:
+:CREATED:  [2025-08-25 Mon 11:26:13+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-25 Mon 11:26] \\
+  Sent to lwgchair
+:END:
 
 Currently ~run_loop~ specification does not define that its scheduler has a customisation of
 the ~get_forward_progress_guarantee~ query. This means that it will report a forward-progress
@@ -166,7 +292,14 @@ object wrappers that [exec] provides.
 See https://godbolt.org/z/rcP1Y3jY9 for an example of how we might be able to define
 wrappers to forward staticness of queries.
 
-** Unnecessary constraint in ~receiver~ and ~sender~ concepts
+** WAITING Unnecessary constraint in ~receiver~ and ~sender~ concepts
+:PROPERTIES:
+:CREATED:  [2025-08-25 Mon 14:05:53+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-25 Mon 14:05] \\
+  Sent to lwgchair
+:END:
 
 In [exec.recv.concepts] ~concept receiver~ is constraining on whether ~get_env(rcvr)~ returns a type that satisfies ~queryable~,
 but the ~get_env~ CPO already mandates that the return-value satisfies ~queryable~, so this check seems redundant.
@@ -192,7 +325,15 @@ for ~get_env(rcvr)~.
 
 Similar changes should be applied to the ~sender~ concept definition in [exec.snd.concepts].
 
-** Unnecessary constraint in ~operation_state~ concept
+** CANCELLED Unnecessary constraint in ~operation_state~ concept
+CLOSED: [2025-08-25 Mon 14:06]
+:PROPERTIES:
+:CREATED:  [2025-08-25 Mon 14:06:42+0930]
+:END:
+:LOGBOOK:
+- State "CANCELLED"  from              [2025-08-25 Mon 14:06] \\
+  This has already been addressed in current wording.
+:END:
 
 The ~operation_state~ concept is defined in [exec.opstate.general] as follows:
 #+begin_src c++
@@ -212,7 +353,10 @@ that the expression is ~noexcept~ and so the additional ~noexcept~ check in the
 
 Can we simplify the ~operation_state~ concept to remove the ~noexcept~ check?
 
-** Specification of queries should not require passing references to global CPO objects
+** TODO Specification of queries should not require passing references to global CPO objects
+:PROPERTIES:
+:CREATED:  [2025-08-28 Thu 13:57:03+0930]
+:END:
 
 
 The specification of most queries in [exec] defines them to be "expression-equivalent to"
@@ -324,7 +468,7 @@ is expression-equivalent to ~env.query(q, as...)~.
 My interpretation of this is that this must end up calling ~env.query~ on the original ~env~ object,
 not on a copy of ~env~, and thus the resulting type of ~FWD-ENV(env)~ necessarily needs to store
 ~env~ itself (e.g. by in-place constructing it as a member of the ~FWD-ENV(env)~ object) or by
-storing a reference to ~env~.
+storing a reference to ~env~)
 
 However, many uses of ~FWD-ENV~ use ~FWD-ENV(get_env(x))~ which might end up passing a temporary
 object to ~FWD-ENV~ and so holding a reference to ~env~ does not seem like a suitable implementation
@@ -344,7 +488,14 @@ Forcing a canonical order could help reduce the number of template instantiation
 two senders compute equivalent sets of completion signatures but where the completion signatures
 are listed in a different order.
 
-** Should ~transform_sender~, ~transform_env~ and ~apply_sender~ functions be customization points? :design:
+** WAITING Should ~transform_sender~, ~transform_env~ and ~apply_sender~ functions be customization points? :design:
+:PROPERTIES:
+:CREATED:  [2025-08-25 Mon 19:35:13+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-25 Mon 19:35] \\
+  Sent to lwgchair.
+:END:
 
 The ~transform_sender~ ([exec.snd.transform]), ~transform_env~ ([exec.snd.transform.env]) and ~apply_sender~ ([exec.snd.apply])
 are curently all defined as regular functions, whereas other customisation points are all defined as CPOs.
@@ -365,7 +516,15 @@ The difference between declarations is observable.
 Note that the stdexec implementation currently has ~transform_sender~ defined as a CPO, which would be non-compliant
 according to the current specification.
 
-** Clarify the intent of ~static_cast<Env>()~ in ~default_domain::transform_env()~ :clarify:
+** CANCELLED Clarify the intent of ~static_cast<Env>()~ in ~default_domain::transform_env()~ :clarify:
+CLOSED: [2025-08-25 Mon 20:28]
+:PROPERTIES:
+:CREATED:  [2025-08-25 Mon 20:28:16+0930]
+:END:
+:LOGBOOK:
+- State "CANCELLED"  from              [2025-08-25 Mon 20:28] \\
+  The static_cast expression is no longer there in the latest version of the wording.
+:END:
 
 In [exec.domain.default] p5, the ~default_domain::transform_env~ is specified to have
 a fallback return expression of ~static_cast<Env>(std::forward<Env>(env))~.
@@ -383,7 +542,14 @@ It is also not clear that introducing a move-construction here is valid:
   environment object to be returned from ~transform_env()~ without constraining or
   mandating that the type ~Env~ is move-constructible seems incorrect.
 
-** Unnecessary copy of sender in ~get-domain-late~ specification
+** WAITING Unnecessary copy of sender in ~get-domain-late~ specification
+:PROPERTIES:
+:CREATED:  [2025-08-25 Mon 18:53:14+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-25 Mon 18:53] \\
+  Sent to lwgchair.
+:END:
 
 In [exec.snd.expos] p14.1 in the specification of ~get-domain-late~ it uses a lambda
 expression with the structured binding:
@@ -398,16 +564,14 @@ However this will try to perform a copy of the sender which will be ill-formed i
 sender is not copyable (Note ~sndr~ is a const-ref). The structured binding should instead
 start with ~auto& [_, sch, _] =~.
 
-There is also a similar issue in the definition of ~execution::continues_on~ in
-[exec.continues.on] p5, where it unnecessarily takes a copy/move of ~sndr~.
-#+begin_src c++
-  auto [_, data, child] = sndr;
-  return schedule_from(std::move(data), std::move(child));
-#+end_src
-
-The above structured binding should be ~auto&& [_, data, child] = sndr;~ instead.
-
-** Inconsistent support for ~std::execution~ queries taking additional arguments
+** WAITING Inconsistent support for ~std::execution~ queries taking additional arguments
+:PROPERTIES:
+:CREATED:  [2025-08-25 Mon 19:20:00+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-25 Mon 19:20] \\
+  Sent to lwgchair.
+:END:
 
 The facilities in [exec] that define queryable types that provide implementations
 of ~query()~ member-functions are inconsistent in their support for taking optional
@@ -447,17 +611,24 @@ additional arguments to ~env.query(tag)~.
   ~state.stop-src.get_token()~ and ~e.query(q)~ for some ~q~ that is not ~get_stop_token~
   to be ~get_env(rcvr).query(q)~.
 - The class template ~env<Envs...>~ defined in [exec.env] is defined to have a
-  ~query(QueryTag q)~ member-function that forwars the call to the first child
+  ~query(QueryTag q)~ member-function that forwards the call to the first child
   environment env_{i} such that env_{i}.query(q) is valid.
 
 We should be consistent with either uniformly supporting queries with additional
 arguments or we should remove support for queries with additional arguments
 altogether.
 
-** The ~AS-EXCEPT-PTR(err)~ is potentially throwing when ~err~ has type ~error_code~
+** WAITING The ~AS-EXCEPT-PTR(err)~ is potentially throwing when ~err~ has type ~error_code~
+:PROPERTIES:
+:CREATED:  [2025-08-25 Mon 19:28:50+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-25 Mon 19:28] \\
+  Sent to lwgchair.
+:END:
 
 The ~AS-EXCEPT-PTR(err)~ exposition-only helper defined in [exec.general] p8 is not
-necessarily ~noexcept~ yet is used in contexts (such as ~set_error()~ in [exec.sync.wait])
+necessarily ~noexcept~ yet is used in a context (~sync-wait-receiver::set_error()~ in [exec.sync.wait])
 where emitting an exception would result in termination.
 
 In particular, the paragraph that says it's equivalent to ~make_exception_ptr(system_error(err))~ when ~err~ is an ~error_code~
@@ -466,7 +637,23 @@ might throw from the ~system_error~ constructor as this constructor is not marke
 I suggest this case be changed to catch any exception thrown by the ~system_error~ constructor
 and return ~current_exception()~ in that case.
 
-** Wording for ~std::execution::connect~ needs to specify that ~rcvr~ is only to be evaluated once
+For example, change the line in p8.2 from
+#+begin_quote
+- Otherwise, ~make_exception_ptr(system_error(err))~ if ~decay_t<Err>~ denotes the type ~error_code~.
+#+end_quote
+to
+#+begin_quote
+- Otherwise, ~[](std::error_code ec) noexcept { try { return make_exception_ptr(system_error(ec)); } catch (...) { return current_exception(); } }(err)~ if ~decay_t<Err>~ denotes the type ~error_code~.
+#+end_quote
+
+** WAITING Wording for ~std::execution::connect~ needs to specify that ~rcvr~ is only to be evaluated once
+:PROPERTIES:
+:CREATED:  [2025-08-25 Mon 19:51:35+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-25 Mon 19:51] \\
+  Sent to lwgchair.
+:END:
 
 In [exec.connect] p6 it states that for expressions ~sndr~ and ~rcvr~, the expression ~connect(sndr, rcvr)~
 is expression equivalent to either:
@@ -490,7 +677,14 @@ The expression ~connect(sndr, rcvr)~ is expression-equivalent to:
 /Mandates:/ ~sender<Sndr> && receiver<Rcvr>~ is ~true~.
 #+end_quote
 
-** Wording for ~execution::on()~ incorrectly assumes that ~start()~ is called on execution context associated with ~get_scheduler(get_env(rcvr))~
+** WAITING Wording for ~execution::on()~ incorrectly assumes that ~start()~ is called on execution context associated with ~get_scheduler(get_env(rcvr))~
+:PROPERTIES:
+:CREATED:  [2025-08-25 Mon 20:20:36+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-25 Mon 20:20] \\
+  Sent to lwgchair.
+:END:
 
 The specification of ~execution::on~ in [exec.on], seems to assume that the scheduler obtained
 from the receiver connected to it by ~get_scheduler(get_env(rcvr))~ is the scheduler that the
@@ -523,7 +717,14 @@ The /current scheduler/ is defined in p10.1:
 Alternatively, it may be clearer to just talk about the scheduler ~get_scheduler(get_env(rcvr))~
 where ~on(sch, sndr)~ is connected to ~rcvr~.
 
-** ~execution::transform_sender~ can return dangling references
+** WAITING ~execution::transform_sender~ can return dangling references
+:PROPERTIES:
+:CREATED:  [2025-08-25 Mon 21:11:27+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-25 Mon 21:11] \\
+  Sent to lwgchair.
+:END:
 
 The ~execution::transform_sender~ can return dangling references if a custom domain's ~transform_sender~ function
 returns a prvalue.
@@ -599,7 +800,14 @@ have the same type ignoring cv-qualifiers; otherwise it is the expression
 <ins> ~auto(~ </ins> ~transform_sender(dom, transformed-sndr, env...)~ <ins> ~)~ </ins>.
 #+end_quote
 
-** Unformatted
+** WAITING connect-awaitable() should mandata rcvr can receive all completion-signals rather than using constraints
+:PROPERTIES:
+:CREATED:  [2025-08-27 Wed 11:46:52+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-27 Wed 11:46] \\
+  Sent to lwgchair
+:END:
 
 - Wording for ~connect()~ defines fallback to be expression-equivalent to ~connect-awaitable(new_sndr, rcvr)~.
   However, ~connect-awaitable~ has a ~requires~ clause that checks that ~rcvr~ is able to receive all of the
@@ -610,24 +818,55 @@ have the same type ignoring cv-qualifiers; otherwise it is the expression
     calling member ~.connect()~ function so I think we should be consistent with the ~connect-awaitable~
     fallback here.
 
-- Wording for ~connect()~ defines ~operation-state-task~ which must have ~promise_type~ member equal to
-  ~connect-awaitable-promise~ whose type depends on type of ~sndr~ and ~rcvr~ expressions passed into
-  ~connect()~. However, other than the ~::promise_type~ member alias, there isn't anything in
-  ~operation-state-task~ that actually depends on the types of the sender/receiver and so we could
-  potentially avoid making this type dependent and all of the additional instantiations needed
-  to use it if we instead specialised ~coroutine_traits<operation-state-task, _Sndr, _Rcvr>~ to
-  have a ~promise_type~ of ~connect-awaitable-promise~ rather than specifying that ~operation-state-task~
-  must have a ~promise_type~ of ~connect-awaitable-promise~.
+** WAITING ~connect()~ should use ~get_allocator(get_env(rcvr))~ to allocate the coroutine-state for ~connect-awaitable~ coroutine
+:PROPERTIES:
+:CREATED:  [2025-08-27 Wed 12:19:26+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-27 Wed 12:19] \\
+  Sent to lwgchair
+:END:
 
-- Wording for ~connect()~ constructs a coroutine for awaitables but does not make use of the allocator
-  provided by ~get_allocator(get_env(rcvr))~ to allocate the coroutine state. Instead, it just uses
-  the global allocation function. Should it use the allocator from the environment instead?
+The wording for ~connect()~ ([exec.connect]) handles passing awaitable types as the sender argument by
+calling the connect-awaitable() coroutine and having it execute a co_await expression.
+
+The connect-awaitable() coroutine will typically need to dynamically allocate storage for the
+coroutine state and, as specified, this currently just always uses the global default allocator.
+This is because the connect-awaitable-promise type does not define any member operator new/delete overloads.
+
+It seems desirable for this facility to use the allocator obtained from the receiver, by calling
+~get_allocator(get_env(rcvr))~, in order to allocate storage for the coroutine-state instead of
+always using global operator new. This would give the user at least some level of control over
+how this allocation is performed.
+
+Proposed resolution:
+
+Insert the following paragraph after [exec.connect] p5:
+
+#+begin_quote
+Any dynamically allocated storage required for the coroutine state allocated by an
+invocation of the form connect-awaitable(sndr, rcvr) is allocated using the allocator
+obtained from get_allocator(get_env(rcvr)).
+#+end_quote
+
+
+This should cover the design intent, although we may want to spell this out more explicitly in
+terms of the exact semantics in a similar way to [coro.generator] p17, which lists overloads
+of operator new() and describes the rebound allocator type which allocates storage in chunks of size ~__STDCPP_DEFAULT_NEW_ALIGNMENT__~.
+
+** WAITING Use is_void_v instead of same_as<void> in connect-awaitable
 
 - Wording for ~connect-awaitable~ helper in [exec.connect] uses ~same_as<V, void>~ to check for void return-type
   of the await expression, but we should be using ~is_void_v<V>~ here to also handle /cv/ ~void~.
 
-- Should definition of ~connect-awaitable-promise~ in [exec.connect] be calling ~unreachable()~ inside
-  the ~final_suspend()~, ~unhandled_exception()~ and ~return_void()~ member-functions instead of ~terminate()~?
+** WAITING [exec.as.awaitable] is using "Preconditions:" when it should probably be described in the constraint
+:PROPERTIES:
+:CREATED:  [2025-08-27 Wed 14:16:10+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from "WAITING"    [2025-08-27 Wed 14:16] \\
+  Sent to lwgchair.
+:END:
 
 - Wording for [exec.as.awaitable] [[https://eel.is/c++draft/exec#as.awaitable-7.2][p7.2]] uses "Preconditions:" for things that look like they should be "constraints".
 
@@ -651,13 +890,120 @@ to the same expression in a coroutine with promise type ~Promise~.
   coroutine with an unspecified promise is equivalent to a ~co_await~ expression in a
   coroutine with the promise type of ~Promise~.
 
+** WAITING as_awaitable(expr,p) does not define semantics of call if p is not an lvalue
+
 - Wording for ~as_awaitable~ in [exec.as.awaitable] defines what ~as_awaitable(expr, p)~ is
   equivalent to if ~p~ is an lvalue, but doesn't say what happens if ~p~ is not an lvalue.
   I think we need to say something like "If ~p~ is not an lvalue then ~as_awaitable(expr, p)~
   is ill-formed."
 
+** WAITING awaitable-sender concept should qualify use of awaitable-receiver type
 - Wording for [exec.as.awaitable] concept ~awaitable-sender~ refers to unqualified ~awaitable-receiver~
   type. This type should be qualified as ~sender-awaitable<Sndr, Promise>::awaitable-receiver~.
+
+** WAITING awaitable-receiver::set_value should use mandates instead of constraints
+:PROPERTIES:
+:CREATED:  [2025-08-28 Thu 09:24:08+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from "WAITING"    [2025-08-28 Thu 09:24] \\
+  Sent to lwgchair.
+:END:
+
+- In [exec.as.awaitable] the ~awaitable-receiver::set_value~ member-function is defined as having
+  a constraint that the result-type is constructible from the values. Should we be using mandates
+  here instead? There shouldn't be any need to change behaviour based on whether or not the
+  receiver's completion methods are well-formed or not.
+
+** WAITING Inconsistent usage of constexpr for inplace_stop_token and inplace_stop_source
+:PROPERTIES:
+:CREATED:  [2025-08-28 Thu 10:27:01+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-28 Thu 10:27] \\
+  Sent to lwgchair.
+:END:
+- The ~inplace_stop_source::get_token()~ member-function is declared constexpr, but there are
+  no constexpr member-functions declared on ~inplace_stop_token~. Should the member-functions
+  of ~inplace_stop_token~ also be declared ~constexpr~ (e.g. ~operator==~, ~stop_possible()~ and
+  ~stop_requested()~).
+
+** WAITING transform_sender comparing types ignoring cv-qualifiers doesn't take into account differences in value-category
+:PROPERTIES:
+:CREATED:  [2025-08-28 Thu 10:51:28+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-28 Thu 10:51] \\
+  Sent to lwgchair
+:END:
+- Definition of ~transform_sender~ says to compare types of ~sndr~ and ~transformed-sndr~ ignoring cv-qualifiers
+  but this doesn't take into account that ~sndr~ might be ~T&&~ and ~transformed-sndr~ may be ~T~ (e.g. if the transform
+  returned a prvalue).
+
+  My interpretation was that I should apply the test ~same_as<remove_cv_t<decltype(sndr)>, remove_cv_t<decltype(transformed-sndr)>>~.
+  However, ~remove_cv_t~ does not remove qualifiers from a type ~Sndr&&~ (which is the type of ~sndr~).
+  Is the intention that this should instead use ~same_as<remove_cvref_t<decltype(sndr)>, remove_cvref_t<decltype(transformed-sndr)>>~?
+  If so, can we use some more precise wording than "ignoring cv-qualifiers" to describe this?
+
+** WAITING execution::as_awaitable() forwards an environment that implements too many queries
+:PROPERTIES:
+:CREATED:  [2025-08-28 Thu 11:02:17+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-28 Thu 11:02] \\
+  Sent to lwgchair.
+:END:
+- In [exec.as.awaitable] [[https://eel.is/c++draft/exec#as.awaitable-4.4][p4.4]] we define ~get_env(crcvr).query(tag, as...)~ as expression equivalent
+  to ~tag(get_env(as_const(crcvr.continuation.promise())), as...)~.
+  However, this can result in the returned environment satisfying some queries by returning default
+  values when the original environment did not provide implementations for those queries. This is
+  inconsistent with the definitions of ~env<Envs...>::query()~, ~FWD-ENV~ and other environment wrappers
+  for which an ~env.query(q)~ is only valid if the underlying environment's ~env.inner.query(q)~ expression is valid.
+
+** WAITING Incorrect use of is-awaitable concept in definition of has-as-awaitable
+:PROPERTIES:
+:CREATED:  [2025-08-28 Thu 11:22:14+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-28 Thu 11:22] \\
+  Sent to lwgchair.
+:END:
+- In [exec.awaitable] the definition of the ~has-as-awaitable~ concept constrains the result of calling
+  ~std::forward<T>(t).as_awaitable(p)~ as needing to satisfy ~is-awaitable<Promise&>~.
+  However, the ~is-awaitable~ concept takes its ~Promise~ template parameter and passes this as the
+  template argument to ~coroutine_handle<Promise>~. Thus, this would end up trying to instantiate
+  ~coroutine_handle<Promise&>~ which is probably not what was intended.
+
+  The ~is-awaitable<Promise&>~ constraint needs to be changed to ~is-awaitable<Promise>~ as the
+  ~is-awaitable~ concept applies the necessary lvalue reference to the template argument where
+  necessary.
+
+** WAITING [inplace_]stop_token is missing non-member swap() function
+:PROPERTIES:
+:CREATED:  [2025-08-28 Thu 12:43:57+0930]
+:END:
+:LOGBOOK:
+- State "WAITING"    from              [2025-08-28 Thu 12:43] \\
+  Sent to lwgchair.
+:END:
+- ~inplace_stop_token~ is missing non-member ~swap()~ function
+  [stoptoken.inplace.general] defines ~inplace_stop_token~ with a member-~swap()~ function
+  but does not declare a non-member overload of ~swap()~ that can be found by ADL by
+  e.g. ~std::ranges::swap()~.
+
+** Unformatted
+
+- Wording for ~connect()~ defines ~operation-state-task~ which must have ~promise_type~ member equal to
+  ~connect-awaitable-promise~ whose type depends on type of ~sndr~ and ~rcvr~ expressions passed into
+  ~connect()~. However, other than the ~::promise_type~ member alias, there isn't anything in
+  ~operation-state-task~ that actually depends on the types of the sender/receiver and so we could
+  potentially avoid making this type dependent and all of the additional instantiations needed
+  to use it if we instead specialised ~coroutine_traits<operation-state-task, _Sndr, _Rcvr>~ to
+  have a ~promise_type~ of ~connect-awaitable-promise~ rather than specifying that ~operation-state-task~
+  must have a ~promise_type~ of ~connect-awaitable-promise~.
+
+- Should definition of ~connect-awaitable-promise~ in [exec.connect] be calling ~unreachable()~ inside
+  the ~final_suspend()~, ~unhandled_exception()~ and ~return_void()~ member-functions instead of ~terminate()~?
 
 - In [exec.as.awaitable] should ~sender-awaitable~ handle the case where the completion-signatures of the sender
   do not contain any error completions and where ~is_nothrow_constructible_v<result-type, Vs...>~ is true for
@@ -665,18 +1011,6 @@ to the same expression in a coroutine with promise type ~Promise~.
   declaring the ~await_resume()~ member function of ~sender-awaitable~ as ~noexcept~?
   Implementations can already do this if they want to (strengthening is allowed), but do we want
   to require implementations to do this?
-
-- In [exec.as.awaitable] the ~awaitable-receiver::set_value~ member-function is defined as having
-  a constraint that the result-type is constructible from the values. Should we be using mandates
-  here instead? There shouldn't be any need to change behaviour based on whether or not the
-  receiver's completion methods are well-formed or not.
-
-- In [exec.as.awaitable] [[https://eel.is/c++draft/exec#as.awaitable-4.4][p4.4]] we define ~get_env(crcvr).query(tag, as...)~ as expression equivalent
-  to ~tag(get_env(as_const(crcvr.continuation.promise())), as...)~.
-  However, this can result in the returned environment satisfying some queries by returning default
-  values when the original environment did not provide implementations for those queries. This is
-  inconsistent with the definitions of ~env<Envs...>::query()~, ~FWD-ENV~ and other environment wrappers
-  for which an ~env.query(q)~ is only valid if the underlying environment's ~env.inner.query(q)~ expression is valid.
 
 - In [exec.as.awaitable] p7.1 the wording says that ~as_awaitable(expr, p)~ is expression equivalent to
   ~expr.as_awaitable(p)~ if that expression is well formed, and if so then mandates that the type of that
@@ -695,16 +1029,6 @@ to the same expression in a coroutine with promise type ~Promise~.
     gone through the promise-type's ~await_transform~ transformation and so passing the result through
     ~await_transform~ again as part of ~is-awaitable~ concept check seems incorrect.
 
-- In [exec.awaitable] the definition of the ~has-as-awaitable~ concept constrains the result of calling
-  ~std::forward<T>(t).as_awaitable(p)~ as needing to satisfy ~is-awaitable<Promise&>~.
-  However, the ~is-awaitable~ concept takes its ~Promise~ template parameter and passes this as the
-  template argument to ~coroutine_handle<Promise>~. Thus, this would end up trying to instantiate
-  ~coroutine_handle<Promise&>~ which is probably not what was intended.
-
-  The ~is-awaitable<Promise&>~ constraint needs to be changed to ~is-awaitable<Promise>~ as the
-  ~is-awaitable~ concept applies the necessary lvalue reference to the template argument where
-  necessary.
-
 - [exec.with.awaitable.senders] p2 The ~requires~ clause checking whether
   ~other.unhandled_stopped()~ is valid should also check that the result satisfies
   ~convertible_to<coroutine_handle<>>~, similarly to how the exposition-only concept
@@ -717,15 +1041,8 @@ to the same expression in a coroutine with promise type ~Promise~.
   should declare a conditionally-noexcept exception specification to be consistent with
   the ~with-await-transform::await_transform~ function.
 
-- Definition of ~transform_sender~ says to compare types of ~sndr~ and ~transformed-sndr~ ignoring cv-qualifiers
-  but this doesn't take into account that ~sndr~ might be ~T&&~ and ~transformed-sndr~ may be ~T~ (e.g. if the transform
-  returned a prvalue).
 
-  My interpretation was that I should apply the test ~same_as<remove_cv_t<decltype(sndr)>, remove_cv_t<decltype(transformed-sndr)>>~.
-  However, ~remove_cv_t~ does not remove qualifiers from a type ~Sndr&&~ (which is the type of ~sndr~).
-  Is the intention that this should instead use ~same_as<remove_cvref_t<decltype(sndr)>, remove_cvref_t<decltype(transformed-sndr)>>~?
-  If so, can we use some more precise wording than "ignoring cv-qualifiers" to describe this?
-
+  
 ** Issues that need more investigation
 
 - ~env<Envs...>::query()~ has a return-type defined as ~decltype(auto)~.
@@ -745,7 +1062,6 @@ to the same expression in a coroutine with promise type ~Promise~.
   returned environment would be unused?
 
 
-
 * Notes not directly related to [exec] wording
 
 - suggestion for language improvement for lookup of ~operator co_await()~.
@@ -754,3 +1070,11 @@ to the same expression in a coroutine with promise type ~Promise~.
     rather than having to separately perform member and non-member lookup?
 
 
+
+* Notes on P3557R3 - high quality sender diagnostics
+- ~dependent_sender_error~ is not specified to at least specify a default constructor
+  (meaning that its construction always has exactly the semantics of ~exception()~)
+  nor does it specify that it overrides the ~::what()~ member-function - meaning that
+  it always just gets the default implementation provided by ~exception::what()~.
+  - Do we want to specify that these members are provided at least so that
+    implementations are permitted to provide custom behaviour for them?
