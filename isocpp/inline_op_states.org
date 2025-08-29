@@ -1,12 +1,12 @@
 # -*- mode: org; org-html-htmlize-output-type: css -*-
-#+TITLE: D3425R1: Reducing operation-state sizes for subobject child operations
+#+TITLE: D3425R2: Reducing operation-state sizes for subobject child operations
 #+AUTHOR: Lewis Baker
 #+EMAIL: lewissbaker@gmail.com
-#+DATE: 2024-10-16
+#+DATE: 2025-02-14
 #+OPTIONS: html5-fancy
 #+OPTIONS: tasks:nil
 #+OPTIONS: html-postamble:nil
-#+EXPORT_FILE_NAME: D3425R1
+#+EXPORT_FILE_NAME: P3425R2
 #+EXPORT_EXCLUDE_TAGS: noexport,todo
 
 #+BEGIN_EXPORT html
@@ -66,10 +66,11 @@
   </style>
 #+END_EXPORT
 
-| Document | *D3424R1*                             |
-| Date     | *2024-11-15*                          |
-| Reply To | *Lewis Baker <lewissbaker@gmail.com>* |
-| Audience | *LEWG*                                |
+| Document | *D3424R2*                                  |
+| Date     | *2025-02-14*                               |
+| Reply To | *Lewis Baker <lewissbaker@gmail.com>*      |
+|          | *Bryan St. Amour <bryan@bryanstamour.com>* |
+| Audience | *LEWG*                                     |
 
 * Abstract
 
@@ -161,7 +162,7 @@ following operation-state layout:
   | - rcvr (parent_op*) --'  |              |
   | - ref_count              |              |
   | - stop_source            |              |
-  | - stop_callback          |              |        
+  | - stop_callback          |              |
   | - result_tuple           |              |
   | +------------------------|------------+ |
   | | then_op#3              | A          | |
@@ -295,9 +296,9 @@ If we look at the above example, but this time with the optimisations proposed i
 being applied, then the resulting operation-state will, instead, look something like this:
 
 #+begin_src
-                                              
-                     A              
-  +------------------|---+------A-----------+ 
+
+                     A
+  +------------------|---+------A-----------+
   | when_all_op      |   |      |           |
   | - (maybe?) rcvr -'   |      |           |
   | - ref_count          |      |           |
@@ -638,7 +639,7 @@ Two objects are "pointer-interconvertible" only if:
   data-member of the parent-object or any base-class sub-object of the parent-object
 - there exists an intermediate sub-object, ~C~, such that the parent-object is pointer-interconvertible
   with ~C~ and ~C~ is pointer-interconvertible with the sub-object (i.e. the relationship is transitive)
-  
+
 Note that there are a number of rules for types that are considered "standard layout" class types ([[https://eel.is/c++draft/class.prop#3][[class.prop] p3]]).
 I won't go into particular details here but, among other things, this doesn't allow types with virtual methods,
 virtual base-classes, types with non-static data-members with different access control, or data-members
@@ -909,7 +910,7 @@ TODO: Fix this
 As long as the implementers of sender-algorithms implement the protocol proposed by
 this paper in /some/ way then users will benefit from the optimisations that are
 enabled by the protocol. Different libraries can use their own helper classes to
-implement the protocol - we do not need to standardise 
+implement the protocol - we do not need to standardise
 
 ** Applying this optimisation to standard-library sender algorithms
 
@@ -1081,12 +1082,13 @@ can be recreated on demand - end note]</i></ins></p>
 </div>
 #+END_EXPORT
 
-** Changes to /~basic-operation~/ 
+** Changes to /~basic-operation~/
 
 Modify the synopsis in [exec.snd.expos] as follows:
 
 #+begin_export html
-<div class="wording">
+<div class="wording" style="counter-set: paragraph 23">
+<p class="numbered">
 <pre>
 namespace std::execution {
   template&lt;class Tag&gt;
@@ -1097,23 +1099,57 @@ namespace std::execution {
   concept <expos>valid-specialization</expos> =                                <expos>// exposition only</expos>
     requires { typename T&lt;Args...&gt;; };
 
-  <ins>template&lt;size_t Id&gt;
-  using <expos>indexed-tag</expos> = integral_constant&lt;size_t, Id&gt;;            <expos>// exposition only</expos></ins>
-    
-  struct <expos>default-<ins>state-</ins>impls</expos> {                                        <expos>// exposition only</expos>
-    <del>static constexpr auto <expos>get-attrs</expos> = <i>see below</i>;              <expos>// exposition only</expos></del>
+<ins>  template&lt;size_t Id&gt;
+  using <expos>indexed-tag</expos> = integral_constant&lt;size_t, Id&gt;;            <expos>// exposition only</expos>
+
+  template&lt;class Class, class Member&gt;
+  using <expos>member-t</expos> = decltype(std::forward_like&lt;Class&gt;(declval&lt;Member&gt;()));     <expos>// exposition only</expos></ins>
+
+<del>  struct <expos>default-impls</expos> {                                        <expos>// exposition only</expos>
+    static constexpr auto <expos>get-attrs</expos> = <i>see below</i>;              <expos>// exposition only</expos>
     static constexpr auto <expos>get-env</expos> = <i>see below</i>;                <expos>// exposition only</expos>
-    <del>static constexpr auto <expos>get-state</expos> = <i>see below</i>;              <expos>// exposition only</expos></del>
+    static constexpr auto <expos>get-state</expos> = <i>see below</i>;              <expos>// exposition only</expos>
     static constexpr auto <expos>start</expos> = <i>see below</i>;                  <expos>// exposition only</expos>
     static constexpr auto <expos>complete</expos> = <i>see below</i>;               <expos>// exposition only</expos>
+  };</del>
+<ins>  struct <expos>default-state-impls</expos> {
+    using operation_state_concept = operation_state_t;
+
+    template&lt;class Self&gt;
+    void start(this Self& self) noexcept {
+      self.<expos>start-all</expos>();
+    }
+
+    template&lt;class Self, class ChildTag&gt;
+    constexpr decltype(auto) <expos>get-env</expos>(this Self& self, ChildTag) noexcept { <expos>// exposition only</expos>
+      return get_env(self.<expos>get-receiver</expos>());
+    }
+
+    template&lt;class Self, class ChildTag, class CompletionTag, class... Datums&gt;
+    constexpr void <expos>complete</expos>(this Self& self, ChildTag, CompletionTag, Datums&&... datums) noexcept { <expos>//exposition only</expos>
+      CompletionTag()(std::move(self.<expos>get-receiver</expos>()), std::forward&lt;Datums&gt;(datums)...);
+    }
   };
 
-  template&lt;class Tag&gt;
-  struct <expos><ins>state-</ins>impls-for</expos> : <expos>default-<ins>state-</ins>impls</expos> {};       <expos>// exposition only</expos>
+  struct <expos>default-sender-impls</expos> {   <expos>// exposition only</expos>
+    template&lt;class Data, class... Children&gt;
+    static constexpr decltype(auto) <expos>get-attrs</expos>(Data&amp;, Children&amp;... children) noexcept {   <expos>// exposition only</expos>
+      if constexpr (sizeof...(Children) == 1) {
+        return <expos>FWD-ENV</expos>(get_env(children...[0]));
+      } else {
+        return env<>();
+      }
+    }
+  };
+  </ins>
 
-  <ins>template&lt;class Tag, class Data&gt;
-  struct <expos>default-state</expos> : <expos>state-impls-for</expos>&lt;Tag&gt { <expos> // exposition only</expos>
-    Data <expos>data</expos>;       <expos>// exposition only</expos>
+  template&lt;class Tag&gt;
+  struct <expos><ins>sender-</ins>impls-for</expos> : <expos>default<ins>-sender</ins>-impls</expos> {};       <expos>// exposition only</expos>
+
+<ins>  template&lt;class Sndr&gt;
+  auto <expos>get-tag</expos>(const Sndr&amp; sndr) noexcept {        <expos>// exposition only</expos>
+    auto&amp; [tag, data, ...children] = sndr;
+    return tag;
   };
 
   template&lt;class Sndr&gt;
@@ -1122,8 +1158,20 @@ namespace std::execution {
     return std::forward_like&lt;Sndr&gt;(data);
   };
 
+  template&lt;size_t I, class Sndr&gt;
+  decltype(auto) <expos>get-child</expos>(Sndr&amp;&amp; sndr) noexcept {        <expos>// exposition only</expos>
+    auto&amp; [tag, data, ...children] = sndr;
+    return std::forward_like&lt;Sndr&gt;(children...[I]);
+  }
+
   template&lt;class Sndr&gt;
-  using <expos>data-type-t</expos> = decltype(<expos>get-data</expos>(declval&lt;Sndr&gt()));
+  using <expos>tag-type</expos> = decltype(<expos>get-tag</expos>(declval&lt;Sndr&gt()));     <expos>// exposition only</expos>
+
+  template&lt;class Sndr&gt;
+  using <expos>data-type</expos> = decltype(<expos>get-data</expos>(declval&lt;Sndr&gt()));   <expos>// exposition only</expos>
+
+  template&tl;size_t I, class Sndr&gt;
+  using <expos>child-type</expos> = decltype(<expos>get-child</expos>&lt;I&gt;(declval&lt;Sndr&gt;());   <expos>// exposition only</expos>
 
   template&lt;T&gt;
   inline constexpr bool <expos>is-nothrow-decay-copyable-v</expos> =      <expos>// exposition only</expos>
@@ -1131,35 +1179,14 @@ namespace std::execution {
 
   template&lt;class Sndr, class Rcvr&gt;
   inline constexpr bool <expos>is-nothrow-connectable-v</expos> =         <expos>// exposition only</expos>
-      noexcept(execution::connect(declval<Sndr>(), declval<Rcvr>()));
-
-  struct <expos>default-sender-impls</expos> {                          <expos>// exposition only</expos>
-    template&lt;class Data, class... Children&gt;
-    static decltype(auto) <expos>get-attrs</expos>(const Data& data,
-                                    const Children&... children) noexcept <expos>// exposition only</expos>
-      if constexpr (sizeof...(children) == 1) {
-        return <expos>fwd-env</expos>(execution::get_env(children...[0]));
-      } else {
-        return empty_env{};
-      }
-    }
-
-    template&lt;class Self&gt;
-    <expos>default-state</expos>&lt;tag_of_t<Self>, decay_t&lt;<expos>data-type-t</expos>&lt;Self&gt;&gt;&gt; <expos>get-state</expos>(this Self&amp;&amp; self) <expos>// exposition only</expos>
-        noexcept(<expos>is-nothrow-decay-copyable-v</expos>&lt;<expos>data-type-t</expos>&lt;Self&gt;&gt;) {
-      return {{}, <expos>get-data</expos>(std::forward&lt;Self&gt;(self))};
-    }
-  };
-
-  template&lt;class Tag&gt;
-  struct <expos>sender-impls-for</expos> : <expos>default-sender-impls</expos> {}; <expos>// exposition only</expos>
+      noexcept(execution::connect(declval&lt;Sndr&gt;(), declval&lt;Rcvr&gt;()));
   </ins>
 
-  template&lt;class Sndr, class Rcvr&gt;                              <expos>// exposition only</expos>
+<del>  template&lt;class Sndr, class Rcvr&gt;                              <expos>// exposition only</expos>
   using <expos>state-type</expos> = decay_t&lt;<expos>call-result-t</expos>&lt;
-    decltype(<expos><ins>sender-</ins>impls-for</expos>&lt;tag_of_t&lt;Sndr&gt;&gt;::<expos>get-state</expos>), Sndr, Rcvr&amp;&gt;&gt;;
+    decltype(<expos>impls-for</expos>&lt;tag_of_t&lt;Sndr&gt;&gt;::<expos>get-state</expos>), Sndr, Rcvr&amp;&gt;&gt;;
 
-  <del>template&lt;class Index, class Sndr, class Rcvr&gt;                 <expos>// exposition only</expos>
+  template&lt;class Index, class Sndr, class Rcvr&gt;                 <expos>// exposition only</expos>
   using <expos>env-type</expos> = <expos>call-result-t</expos>&lt;
     decltype(<expos>impls-for</expos>&lt;tag_of_t&lt;Sndr&gt;&gt;::<expos>get-env</expos>), Index,
     <expos>state-type</expos>&lt;Sndr, Rcvr&gt;&amp;, const Rcvr&amp;&gt;;
@@ -1273,8 +1300,8 @@ namespace std::execution {
 
     private:
       friend <expos>manual-child-operation</expos>;
-      
-      explicit <expos>child-receiver</expos>(ParentOp* p) noexcept
+
+      explicit <expos>child-receiver</expos>(ParentOp* p) noexcept   <expos>// exposition only</expos>
       : <expos>parent</expos>(p) {}
 
       ParentOp* <expos>parent</expos>;      <expos>// exposition only</expos>
@@ -1283,8 +1310,8 @@ namespace std::execution {
     using <expos>child-op</expos> = connect_result_t&lt;ChildSndr, <expos>child-receiver</expos>&gt;; <expos>//exposition only</expos>
 
   protected:
-    <expos>manual-child-operation</expos>() noexcept {}
-    ~<expos>manual-child-operation</expos>() {}
+    <expos>manual-child-operation</expos>() noexcept {} <expos>// exposition only</expos>
+    ~<expos>manual-child-operation</expos>() {}         <expos>// exposition only</expos>
 
   public:
     using <expos>is-nothrow-connectable</expos> =     <expos>// exposition only</expos>
@@ -1300,7 +1327,7 @@ namespace std::execution {
                            <expos>child-receiver</expos>(static_cast&lt;ParentOp*&gt;(this))));
     }
 
-    void <expos>destruct</expos>() noexcept {
+    void <expos>destruct</expos>() noexcept { <expos>// exposition only</expos>
       this-&gt;<expos>get</expos>().~<expos>child-op</expos>();
     }
 
@@ -1308,7 +1335,7 @@ namespace std::execution {
     <expos>child-op</expos>&amp; <expos>get</expos>() noexcept {  <expos>// exposition only</expos>
       return *launder(reinterpret_cast&lt;<expos>child-op</expos>*&gt;(addressof(<expos>storage</expos>)));
     }
-    
+
     using <expos>storage-t</expos> =     <expos>// exposition only</expos>
       conditional_t&lt;
         is_empty_v&lt;<expos>child-op</expos>&gt; &amp;&amp; is_standard_layout_v&lt;<expos>child-op</expos>&gt;,
@@ -1324,8 +1351,6 @@ namespace std::execution {
   class <expos>child-operation</expos>        <expos>// exposition only</expos>
       : public <expos>manual-child-operation</expos>&lt;ParentOp, ChildTag, ChildEnv, ChildSndr&gt; {
     using <expos>base-t</expos> = <expos>manual-child-operation</expos>&lt;ParentOp, ChildTag, ChildEnv, ChildSndr&gt;
-    using <expos>base-t</expos>::<expos>construct</expos>;
-    using <expos>base-t</expos>::<expos>destruct</expos>;
 
   protected:
     explicit <expos>child-operation</expos>(ChildSndr&amp;&amp; child)    <expos>// exposition only</expos>
@@ -1333,7 +1358,7 @@ namespace std::execution {
       <expos>base-t</expos>::<expos>construct</expos>(std::forward&lt;ChildSndr&gt;(child));
     }
 
-    ~<expos>child-operation</expos>() {
+    ~<expos>child-operation</expos>() {   <expos>// exposition only</expos>
       <expos>base-t</expos>::<expos>destruct</expos>();
     }
   };
@@ -1343,7 +1368,7 @@ namespace std::execution {
     class ParentEnv,
     template&lt;class, size_t&gt; class ChildEnv,
     class Indices,
-    class... Children&gt;
+    class... Child&gt;
   class <expos>child-operations</expos>;    <expos>// exposition only</expos>
 
   template&lt;
@@ -1351,66 +1376,153 @@ namespace std::execution {
     class ParentEnv,
     template&lt;class, size_t&gt; class ChildEnv,
     size_t... Indices,
-    class... Children&gt;
-  class <expos>child-operations</expos>&lt;ParentOp, ParentEnv, ChildEnv, index_sequence&lt;Indices...&gt;, Children&gt;   <expos>// exposition only</expos>
-    : public <expos>child-operation</expos>&lt;ParentOp, <expos>indexed-tag</expos>&lt;Indices&gt;, ChildEnv&lt;ParentEnv, Indicies&gt;, Children&gt;... {
+    class... Child&gt;
+  class <expos>child-operations</expos>&lt;ParentOp, ParentEnv, ChildEnv, index_sequence&lt;Indices...&gt;, Child&gt;   <expos>// exposition only</expos>
+    : public <expos>child-operation</expos>&lt;ParentOp, <expos>indexed-tag</expos>&lt;Indices&gt;, ChildEnv&lt;ParentEnv, Indicies&gt;, Child&gt;... {
   protected:
     template&lt;size_t Id&gt;
       using <expos>child-t</expos> =    <expos>//exposition only</expos>
-        <expos>child-operation</expos>&lt;ParentOp, <expos>indexed-tag</expos>&lt;Id&gt;, ChildEnv&lt;ParentEnv, Id&gt;, Children...[Id]&gt;
+        <expos>child-operation</expos>&lt;ParentOp, <expos>indexed-tag</expos>&lt;Id&gt;, ChildEnv&lt;ParentEnv, Id&gt;, Child...[Id]&gt;
 
-    explicit <expos>child-operations</expos>(Children&amp;&amp;... children)
-      : <expos>child-t</expos>&lt;Indices&gt;(std::forward&lt;Children&gt;(children))...
+    explicit <expos>child-operations</expos>(Child&amp;&amp;... child)  <expos>// exposition only</expos>
+      noexcept((is_nothrow_constructible_v&lt;<expos>child-t</expos>&lt;Indices&gt;, Child...[Indices]&gt; &amp;&amp; ...))
+      : <expos>child-t</expos>&lt;Indices&gt;(std::forward&lt;Child&gt;(child))...
     {}
 
     void <expos>start-all</expos>() noexcept {     <expos>// exposition only</expos>
-      (<expos>child-t&lt;Indices&gt;::<expos>start-child</expos>(), ...);
+      (<expos>child-t</expos>&lt;Indices&gt;::<expos>start-child</expos>(), ...);
     }
   };
-</ins>
-  template&lt;class Sndr, class Rcvr&gt;
+
+  template&lt;
+    class ParentOp,
+    template&lt;size_t&gt; class childTag,
+    class Env,
+    class... Child&gt;
+  class <expos>manual-child-operation-variant</expos> {   <expos>// exposition only</expos>
+    template&lt;size_t Index&gt;
+    class <expos>child-receiver</expos> {
+    public:
+      using receiver_concept = receiver_t;
+
+      template&lt;class ChildOp&gt;
+      static <expos>child-receiver</expos> make_receiver_for(ChildOp* child) noexcept {
+        auto* parent = static_cast&lt;ParentOp*&gt;(
+          reinterpret_cast&lt;<expos>manual-child-operation-variant</expos>*&gt;(
+            reinterpret_cast&lt;<expos>storage-t</expos>(child)));
+        return <expos>child-receiver</expos>(parent);
+      }
+
+      Env get_env() const noexcept {
+        return <expos>parent</expos>-&gt;<expos>get-env</expos>(ChildTag&lt;Index&gt;{});
+      }
+
+      template&lt;class... Vs&gt;
+      void set_value(Vs&amp;&amp;... vs) noexcept {
+        <expos>parent</expos>-&gt;<expos>complete</expos>(ChildTag&lt;Index&gt;(), set_value_t(), std::forward&lt;Vs&gt;(vs)...);
+      }
+
+      template&lt;class E&gt;
+      void set_error(E&amp;&amp; e) noexcept {
+        <expos>parent</expos>-&gt;<expos>complete</expos>(ChildTag&lt;Index&gt;(), set_error_t(), std::forward&lt;E&gt;(e));
+      }
+
+      void set_stopped() noexcept {
+        <expos>parent</expos>-&gt;<expos>complete</expos>(ChildTag&lt;Index&gt;(), set_stopped_t());
+      }
+
+    private:
+      friend <expos>manual-child-operation-variant</expos>;
+      explicit <expos>child-receiver</expos>(ParentOp* p) noexcept <expos>// exposition only</expos>
+      : <expos>parent</expos>(p) {}
+
+      ParentOp* <expos>parent</expos>;    <expos>// exposition only</expos>
+    };
+
+    template&lt;size_t Index&gt;
+    using <expos>child-op-t</expos> =    <expos>// exposition only</expos>
+      connect_result_t&lt;Child...[Index], <expos>child-receiver</expos>&lt;Index&gt;&gt;;
+
+  protected:
+    template&lt;class C&gt;
+    static consteval size_t <expos>index-of</expos>() noexcept {    <expos>// exposition only</expos>
+      constexpr bool matches[sizeof...(Child)] = {same_as<C, Child>...};
+      for (size_t i = 0; i < sizeof...(Child); ++i) {
+        if (matches([i]) return i;
+      }
+      unreachable();
+    }
+
+    template&lt;size_t Index&gt;
+    static constexpr bool <expos>is-nothrow-connectable</expos> =    <expos>// exposition only</expos>
+      <expos>is-nothrow-connectable-v</expos>&lt;Child...[Index], <expos>child-receiver</expos>&lt;Index&gt;&gt;;
+
+    <expos>manual-child-operation-variant</expos>() noexcept {}  <expos>// exposition only</expos>
+    ~<expos>manual-child-operation-variant</expos>() {}
+
+    template&lt;size_t Index&gt;
+    void <expos>start-child</expos>() & noexcept {    <expos>// exposition only</expos>
+      execution::start(<expos>get-op</expos>&lt;Index&gt;());
+    }
+
+    template&lt;size_t Index&gt;
+    void <expos>construct</expos>(Child...[Index]&& child)
+      noexcept(<expos>is-nothrow-connectable</expos>&lt;[Index]&gt;) {
+      ParentOp* parent = static_cast&lt;ParentOp*&gt;(this);
+      ::new (static_cast&lt;void*&gt;(addressof(<expos>storage</expos>)))
+        <expos>child-op-t</expos>&lt;Index&gt;(execution::connect(
+          std::forward&lt;Child&gt;(child),
+          <expos>child-receiver</expos>&lt;Index&gt;(parent)));
+    }
+
+    template&lt;size_t Index&gt;
+    void <expos>destruct</expos>() noexcept {   <expos>// exposition only</expos>
+      <expos>get-op</expos>&lt;Index&gt;().~<expos>child-op-t</expos>&lt;Index&gt;();
+    }
+
+    template&lt;size_t Index&gt;
+    <expos>child-op-t</expos>&lt;Index&gt; <expos>get-op</expos>() & noexcept {  <expos>// exposition only</expos>
+      return *std::launder(
+        reinterpret_cast&lt;<expos>child-op-t</expos>&lt;Index&gt;*&gt;(addressof(<expos>storage</expos>)));
+    }
+
+    static constexpr size_t <expos>max-size</expos> =  <expos>// exposition only</expos>
+      []&lt;size_t... Ids&gt;(index_sequence&lt;Ids...&gt;) {
+        size_t result = 0;
+        ((result = std::max(result, sizeof(<expos>child-op-t</expos>&lt;Ids&gt;))), ...);
+        return result;
+      }(std::index_sequence_for&lt;Child...&gt;{});
+
+    static constexpr size_t <expos>max-align</expos> =   <expos>// exposition only</expos>
+      []&lt;size_t... Ids&gt;(index_sequence&lt;Ids...&gt;) {
+        size_t result = 0;
+        ((result = std::max(result, sizeof(<expos>child-op-t</expos>&lt;Ids&gt;))), ...);
+        return result;
+      }(std::index_sqeuence_for&lt;Child...&gt;{});
+
+    using <expos>storage-t</expos> = std::byte[<expos>max-size</expos>];  <expos>// exposition only</expos>
+    alignas(<expos>max-align</expos>) <expos>storage-t</expos> <expos>storage</expos>;   <expos>// exposition only</expos>
+  };</ins>
+
+  template&lt;class <ins>Tag</ins><del>Sndr</del>, class Rcvr<ins>, class Data, class... Children</ins>&gt;
     <del>requires <expos>valid-specialization</expos>&lt;<expos>state-type</expos>, Sndr, Rcvr&gt; &amp;&amp;
              <expos>valid-specialization</expos>&lt;<expos>connect-all-result</expos>, Sndr, Rcvr&gt;</del>
-  struct <expos>basic-operation</expos><del> : <expos>basic-state</expos>&lt;Sndr, Rcvr&gt; {</del>                <expos>// exposition only</expos>
-    <ins>: <expos>inlinable-operation-state</expos>&lt;<expos>basic-operation</expos>&lt;Sndr, Rcvr&gt;, Rcvr&gt;
-    , State
-    , <expos>child-operations</expos>&lt;
-        <expos>basic-operation</expos>&lt;Tag, Rcvr, State, Children...&gt;,
-        env_of_t&lt;Rcvr&gt;,
-        State::template <expos>env-type</expos>,
-        index_sequence_for&lt;Children...&gt;,
-        Children...&gt; {</ins>
-    using operation_state_concept = operation_state_t;
-    <ins>using <expos>rcvr-base</expos> = <expos>inlinable-operation-state</expos>&lt;<expos>basic-operation</expos>, Rcvr&gt;   <expos>// exposition only</expos>
-    using <expos>children-base</expos> =    <expos>//exposition only</expos>
-      <expos>child-operations</expos>&lt;
-        <expos>basic-operation</expos>,
-        env_ov_t&lt;Rcvr&gt;,
-        State::template <expos>env-type</expos>,
-        index_sequence_for&lt;Children...&gt;,
-        Children...&gt;</ins>
-    <del>using <expos>tag-t</expos> = tag_of_t&lt;Sndr&gt;;                               <expos>// exposition only</expos>
+  struct <expos>basic-operation</expos><del> : <expos>basic-state</expos>&lt;Sndr, Rcvr&gt; {</del><ins>;</ins>                <expos>// exposition only</expos>
+<del>    using operation_state_concept = operation_state_t;
+    using <expos>tag-t</expos> = tag_of_t&lt;Sndr&gt;;                               <expos>// exposition only</expos>
 
     <expos>connect-all-result</expos>&lt;Sndr, Rcvr&gt; <expos>inner-ops</expos>;              <expos>// exposition only</expos>
 
     <expos>basic-operation</expos>(Sndr&amp;&amp; sndr, Rcvr&amp;&amp; rcvr) noexcept(<i>see below</i>)  <expos>// exposition only</expos>
       : <expos>basic-state</expos>&lt;Sndr, Rcvr&gt;(std::forward&lt;Sndr&gt;(sndr), std::move(rcvr)),
         <expos>inner-ops</expos>(<expos>connect-all</expos>(this, std::forward&lt;Sndr&gt;(sndr), <expos>indices-for</expos>&lt;Sndr&gt;()))
-    {}</del>
-
-    <ins>template&lt;class Data&gt;
-    <expos>basic-operation</expos>(Rcvr&amp;&amp; rcvr, Data&amp;&amp; data, Children&&... children) noexcept(<i>see below</i>)
-      : <expos>rcvr-base</expos>(std::move(rcvr))
-      , State(std::forward&lt;Data&gt;(data))
-      , <expos>children-base</expos>(std::forward&lt;Children&gt;(children))
-    {}</ins>
+    {}
 
     void start() &amp; noexcept {
-      <del>auto&amp; [...ops] = <expos>inner-ops</expos>;
-      <expos>impls-for</expos>&lt;<expos>tag-t</expos>&gt;::<expos>start</expos>(this-&gt;<expos>state</expos>, this-&gt;<expos>rcvr</expos>, ops...);</del>
-      <ins>this-&gt;State::<expos>start</expos>();</ins>
+      auto&amp; [...ops] = <expos>inner-ops</expos>;
+      <expos>impls-for</expos>&lt;<expos>tag-t</expos>&gt;::<expos>start</expos>(this-&gt;<expos>state</expos>, this-&gt;<expos>rcvr</expos>, ops...);
     }
-  };
+  };</del>
 
   template&lt;class Sndr, class Env&gt;
   using <expos>completion-signatures-for</expos> = <i>see below</i>;                   <expos>// exposition only</expos>
@@ -1427,8 +1539,10 @@ namespace std::execution {
 
     template&lt;<expos>decays-to</expos>&lt;<expos>basic-sender</expos>&gt; Self, receiver Rcvr&gt;
     auto connect(this Self&amp;&amp; self, Rcvr rcvr) noexcept(<i>see below</i>)
-      -&gt; <expos>basic-operation</expos>&lt;Self, Rcvr&gt; {
-      return {std::forward&lt;Self&gt;(self), std::move(rcvr)};
+      -&gt; <expos>basic-operation</expos>&lt;<del>Self</del><ins>Tag</ins>, Rcvr<ins>, <expos>state-type</expos>&lt;Self&gt;, <expos>data-type</expos>&lt;Self&gt;, <expos>member-t</expos>&lt;Self, Child&gt;...</ins>&gt; {
+      <del>return {std::forward&lt;Self&gt;(self), std::move(rcvr)};</del>
+      <ins>auto& [tag, data, ...child] = self;
+      return {std::move(rcvr), std::forward_like&lt;Self&gt;(data), std::forward_like&lt;Self&gt;(child)...};</ins>
     }
 
     template&lt;<expos>decays-to</expos>&lt;<expos>basic-sender</expos>&gt; Self, class Env&gt;
@@ -1439,13 +1553,1030 @@ namespace std::execution {
   };
 }
 </pre>
+</p>
 </div>
 #+end_export
 
+Strike paragraphs 28 through 32 from [exec.snd.expos]:
 
-NOTE: The rest of the wording changes necessary for having the standard library async algorithms
-implement the optimisation will need some significant refactoring to remove some assumptions
-about the receiver object lifetime and will be provided in a subsequent revision of this paper.
+#+BEGIN_EXPORT html
+<div class="wording" style="counter-set: paragraph 27">
+<p class="numbered"><del>The expression in the <code>noexcept</code> clause of the constructor of <code><expos>basic-state</expos></code> is</del>
+<pre>
+<del>is_nothrow_move_constructible&lt;Rcvr&gt; &amp;&amp;
+<expos>nothrow-callable</expos>&lt;decltype(<expos>impls-for</expos>&lt;tag_of_of&lt;Sndr&gt;&gt;::<expos>get-state</expos>), Sndr, Rcvr&amp;&gt; &amp;&amp;
+(same_as&lt;<expos>state-type&lt;Sndr, Rcvr&gt;, <expos>get-state-result</expos>&gt; ||
+ is_nothrow_constructible_v&lt;<expos>state-type</expos>&lt;Sndr, Rcvr&gt;, <expos>get-state-result</expos>&gt;)</del>
+</pre>
+<del>where <code><expos>get-state-result</expos></code> is</del>
+<pre>
+<del><expos>call-result-t</expos>&lt;decltype(<expos>impls-for</expos>&lt;tag_of_t&lt;Sndr&gt;&gt;::<expos>get-state</expos>), Sndr, Rcvr&amp;&gt;</del>
+</pre><del>.</del>
+</p>
+<p class="numbered">
+<del>The object <code><expos>connect-all</expos></code> is initialized with a callable object equivalent to the following lambda:</del>
+<pre>
+<del>[]&lt;class Sndr, class Rcvr, size_t... Is&gt;(
+  <expos>basic-state</expos>&lt;Sndr, Rcvr&gt;* op, Sndr&amp;&amp; sndr, index_sequence&lt;Is...&gt;) noexcept(<i>see below</i>)
+    -&gt; decltype(auto) {
+    auto&amp; [_, data, ...child] = sndr;
+    return <expos>product-type</expos>{connect(
+      std::forward_like&lt;Sndr&gt;(child),
+      <expos>basic-receiver</expos>&lt;Sndr, Rcvr, integral_constant&lt;size_t, Is&gt;&gt;{op})...};
+  }</del>
+</pre>
+</p>
+<p class="numbered">
+<del><i>Constraints</i>: The express in the <code>return</code> statement is well-formed.</del>
+</p>
+<p class="numbered">
+<del><i>Remarks</i>: The expression in the <code>noexcept</code> clause is <code>true</code> if the <code>return</code> statement is not potentially throwing; otherwise, <code>false</code>.</del>
+</p>
+<p class="numbered">
+<del>The expression in the <code>noexcept</code> clause of the constructor of <code><expos>basic-operation</expos></code> is:</del>
+<pre>
+<del>is_nothrow_constructible_v&lt;<expos>basic-state</expos>&lt;Self, Rcvr&gt;, Self, Rcvr&gt; &amp;&amp;
+noexcept(<expos>connect-all</expos>(this, std::forward&lt;Sndr&gt;(sndr), <expos>indices-for</expos>&lt;Sndr&gt;()))</del>
+</pre>
+</p>
+</div>
+#+END_EXPORT
+
+Modify paragraph 33 from [exec.snd.expos] as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording" style="counter-set: paragraph 32">
+<p class="numbered">
+The expression in the <code>noexcept</code> clause of the <code>connect</code> member function of <code><expos>basic-sender</expos></code> is:
+<pre>
+is_nothrow_constructible_v&lt;basic-operation&lt;<del>Self</del><ins>Tag</ins>, Rcvr<ins>, Data, Child...</ins>&gt;, <del>Self, </del>Rcvr<ins>, <expos>member-t</expos>&lt;Self, Data&gt;, <expos>member-t</expos>&lt;Self, Child&gt;...&gt;
+</pre>
+</p>
+</div>
+#+END_EXPORT
+
+
+Strike paragraphs 34 through 38 from [exec.snd.expos]:
+
+#+BEGIN_EXPORT html
+<div class="wording" style="counter-set: paragraph 33">
+
+<p class="numbered">
+<del>The member <code><expos>default-impls</expos>::<expos>get-attrs</expos></code> is initialized with a callable object equivalent to the following
+lambda:</del>
+<pre><del>[](const auto&, const auto&... child) noexcept -> decltype(auto) {
+  if constexpr (sizeof...(child) == 1)
+    return (<expos>FWD-ENV</expos>(get_env(child)), ...);
+  else
+    return env<>();
+}
+</del></pre>
+</p>
+
+<p class="numbered">
+<del>The member <code><expos>default-impls</expos>::<expos>get-env</expos></code> is initialized with a callable object equivalent to the following
+lambda:</del>
+<pre><del>[](auto, auto&, const auto& rcvr) noexcept -> decltype(auto) {
+  return <expos>FWD-ENV</expos>(get_env(rcvr));
+}</del></pre>
+</p>
+
+<p class="numbered">
+<del>The member <code><expos>default-impls</expos>::<expos>get-state</expos></code> is initialized with a callable object equivalent to the following
+lambda:</del>
+<pre><del>[]<class Sndr, class Rcvr>(Sndr&& sndr, Rcvr& rcvr) noexcept -> decltype(auto) {
+  auto& [_, data, ...child] = sndr;
+  return std::forward_like&lt;Sndr&gt;(data);
+}</del></pre></p>
+
+<p class="numbered">
+<del>The member <code><expos>default-impls</expos>::<expos>start</expos></code> is initialized with a callable object equivalent to the following lambda:</del>
+<pre><del>[](auto&, auto&, auto&... ops) noexcept -> void {
+  (execution::start(ops), ...);
+}</del></pre></p>
+
+<p class="numbered">
+<del>The member <code><expos>default-impls</expos>::<expos>complete</expos></code> is initialized with a callable object equivalent to the following
+lambda:</del>
+<pre><del>[]&lt;class Index, class Rcvr, class Tag, class... Args&gt;(
+  Index, auto& state, Rcvr& rcvr, Tag, Args&&... args) noexcept
+  -> void requires <expos>callable</expos>&lt;Tag, Rcvr, Args...&gt; {
+  static_assert(Index::value == 0);
+  Tag()(std::move(rcvr), std::forward&lt;Args&gt;(args)...);
+}</del></pre></p>
+
+</div>
+#+END_EXPORT
+
+**TODO: Modify definition of /~write-env~/ to use the new facilities**
+
+** Changes to /~just~/, /~just_error~/, and /~just_stopped~/
+
+Modify [exec.just] p2 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording" style="counter-set: paragraph 1">
+
+<p class="numbered">
+The names <code>just</code>, <code>just_error</code>, and <code>just_stopped</code> denote customization point objects.
+Let <code><expos>just-cpo</expos></code> be one of <code>just</code>, <code>just_error</code> or <code>just_stopped</code>.
+For a pack of subexpressions, <code>ts</code>, let <code>Ts</code> be the pack of types <code>decltype((ts))</code>.
+The expression <code><expos>just-cpo</expos>(ts...)</code> is ill-formed if:
+<ul>
+<li><code>(<expos>movable-value</expos>&lt;Ts&gt; &amp;&amp;...)</code> is <code>false</code>, or</li>
+<li><code><expos>just-cpo</expos></code> is <code>just_error</code> and <code>sizeof...(ts) == 1</code> is <code>false</code>, or</li>
+<li><code><expos>just-cpo</expos></code> is <code>just_stopped</code> and <code>sizeof...(ts) ==  0</code> is <code>false</code>.</li>
+</ul>
+Otherwise, it is expression-equivalent to <code><expos>make-sender</expos>(<expos>just-cpo</expos>, <expos>product-type</expos>{ts...})</code>.<br>
+For <code>just</code>, <code>just_error</code>, and <code>just_stopped</code>, let <code><expos>set-cpo</expos></code> be <code>set_value</code>, <code>set_error</code>,
+and <code>set_stopped</code>, respectively. The exposition-only class template
+<code><del><expos>impls-for</expos></del><ins><expos>basic-operation</expos></ins></code>
+(33.9.1) is specialized for <code><expos>just-cpo</expos></code> as follows:
+
+<pre>namespace std::execution {
+
+<del>template&lt;&gt;
+struct <expos>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;<expos>just-cpo</expos>&gt;&gt; : <expos>default-impls</expos> {
+  static constexpr auto start =
+    [](auto& state, auto& rcvr) noexcept -&gt; void {
+      auto& [...ts] = state;
+      <expos>set-cpo</expos>(std::move(rcvr), std::move(ts)...);
+    };
+};</del>
+
+<ins>template&lt;typename Rcvr, typename Values&gt;
+struct <expos>basic-operation</expos>&lt;<expos>just-cpo</expos>, Rcvr, Values&gt;  <expos>// exposition only</expos>
+: <expos>default-state-impls</expos>
+, <expos>inlinable-operation-state</expos>&lt;<expos>basic-operation</expos>&lt;just-cpo, Rcvr, Values&gt;, Rcvr&gt; {
+
+  Values <expos>values</expos>;    <expos>// exposition only</expos>
+
+  template&lt;class Values2&gt;
+  <expos>basic-operation</expos>(Rcvr r, Values2&amp;&amp; vs)   <expos>// exposition only</expos>
+  : inlinable_operation_state&lt;<expos>basic-operation</expos>, Rcvr&gt;(std::move(r))
+  , <expos>values</expos>(std::forward<Values2>(vs))
+  {}
+
+  void start() &amp; noexcept {
+    auto&amp; [...vs] = <expos>values</expos>;
+    <expos>set-cpo</expos>(std::move(this-&gt;<expos>get-receiver</expos>()), std::move(vs)...);
+  }
+};</ins>
+
+}</pre>
+</div>
+#+END_EXPORT
+
+** Changes to /~read_env~/
+
+Modify [exec.read.env] p3 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording" style="counter-set: paragraph 2">
+<p class="numbered">
+The exposition-only class template <code><expos><del>impls-for</del><ins>basic-operation</ins></expos></code> ([exec.snd.general]) is specialized for <code>read_env</code> as follows:
+<pre><del>template<>
+struct <expos>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;read_env&gt;&gt; : <expos>default-impls</expos> {
+  static constexpr auto start =
+    [](auto query, auto& rcvr) noexcept -> void {
+      TRY-SET-VALUE (rcvr, query(get_env(rcvr)));
+    };
+};</del>
+<ins>template<class Rcvr, class Query>
+struct <expos>basic-operation</expos>&lt;<expos>decayed-typeof</expos>&lt;read_env&gt;, Rcvr, Query&gt;
+: <expos>default-state-impls</expos>
+, <expos>inlinable-operation-state</expos>&lt;<expos>basic-operation</expos>&lt;<expos>decayed-typeof</expos>&lt;read_env&gt;, Rcvr, Query&gt;, Rcvr&gt; {
+  decay_t&lt;Query&gt; <expos>query</expos>;  <expos>// exposition only</expos>
+
+  <expos>basic-operation</expos>(Rcvr r, Query q) noexcept(is_nothrow_move_constructible_v&lt;Rcvr&gt;)
+  : <expos>inlinable-operation-state</expos>&lt;<expos>basic-operation</expos>, Rcvr&gt;(std::move(r))
+  , <expos>query</expos>(std::forward&lt;Query&gt;(q))
+  {}
+
+  void start() & noexcept {
+    decltype(auto) rcvr = this-&gt;<expos>get-receiver</expos>();
+    <expos>TRY-SET-VALUE</expos>(rcvr, <expos>query</expos>(get_env(rcvr)));
+  }
+};
+</ins>
+</pre>
+</div>
+#+END_EXPORT
+
+** Changes to /~schedule_from~/ :noexport:
+
+Modify [exec.schedule.from] p4 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The exposition-only class template<ins>s</ins> <ins>sender-</ins>impls-for and <ins>state-impls-for</ins>
+(33.9.1) <del>is</del><ins>are</ins> specialized for schedule_from_t as follows:
+
+<pre>namespace std::execution {
+  template<>
+  struct <ins>sender-</ins>impls-for <schedule_from_t> : default-<ins>sender-</ins>impls {
+    <del>static constexpr auto get-attrs = see below ;
+    static constexpr auto get-state = see below ;
+    static constexpr auto complete = see below ;</del>
+    <ins>template<class Data, class... Children>
+    static decltype(auto) get-attrs(const Data& data,
+                                    const Children&... children) noexcept; // exposition only
+    template<class Self, class Rcvr>
+    auto get-state(this Self&& s, Rcvr&& rcvr) noexcept; // exposition only</ins>
+  };
+  <ins>template<>
+  struct state-impls-for <schedule_from_t> : default-state-impls {
+    template&lt;class Self, size_t Id, class CompletionTag, class... Datums&gt;
+      constexpr void complete(this Self& self, indexed-tag&lt;Id&gt;,
+        CompletionTag, Datums&&... datums) noexcept;
+  };</ins>
+}</pre>
+</div>
+#+END_EXPORT
+
+Modify [exec.schedule.from] p5 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>sender-</ins>impls-for&lt;schedule_from_t&gt;::get-attrs is <del>initialized with a callable object</del> equivalent to
+the following <del>lambda</del>:
+
+<pre><del>[](const auto& data, const auto& child) noexcept -> decltype(auto) {</del>
+return JOIN-ENV(SCHED-ATTRS(data), FWD-ENV(get_env(children...[0])));
+<del>}</del></pre>
+</div>
+#+END_EXPORT
+
+Modify [exec.schedule.from] p6 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>sender-</ins>impls-for<schedule_from_t>::get-state is <del>initialized with a callable object</del> equivalent to
+the following<del> lambda</del>:
+
+<pre><del>[]&lt;class Sndr, class Rcvr&gt;(Sndr&& sndr, Rcvr& rcvr) noexcept(see below )
+    requires sender_in&lt;child-type&lt;Sndr&gt;, env_of_t&lt;Rcvr&gt;&gt; {
+  auto& [_, sch, child] = sndr;
+  using sched_t = decltype(auto(sch));
+  using variant_t = see below ;
+  using receiver_t = see below ;
+  using operation_t = connect_result_t&lt;schedule_result_t&lt;sched_t&gt;, receiver_t&gt;;
+  constexpr bool nothrow = noexcept(connect(schedule(sch), receiver_t{nullptr}));
+  struct state-type {
+    Rcvr& rcvr ; // exposition only
+    variant_t async-result ; // exposition only
+    operation_t op-state ; // exposition only
+    explicit state-type (sched_t sch, Rcvr& rcvr) noexcept(nothrow)
+      : rcvr (rcvr), op-state (connect(schedule(sch), receiver_t{this})) {}
+  };
+  return state-type {sch, rcvr};
+}</del>
+<ins>auto& [_, sch, child] = sndr;
+using sched_t = decltype(auto(sch));
+using variant_t = see below ;
+using receiver_t = see below ;
+using operation_t = connect_result_t&lt;schedule_result_t&lt;sched_t&gt;, receiver_t&gt;;
+constexpr bool nothrow = noexcept(connect(schedule(sch), receiver_t{nullptr}));
+struct state-type {
+  Rcvr& rcvr ; // exposition only
+  variant_t async-result ; // exposition only
+  operation_t op-state ; // exposition only
+  explicit state-type (sched_t sch, Rcvr& rcvr) noexcept(nothrow)
+    : rcvr (rcvr), op-state (connect(schedule(sch), receiver_t{this})) {}
+};
+return state-type {sch, rcvr};</ins></pre>
+</div>
+#+END_EXPORT
+
+Modify [exec.schedule.from] p11 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>state-</ins>impls-for&lt;schedule_from_t&gt;::complete is <del>initialized with a callable object</del>
+equivalent to <del>the following lambda</del>:
+
+<pre><del>[]&lt;class Tag, class... Args&gt;(auto, auto& state, auto& rcvr, Tag, Args&&... args) noexcept
+-&gt; void {
+  using result_t = decayed-tuple&lt;Tag, Args...&gt;;
+  constexpr bool nothrow = is_nothrow_constructible_v&lt;result_t, Tag, Args...&gt;;
+  try {
+    state.async-result .template emplace&lt;result_t&gt;(Tag(), std::forward&lt;Args&gt;(args)...);
+  } catch (...) {
+    if constexpr (!nothrow) {
+      set_error(std::move(rcvr), current_exception());
+      return;
+    }
+  }
+  start(state.op-state );
+}</del>
+<ins>using result_t = decayed-tuple&lt;CompletionTag, Datums...&gt;;
+constexpr bool nothrow = is_nothrow_constructible_v&lt;result_t, CompletionTag, Datums...&gt;;
+try {
+  state.async-result .template emplace&lt;result_t&gt;(CompletionTag(), std::forward&lt;Datums&gt;(datums)...);
+} catch (...) {
+  if constexpr (!nothrow) {
+    set_error(std::move(self.get_receiver()), current_exception());
+    return;
+  }
+}
+start(get-data(self).op-state);</ins></pre>
+</div>
+#+END_EXPORT
+
+
+** Changes to /~then~/, /~upon_error~/, /~upon_stopped~/
+
+Modify [exec.then] p4 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording" style="counter-set: paragraph 3">
+<p class="numbered">
+For <code>then</code>, <code>upon_error</code>, and <code>upon_stopped</code>, let <code><expos>set-cpo</expos></code> be <code>set_value</code>, <code>set_error</code>,
+and <code>set_stopped</code>, respectively. The exposition-only class template
+<code><expos><del>impls-for</del><ins>basic-operation</ins></expos></code> (33.9.1) is specialized for <code><expos>then-cpo</expos></code> as follows:
+
+<pre>namespace std::execution {
+
+<del>template&lt;&gt;
+struct <expos>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;<expos>then-cpo</expos>&gt;&gt; : <expos>default-impls</expos> {
+  static constexpr auto <expos>complete</expos> =
+    []&lt;class Tag, class... Args&gt;
+    (auto, auto& fn, auto& rcvr, Tag, Args&&... args) noexcept -&gt; void {
+      if constexpr (same_as&lt;Tag, <expos>decayed-typeof</expos>&lt;<expos>set-cpo</expos>&gt;&gt;) {
+        TRY-SET-VALUE (rcvr,
+          invoke(std::move(fn), std::forward&lt;Args&gt;(args)...));
+      } else {
+        Tag()(std::move(rcvr), std::forward&lt;Args&gt;(args)...);
+      }
+    };
+};</del>
+
+<ins>template &lt;class Rcvr, class Data, class Child&gt;
+struct <expos>basic-operation</expos>&lt;<expos>then-cpo</expos>, Rcvr, Data, Child&gt;   <expos>// exposition only</expos>
+  : <expos>default-state-impls</expos>
+  , inlinable_operation_state&lt;<expos>basic-operation</expos>&lt;<expos>then-cpo</expos>, Rcvr, Data, Child&gt;, Rcvr&gt;
+  , <expos>manual-child-operation</expos>&lt;
+      <expos>basic-operation</expos>&lt;<expos>then-cpo</expos>, Rcvr, Data, Child&gt;,
+      <expos>indexed-tag</expos>&lt;0&gt;,
+      env_of_t&lt;Rcvr&gt;,
+      Child&gt; {
+
+  using <expos>child-op-t</expos> = <expos>manual-child-operation</expos>&lt; <expos>// exposition only</expos>
+      <expos>basic_operation</expos>,
+      <expos>indexed-tag</expos>&lt;0&gt;,
+      env_of_t&lt;Rcvr&gt;,
+      Child&gt;;
+
+  using <expos>func-t</expos> = decay_t&lt;Data&gt;; <expos>// exposition only</expos>
+  <expos>func-t</expos> <expos>func</expos>;    <expos>// exposition only</expos>
+
+  <expos>basic-operation</expos>(Rcvr r, Data&& data, Child&& child)  <expos>// exposition only</expos>
+    noexcept(<expos>child-op-t</expos>::<expos>is-nothrow-connectable</expos> &amp;&amp;
+             is_nothrow_constructible_v&lt;decay_t&lt;Data&gt;, Data&gt;)
+    : inlinable_operation_state&lt;<expos>basic-operation</expos>, Rcvr&gt;(std::move(r))
+    , <expos>func</expos>(std::forward&lt;Data&gt;(data)) {
+    <expos>child-op-t</expos>::<expos>construct</expos>(std::forward&lt;Child&gt;(child));
+  }
+
+  ~<expos>basic-operation</expos>() {
+    <expos>child-op-t</expos>::<expos>destruct</expos>();
+  }
+
+  void start() & noexcept {
+    <expos>child-op-t</expos>::<expos>start-child</expos>();
+  }
+
+  template &lt;class Self, class Tag, class... Args&gt;
+  void <expos>complete</expos>(this Self& self, <expos>indexed-tag</expos>&lt;0&gt;, Tag, Args&&... args) noexcept {  <expos>// exposition only</expos>
+    decltype(auto) rcvr = self.<expos>get-receiver</expos>();
+    if constexpr (same_as&lt;Tag, <expos>set-cpo</expos>&gt;) {
+      <expos>TRY-SET-VALUE</expos>(rcvr, invoke(std::move(self.<expos>func</expos>), std::forward&lt;Args&gt;(args)...));
+    } else {
+      return Tag{}(std::move(rcvr), std::forward&lt;Args&gt;(args)...);
+    }
+  }
+};</ins>
+
+}</pre>
+</div>
+#+END_EXPORT
+
+** Changes to /~let_value~/, /~let_error~/, /~let_stopped~/
+
+Modify p5 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The exposition-only class template <del><expos>impls-for</expos></del>
+<ins><expos>basic-operation</expos></ins> (33.9.1) is specialized
+for <expos>let-cpo</expos> as follows:
+
+<pre>namespace std::execution {
+
+<del>template&lt;class State, class Rcvr, class... Args&gt;
+void <expos>let-bind</expos>(State& state, Rcvr& rcvr, Args&&... args); // <expos>exposition only</expos></del>
+
+<del>template&lt;&gt;
+struct <expos>impls-for</expos>&lt;<expos>decayed-typeof</expos>&lt;<expos>let-cpo</expos>&gt;&gt; : default-impls {
+  static constexpr auto <expos>get-state</expos> = see below ;
+  static constexpr auto <expos>complete</expos> = see below ;
+};</del>
+
+<ins>struct <expos>predecessor-tag</expos> {}; // <expos>exposition only</expos>
+
+template&lt;size_t Index&gt;
+struct <expos>successor-tag</expos> {};  // <expos>exposition only</expos>
+
+template&lt;class Func, class ValueSig&gt;
+struct <expos>let-value-successor-for</expos>; // <expos>exposition only</expos>
+template&lt;class Func, class... Vs&gt;
+struct <expos>let-value-successor-for</expos>&lt;Func, set_value_t(Vs...)&gt; {
+  using type = invoke_result_t&lt;Func, decay_t&lt;Vs&gt;&...&gt;;
+};
+
+template&lt;class Derived, class Env, class Func, class ValueSignatures&gt;
+struct <expos>let-value-successor-child</expos>;  // <expos>exposition only</expos>
+template&lt;class Derived, class Env, class Func, class... ValueSigs&gt;
+struct <expos>let-value-successor-child</expos>&lt;Derived, Env, Func, completion_signatures&lt;ValueSigs...&gt;&gt;
+: <expos>manual-child-operation-variant</expos>&lt;
+    Derived,
+    <expos>successor-tag</expos>,
+    Env,
+    typename <expos>let-value-successor-for</expos>&lt;Func, ValueSigs&gt;::type...&gt;
+{};
+
+template&lt;class Rcvr, class Func, class Source&gt;
+struct <expos>basic-operation</expos>&lt;<expos>let-cpo</expos>, Rcvr, Func, Source&gt;
+: <expos>default-state-impls</expos>
+, inlinable_operation_state&lt;<expos>basic-operation</expos>&lt;<expos>let-cpo</expos>, Rcvr, Func, Source&gt;, Rcvr&gt;
+, <expos>manual-child-operation</expos>&lt;
+    <expos>basic-operation</expos>&lt;<expos>let-cpo</expos>, Rcvr, Func, Source&gt;,
+    <expos>predecessor_tag</expos>,
+    env_of_t&lt;Rcvr&gt;,
+    Source&gt;
+, <expos>let-value-successor-child</expos>&lt;
+    <expos>basic-operation</expos>&lt;<expos>let-cpo</expos>, Rcvr, Func, Source&gt;,
+    env_of_t&lt;Rcvr&gt;,
+    decay_t&lt;Func&gt;,
+    <expos>filter-completion-signatures-t</expos>&lt;<expos>set-cpo</expos>, completion_signatures_of_t&lt;Source, env_of_t&lt;Rcvr&gt;&gt;&gt;&gt; {
+
+  using <expos>pred-child-t</expos> = <expos>manual-child-operation</expos>&lt; // <expos>exposition only</expos>
+    <expos>basic-operation</expos>,
+    <expos>predecessor-tag</expos>,
+    env_of_t&lt;Rcvr&gt;,
+    Source&gt;;
+
+  using <expos>func-t</expos> = decay_t&lt;Func&gt;; // <expos>exposition only</expos>
+
+  using <expos>succ-child-t</expos> = <expos>let-value-successor-child</expos>&lt; // <expos>exposition only</expos>
+    <expos>basic-operation</expos>,
+    env_of_t&lt;Rcvr&gt;,
+    <expos>func-t</expos>,
+    <expos>filter-completion-signatures-t</expos>&lt;<expos>set-cpo</expos>, completion_signatures_of_t&lt;Source, env_of_t&lt;Rcvr&gt;&gt;&gt;&gt;;
+
+  using <expos>result-variant-t</expos> = // <expos>exposition only</expos>
+    value_types_of_t&lt;Source, env_of_t&lt;Rcvr&gt;, <expos>decayed-tuple</expos>, <expos>variant-with-monostate</expos>&gt;;
+
+  [[no_unique_address]] <expos>func-t</expos> <expos>func</expos>; // <expos>exposition only</expos>
+  <expos>result-variant-t</expos> <expos>result</expos>; // <expos>exposition only</expos>
+
+  <expos>basic_operation</expos>(Rcvr r, Func&& func, Source&& src)
+    noexcept(<expos>pred-child-t</expos>::<expos>is-nothrow-connectable</expos> && is_nothrow_constructible_v&lt;<expos>func-t</expos>, Func&gt;)
+  : inlinable_operation_state&lt;<expos>basic_operation</expos>, Rcvr&gt;(std::move(r))
+  , <expos>func</expos>(std::forward&lt;Func&gt;(func)) {
+    <expos>pred-child-t</expos>::<expos>construct</expos>(std::forward&lt;Source&gt;(src));
+  }
+
+  ~<expos>basic_operation</expos>();
+
+  void start() & noexcept {
+    <expos>pred-child-t</expos>::<expos>start</expos>();
+  }
+
+  template&lt;class CPO, class... Args&gt;
+  void <expos>complete</expos>(<expos>predecessor-tag</expos>, CPO, Args&&... args) noexcept;
+
+  template&lt;class CPO, size_t Index, class... Args&gt;
+  void <expos>complete</expos>(<expos>successor-tag</expos>&lt;Index&gt;, CPO, Args&&... args) noexcept;
+};</ins>
+
+}</pre>
+</div>
+#+END_EXPORT
+
+Remove [exec.let] p6.
+
+Remove [exec.let] p7 and replace it with the following paragraphs:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+
+<pre>~<expos>basic_operation</expos>&lt;<expos>let-cpo</expos>&gt;()</pre>
+
+Equivalent to:
+
+<pre>if (<expos>result</expos>.index() != 0) {
+  <expos>dispatch-index</expos>&lt;(variant_size_v&lt;<expos>result-variant-t</expos>&gt; - 1)&gt;(
+    [&]&lt;size_t Index&gt;(integral_constant&lt;size_t, Index&gt;) noexcept {
+      <expos>succ-child-t</expos>::template <expos>destruct</expos>&lt;Index&gt;();
+    }, <expos>result</expos>.index() - 1);
+  <expos>result</expos>.template emplace&lt;0&gt;();
+}
+<expos>pred-child-t</expos>::_destruct();</pre>
+
+</div>
+#+END_EXPORT
+
+#+BEGIN_EXPORT html
+<div class="wording">
+
+<pre>template&lt;class CPO, class... Args&gt;
+void <expos>complete</expos>(<expos>predecessor-tag</expos>, CPO, Args&&... args) noexcept</pre>
+
+Equivalent to:
+
+<pre>if constexpr (same_as&lt;CPO, set_value_t&gt;)  {
+  using tuple_t = _decayed_tuple&lt;Args...&gt;;
+  using successor_t = invoke_result_t&lt;<expos>func-t</expos>, decay_t&lt;Args&gt;&...&gt;;
+  constexpr size_t successor_index = <expos>succ-child-t</expos>::template <expos>index-of</expos>&lt;successor_t&gt;();
+
+  constexpr bool is_nothrow =
+    (is_nothrow_constructible_v&lt;decay_t&lt;Args&gt;, Args&gt; && ...) &&
+     <expos>succ-child-t</expos>::template <expos>is-nothrow-connectable</expos>&lt;successor_index&gt; &&
+     is_nothrow_invocable_v&lt;<expos>func-t</expos>, decay_t&lt;Args&gt;&...&gt;;
+
+  try {
+    auto& t = _result.template emplace&lt;tuple_t&gt;(std::forward&lt;Args&gt;(args)...);
+    std::apply([&](decay_t&lt;Args&gt;&amp... args_copy) {
+      <expos>succ-child-t</expos>::template <expos>construct</expos>&lt;successor_index&gt;(
+        std::invoke(std::forward&lt;<expos>func-t</expos>&gt;(<expos>func</expos>), args_copy...));
+      }, t);
+    <expos>succ-child-t</expos>::template <expos>start</expos>&lt;successor_index&gt;();
+  } catch (...) {
+    if constexpr (!is_nothrow) {
+      <expos>result</expos>.template emplace&lt;0&gt;();
+      execution::set_error(std::move(this-&gt;get_receiver()), std::current_exception());
+    }
+  }
+} else {
+  CPO{}(std::move(this-&gt;get_receiver()), std::forward&lt;Args&gt;(args)...);
+}</pre>
+
+</div>
+#+END_EXPORT
+
+#+BEGIN_EXPORT html
+<div class="wording">
+
+<pre>template&lt;class CPO, size_t Index, class... Args&gt;
+void <expos>complete</expos>(<expos>successor-tag</expos>&lt;Index&gt;, CPO, Args&&... args) noexcept</pre>
+
+Equivalent to:
+
+<pre>CPO{}(std::move(this-&gt;get_receiver()), std::forward&lt;Args&gt;(args)...);</pre>
+
+</div>
+#+END_EXPORT
+
+
+
+** Changes to /~bulk~/
+
+Modify [exec.bulk] p3 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The exposition-only class template <del><expos>impls-for</expos></del>
+<ins><expos>basic-operation</expos></ins> (33.9.1) is specialized for bulk_t as follows:
+
+<pre>namespace std::execution {
+
+  <del>template&lt;&gt;
+  struct <expos>impls-for</expos>&lt;bulk_t&gt; : <expos>default-impls</expos> {
+    static constexpr auto <expos>complete</expos> = <expos>see below</expos>;
+  };</del>
+
+<ins>template&lt;class Rcvr, class Shape, class F&gt;
+struct <expos>basic-operation</expos>&lt;bulk_t, Rcvr, Shape, F&gt; <expos>// exposition only</expos>
+: <expos>product-type</expos>&lt;Shape, F&gt;
+, <expos>default-state-impls</expos>
+, inlinable_operation_state&lt;<expos>basic-operation</expos>&lt;bulk_t, Rcvr, Shape, F&gt;, Rcvr&gt; {
+
+  <expos>basic-operation</expos>(Rcvr r, Shape shape, F f)
+  : inlinable_operation_state&lt;<expos>basic-operation</expos>, Rcvr&gt;(std::move(r))
+  , <expos>product-type</expos>(std::move(shape), std::move(f))
+  {}
+
+  template&lt;class Self, class Tag, class CPO, class... Args&gt;
+  void complete(this Self&& self, Tag, CPO, Args&&... args) noexcept;
+};</ins>
+
+}</pre>
+</div>
+#+END_EXPORT
+
+Delete [exec.bulk] p4, and replace with the following:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+<pre>template&lt;class Self, class Tag, class CPO, class... Args&gt;
+void complete(this Self&& self, Tag, CPO, Args&&... args) noexcept</pre>
+
+Equivalent to:
+
+<pre>if constexpr (same_as&lt;Tag, set_value_t&gt;) {
+  auto& [shape, f] = self;
+  constexpr bool nothrow = noexcept(f(auto(shape), args...));
+  TRY-EVAL (self.get_receiver(), [&]() noexcept(nothrow) {
+    for (decltype(auto(shape)) i = 0; i &lt; shape; ++i) {
+      f(auto(i), args...);
+    }
+    Tag()(self.get_receiver(), std::forward&lt;Args&gt;(args)...);
+  }());
+} else {
+  Tag()(self.get_receiver(), std::forward&lt;Args&gt;(args)...);
+}</pre>
+
+</div>
+#+END_EXPORT
+
+Delete [exec.bulk] p5
+
+** Changes to /~split~/ :noexport:
+
+Modify [exec.split] p21 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The exposition-only class template impls-for (33.9.1) is specialized for split-impl-tag as follows:
+
+<pre>namespace std::execution {
+  <del>template&lt;&gt;
+  struct impls-for&lt;split-impl-tag&gt; : default-impls {
+    static constexpr auto get-state = see below ;
+    static constexpr auto start = see below ;
+  };</del>
+  <ins>template&lt;&gt;
+  struct sender-impls-for&lt;split-impl-tag&gt; : default-sender-impls {
+    template&lt;class Self, class Rcvr&gt;
+    auto get-state(this Self&& s, Rcvr&& rcvr) noexcept;
+  };
+  template&lt;&gt;
+  struct state-impls-for&lt;split-impl-tag&gt; : default-state-impls {
+    template&lt;class Self&gt;
+    constexpr void start(this Self& self) noexcept;
+  };</ins>
+}</pre>
+</div>
+#+END_EXPORT
+
+
+Modify [exec.split] p22 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>sender-</ins>impls-for&lt;split-impl-tag&gt;::get-state is <del>initialized with a callable object</del> equivalent to
+the following<del> lambda expression</del>:
+
+<pre><del>[]&lt;class Sndr&gt;(Sndr&& sndr, auto& rcvr) noexcept {</del>
+  return local-state {std::forward&lt;Self&gt;(self), rcvr};
+<del>}</del></pre>
+</div>
+#+END_EXPORT
+
+
+Modify [exec.split] p23 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>state-</ins>impls-for&lt;split-impl-tag&gt;::start is <del>initialized with a callable object that has a function
+call operator</del> equivalent to the following:
+
+<pre><del>template&lt;class Sndr, class Rcvr&gt;
+void operator()(local-state&lt;Sndr, Rcvr&gt;&amp; state, Rcvr& rcvr) const noexcept;</del></pre>
+
+Effects: If state.sh_state-&gt;completed is true, evaluates state.notify() and returns. Otherwise, does
+the following in order:
+
+<ul>
+<li>Evaluates state.on_stop.emplace(get_stop_token(get_env(<ins>state.</ins>rcvr)),
+      on-stop-request {state.sh_state ->stop_src });</li>
+<li>Then atomically does the following:
+<ul>
+<li>Reads the value c of state.sh_state-&gt;completed , and</li>
+<li>Inserts addressof(state) into state.sh_state-&gt;waiting_states if c is false.</li>
+<li>If c is true, calls state.notify () and returns.</li>
+<li>Otherwise, if addressof(state) is the first item added to state.sh_state-&gt;waiting_states , eval-
+uates state.sh_state-&gt;start-op ().</li>
+</ul>
+</li>
+</ul>
+</div>
+#+END_EXPORT
+
+
+** Changes to /~when_all~/ :noexport:
+
+Modify [exec.when.all] p4 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The exposition-only class template<ins>s</ins> <ins>sender-</ins>impls-for and <ins>state-impls-for</ins>
+ (33.9.1) <del>is</del><ins>are</ins> specialized for when_all_t as follows:
+
+<pre>namespace std::execution {
+  <del>template&lt;&gt;
+  struct impls-for&lt;when_all_t&gt; : default-impls {
+    static constexpr auto get-attrs = see below ;
+    static constexpr auto get-env = see below ;
+    static constexpr auto get-state = see below ;
+    static constexpr auto start = see below ;
+    static constexpr auto complete = see below ;
+  };</del>
+  <ins>template&lt;&gt;
+  struct sender-impls-for&lt;when_all_t&gt; : default-sender-impls {
+    template&lt;class Data, class... Children&gt;
+    static decltype(auto) get-attrs(const Data& data,
+                                    const Children&... children) noexcept;
+    template&lt;class Self, class Rcvr&gt;
+    auto get-state(this Self&& s, Rcvr&& rcvr) noexcept;
+  };
+
+  template&lt;&gt;
+  struct state-impls-for&lt;when_all_t&gt; : default-state-impls {
+    template&lt;class Self, size_t Id&gt;
+    constexpr decltype(auto) get-env(this Self& self, indexed-tag&lt;Id&gt;) noexcept;
+    template&lt;class Self&gt;
+    constexpr void start(this Self& self) noexcept ;
+    template&lt;class Self, size_t Id, class CompletionTag, class... Datums&gt;
+    constexpr void complete(this Self& self, indexed-tag&lt;Id&gt;,
+        CompletionTag, Datums&&... datums) noexcept;
+  };</ins>
+}</pre>
+</div>
+#+END_EXPORT
+
+
+
+Modify [exec.when.all] p5 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>sender-</ins>impls-for&lt;when_all_t&gt;::get-attrs is <del>initialized with a callable object</del> equivalent to the
+following<del> lambda expression</del>:
+
+<pre><del>[](auto&&, auto&&... child) noexcept {</del>
+if constexpr (same_as&lt;CD, default_domain&gt;) {
+  return env&lt;&gt;();
+} else {
+  return MAKE-ENV(get_domain, CD());
+}
+<del>}</del></pre>
+</div>
+#+END_EXPORT
+
+Modify [exec.when.all] p6 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>state-</ins>impls-for&lt;when_all_t&gt;::get-env is <del>initialized with a callable object</del> equivalent to the
+following<del> lambda expression</del>:
+
+<pre><del>[]<class State, class Rcvr>(auto&&, State& state, const Receiver& rcvr) noexcept {</del>
+<ins>auto& [_, state, children...] = self;</ins>
+return see below ;
+<del>}</del></pre>
+
+Returns an object e such that
+
+<ul>
+<li>decltype(e) models queryable , and</li>
+<li>e.query(get_stop_token) is expression-equivalent to state.stop-src .get_token(), and</li>
+<li>given a query object q with type other than cv stop_token_t, e.query(q) is expression-equivalent to
+get_env(<del>rcvr</del><ins>self.get_receiver()</ins>).query(q).</li>
+</ul>
+</div>
+#+END_EXPORT
+
+
+
+Modify [exec.when.all] p7 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>sender-</ins>impls-for&lt;when_all_t&gt;::get-state is <del>initialized with a callable object</del> equivalent to the
+following<del> lambda expression</del>:
+
+<pre><del>[]<class Sndr, class Rcvr>(Sndr&& sndr, Rcvr& rcvr) noexcept(e) -> decltype(e) {</del>
+  return e;
+<del>}</del></pre>
+
+where e is the expression
+
+<pre>std::forward&lt;<del>Sndr</del><ins>Self</ins>&gt;(<del>sndr</del><ins>self</ins>).apply(make-state&lt;Rcvr&gt;())</pre>
+
+and where make-state is the following exposition-only class template:
+
+<pre>template&lt;class Sndr, class Env&gt;
+concept max-1-sender-in = sender_in&lt;Sndr, Env&gt; && // exposition only
+  (tuple_size_v&lt;value_types_of_t&lt;Sndr, Env, tuple, tuple&gt;&gt; &lt;= 1);
+
+enum class disposition { started , error , stopped }; // exposition only
+
+template&lt;class Rcvr&gt;
+struct make-state {
+  template&lt;max-1-sender-in &lt;env_of_t&lt;Rcvr&gt;&gt;... Sndrs&gt;
+  auto operator()(auto, auto, Sndrs&&... sndrs) const {
+    using values_tuple = see below ;
+    using errors_variant = see below ;
+    using stop_callback = stop_callback_for_t&lt;stop_token_of_t&lt;env_of_t&lt;Rcvr&gt;&gt;, on-stop-request&gt;;
+    struct state-type {
+      void arrive (Rcvr& rcvr) noexcept { // exposition only
+        if (0 == --count) {
+          complete (rcvr);
+        }
+      }
+      void complete (Rcvr& rcvr) noexcept; // exposition only
+      atomic&lt;size_t&gt; count {sizeof...(sndrs)}; // exposition only
+      inplace_stop_source stop_src {}; // exposition only
+      atomic&lt;disposition&gt; disp{disposition::started}; // exposition only
+      errors_variant errors {}; // exposition only
+      values_tuple values {}; // exposition only
+      optional&lt;stop_callback&gt; on_stop {nullopt}; // exposition only
+    };
+    return state-type {};
+  }
+};</pre>
+</div>
+#+END_EXPORT
+
+
+
+Modify [exec.when.all] p12 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>state-</ins>impls-for&lt;when_all_t&gt;::start is <del>initialized with a callable object</del> equivalent to the following
+<del>lambda expression</del>:
+
+<pre><del>[]&lt;class State, class Rcvr, class... Ops&gt;(
+  State& state, Rcvr& rcvr, Ops&... ops) noexcept -&gt; void {</del>
+<ins>auto& [_, state, child...] = self;</ins>
+state.on_stop.emplace(
+  get_stop_token(get_env(<del>rcvr</del><ins>self.get_receiver()</ins>)),
+  on-stop-request{state.stop_src});
+if (state.stop_src.stop_requested()) {
+  state.on_stop.reset();
+  set_stopped(<del>std::move(rcvr)</del><ins>self.get_receiver()</ins>);
+} else {
+  (start(child), ...);
+}
+<del>}</del></pre>
+</div>
+#+END_EXPORT
+
+
+Modify [exec.when.all] p13 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>state-</ins>impls-for&lt;when_all_t&gt;::complete is <del>initialized with a callable object</del> equivalent to the
+following<del> lambda expression</del>:
+
+<pre><del>[]&lt;class Index, class State, class Rcvr, class Set, class... Args&gt;(
+    this auto& complete, Index, State& state, Rcvr& rcvr, Set, Args&&... args) noexcept -&gt; void {</del>
+  <ins>auto& [_, state, child...] = self;</ins>
+  if constexpr (same_as&lt;<del>Set</del><ins>CompletionTag</ins>, set_error_t&gt;) {
+    if (disposition::error != state.disp.exchange(disposition ::error)) {
+      state.stop_src.request_stop();
+      TRY-EMPLACE-ERROR(state.errors, std::forward&lt;<del>Args</del><ins>Datums</ins>&gt;(<del>args</del><ins>datums</ins>)...);
+    }
+  } else if constexpr (same_as&lt;<del>Set</del><ins>CompletionTag</ins>, set_stopped_t&gt;) {
+    auto expected = disposition::started;
+    if (state.disp.compare_exchange_strong(expected, disposition::stopped )) {
+      state.stop_src.request_stop();
+    }
+  } else if constexpr (!same_as&lt;decltype(<del>State::values</del><ins>state.values</ins>), tuple&lt;&gt;&gt;) {
+    if (state.disp == disposition::started ) {
+      auto& opt = get&lt;Id&gt;(state.values);
+      TRY-EMPLACE-VALUE (complete, opt, std::forward&lt;<del>Args</del><ins>Datums</ins>&gt;(<del>args</del><ins>datums</ins>)...);
+    }
+  }
+  state.arrive (<del>rcvr</del><ins>self.get_receiver()</ins>);
+<del>}</del></pre>
+
+where TRY-EMPLACE-ERROR (v, e), for subexpressions v and e, is equivalent to:
+
+<pre>try {
+  v.template emplace&lt;decltype(auto(e))&gt;(e);
+} catch (...) {
+  v.template emplace&lt;exception_ptr&gt;(current_exception());
+}</pre>
+
+if the expression decltype(auto(e))(e) is potentially throwing; otherwise,
+v.template emplace&lt;decltype(auto(e))&gt;(e); and where TRY-EMPLACE-VALUE (c, o, as...),
+for subexpressions c, o, and pack of subexpressions as, is equivalent to:
+
+<pre>try {
+  o.emplace(as...);
+} catch (...) {
+  c(Index(), state, <del>rcvr</del><ins>self.get_receiver()</ins>, set_error, current_exception());
+  return;
+}</pre>
+
+if the expression decayed-tuple&lt;decltype(as)...&gt;{as...} is potentially throwing; otherwise,
+o.emplace(as...).
+</div>
+#+END_EXPORT
+
+
+** Changes to /~into_variant~/ :noexport:
+
+Modify [exec.into.variant] p4 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The exposition-only class template<ins>s</ins> <ins>state-</ins>impls-for <ins>and sender-impls-for</ins> (33.9.1) is specialized for into_variant as follows:
+
+<pre>namespace std::execution {
+  <del>template<>
+  struct impls-for <into_variant_t> : default-impls {
+    static constexpr auto get-state = see below ;
+    static constexpr auto complete = see below ;
+  };</del>
+  <ins>template&lt;&gt;
+  struct state-impls-for&lt;into_variant_t&gt; : default-state-impls {
+    template&lt;class Self, size_t Id, class CompletionTag, class... Datums&gt;
+      constexpr void complete(this Self& self, indexed-tag&lt;Id&gt;,
+        CompletionTag, Datums&&... datums) noexcept;
+  };
+  <ins>template&lt;&gt;
+  struct sender-impls-for&lt;into_variant_t&gt; : default-sender-impls {
+    template&lt;class Self, class Recr&gt;
+    auto get-state(this Self&& self, Rcvr& rcvr) // exposition only
+      requires see-below;
+  };</ins>
+}</pre>
+</div>
+#+END_EXPORT
+
+Modify [exec.into.variant] p5 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>sender-</ins>impls-for&lt;into_variant_t&gt;::get-state is <del>initialized with a callable object</del> equivalent to
+<del>the following lambda</del>:</del>
+
+<pre><del>[]&lt;class Sndr, class Rcvr&gt;(Sndr&& sndr, Rcvr& rcvr) noexcept
+  -&gt; type_identity&lt;value_types_of_t&lt;child-type&lt;Sndr&gt;, env_of_t&lt;Rcvr&gt;&gt;&gt; {
+  return {};
+}</del>
+<ins>return type_identity&lt;value_types_of_t&lt;child-type&lt;Self&gt;, env_of_t&lt;Rcvr&gt;&gt;&gt{};</ins></pre>
+</div>
+#+END_EXPORT
+
+Modify [exec.into.variant] p6 as follows:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+The member <ins>state-</ins>impls-for&lt;into_variant_t&gt;::complete is <del>initialized with a callable object</del> equivalent to<del> the
+following lambda</del>:
+
+<pre><del>[]&lt;class State, class Rcvr, class Tag, class... Args&gt;(
+    auto, State, Rcvr& rcvr, Tag, Args&&... args) noexcept -&gt; void {
+  if constexpr (same_as&lt;Tag, set_value_t&gt;) {
+    using variant_type = typename State::type;
+    TRY-SET-VALUE (rcvr, variant_type(decayed-tuple&lt;Args...&gt;{std::forward&lt;Args&gt;(args)...}));
+  } else {
+    Tag()(std::move(rcvr), std::forward&lt;Args&gt;(args)...);
+  }
+}</del>
+<ins>if constexpr (same_as&lt;CompletionTag, set_value_t&gt;) {
+    using variant_type = value_types_of&lt;child-type&lt;Self&gt;, env_of_t&lt;decltype(auto(self.get_receiver()))&gt;&gt;;
+    TRY-SET-VALUE(self.get_receiver(), variant_type(decayed-tuple&lt;Args...&gt;{std::forward&lt;Args&gt;(args)...}));
+  } else {
+    Tag()(std::move(self.get_receiver()), std::forward&lt;Args&gt;(args)...);
+  }
+}</ins></pre>
+</div>
+#+END_EXPORT
+
+
+** Changes to /~run_loop::run-loop-opstate~/ :noexport:
+
+Modify [exec.run.loop.types] by inserting a new paragraph after paragraph 9:
+
+#+BEGIN_EXPORT html
+<div class="wording">
+<ins>If Rcvr models inlinable_receiver&lt;<expos>run-loop-opstate</expos>&lt;Rcvr&gt;&gt;,
+then objects of type <expos>run-loop-opstate</expos>&lt;Rcvr&gt; do not contain
+subobjects of type Rcvr.</ins>
+</div>
+#+END_EXPORT
+
+
+
+
 
 * Proposed Wording :noexport:
 
@@ -1461,8 +2592,8 @@ Modify [exec.snd.expos] p24 follows:
   struct <expos>receiver-holder</expos> {                                       // <expos>exposition only</expos>
     <expos>receiver-holder</expos>(Rcvr&& rcvr2) noexcept(is_nothrow_move_constructible_v&lt;Rcvr>)
     : <expos>rcvr</expos>(std::forward&lt;Rcvr>(rcvr2)) { }
-    
-    Rcvr& <expos>get-receiver</expos>() noexcept { return <expos>rcvr</expos>; }               // <expos>exposition only</expos> 
+
+    Rcvr& <expos>get-receiver</expos>() noexcept { return <expos>rcvr</expos>; }               // <expos>exposition only</expos>
 
     Rcvr <expos>rcvr</expos>;                                                   // <expos>exposition only</expos>
   };
@@ -1488,7 +2619,7 @@ Modify [exec.snd.expos] p24 follows:
       , <expos>state</expos>(<ins>[&amp;] {
           decltype(auto) rcvr2 =
           <expos>impls-for</expos>&lt;tag_of_t&lt;Sndr>>::<expos>get-state</expos>(std::forward&lt;Sndr>(sndr), <expos>rcvr</expos>)) { }
-      
+
   <del>  Rcvr <expos>rcvr</expos>;                                                  // <expos>exposition only</expos></del>
     <expos>state-type</expos>&lt;Sndr, Rcvr> <expos>state</expos>;                               // <expos>exposition only</expos>
   };
@@ -1529,7 +2660,7 @@ Modify [exec.snd.expos] p24 follows:
 
     <expos>basic-state</expos>&lt;Sndr, Rcvr>* <expos>op</expos>;                           // <expos>exposition only</expos>
   };
-  
+
 </pre>
 #+END_EXPORT
 
@@ -1747,7 +2878,7 @@ Modify [exec.snd.expos] p24 follows:
       explicit child-operations(Children&&... children)
         : child-t<Indices>(std::forward<Children>(children))...
       {}
-  
+
       void start-all() noexcept {
         (child_t<Ids>::start(), ...);
       }
@@ -1777,7 +2908,7 @@ Modify [exec.snd.expos] p24 follows:
         , State(std::forward<Data>(data))
         , children-base(std::forward<Children>(children)...)
       {}
-  
+
       void start() &  noexcept {
         this->State::start();
       }
@@ -1808,7 +2939,7 @@ Modify [exec.snd.expos] p24 follows:
         return {};
       }
     };
-  }  
+  }
 #+end_src
 
 
